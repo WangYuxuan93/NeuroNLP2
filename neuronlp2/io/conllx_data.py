@@ -136,7 +136,8 @@ def create_alphabets(alphabet_directory, train_path, data_paths=None, max_vocabu
 
 
 def read_data(source_path: str, word_alphabet: Alphabet, char_alphabet: Alphabet, pos_alphabet: Alphabet, type_alphabet: Alphabet,
-              max_size=None, normalize_digits=True, symbolic_root=False, symbolic_end=False):
+              max_size=None, normalize_digits=True, symbolic_root=False, symbolic_end=False,
+              mask_out_root=False):
     data = []
     max_length = 0
     max_char_length = 0
@@ -197,8 +198,8 @@ def read_data(source_path: str, word_alphabet: Alphabet, char_alphabet: Alphabet
         for j, wid in enumerate(wids):
             if word_alphabet.is_singleton(wid):
                 single[i, j] = 1
-                
-    masks[:,0] = 0
+    if mask_out_root:
+        masks[:,0] = 0
 
     words = torch.from_numpy(wid_inputs)
     chars = torch.from_numpy(cid_inputs)
@@ -215,7 +216,8 @@ def read_data(source_path: str, word_alphabet: Alphabet, char_alphabet: Alphabet
 
 
 def read_bucketed_data(source_path: str, word_alphabet: Alphabet, char_alphabet: Alphabet, pos_alphabet: Alphabet, type_alphabet: Alphabet,
-                       max_size=None, normalize_digits=True, symbolic_root=False, symbolic_end=False):
+                       max_size=None, normalize_digits=True, symbolic_root=False, symbolic_end=False,
+                       mask_out_root=False):
     data = [[] for _ in _buckets]
     max_char_length = [0 for _ in _buckets]
     print('Reading data from %s' % source_path)
@@ -286,6 +288,8 @@ def read_bucketed_data(source_path: str, word_alphabet: Alphabet, char_alphabet:
             for j, wid in enumerate(wids):
                 if word_alphabet.is_singleton(wid):
                     single[i, j] = 1
+        if mask_out_root:
+            masks[:,0] = 0
 
         words = torch.from_numpy(wid_inputs)
         chars = torch.from_numpy(cid_inputs)
