@@ -20,8 +20,8 @@ from torch.optim.adamw import AdamW
 from torch.optim import SGD
 from torch.nn.utils import clip_grad_norm_
 from neuronlp2.nn.utils import total_grad_norm
-from neuronlp2.io import get_logger, conllx_data, conllx_stacked_data, iterate_data
-from neuronlp2.models import DeepBiAffine, NeuroMST, StackPtrNet
+from neuronlp2.io import get_logger, conllx_data, conllx_stacked_data, iterate_data, iterate_data_and_sample
+from neuronlp2.models import DeepBiAffine, NeuroMST, StackPtrNet, EasyFirst
 from neuronlp2.optim import ExponentialScheduler
 from neuronlp2 import utils
 from neuronlp2.io import CoNLLXWriter
@@ -244,12 +244,14 @@ def train(args):
     if model_type == 'EasyFirst':
         num_attention_heads = hyps['num_attention_heads']
         intermediate_size = hyps['intermediate_size']
+        p_hid = hyps['hidden_dropout_prob']
         p_att = hyps['attention_probs_dropout_prob']
         p_graph_att = hyps['graph_attention_probs_dropout_prob']
         recomp_att_dim = hyps['recomp_att_dim']
         network = EasyFirst(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                            hidden_size, num_types, arc_space, type_space,
-                           num_attention_heads, intermediate_size, 
+                           num_attention_heads, intermediate_size, recomp_att_dim,
+                           hidden_dropout_prob=p_hid,
                            attention_probs_dropout_prob=p_att,
                            graph_attention_probs_dropout_prob=p_graph_att,
                            embedd_word=word_table, embedd_char=char_table,
@@ -263,7 +265,7 @@ def train(args):
     network = network.to(device)
     model = "{}-{}".format(model_type, mode)
     logger.info("Network: %s, max_layer=%s, hidden=%d, act=%s" % (model, max_layers, hidden_size, activation))
-    logger.info("dropout(in, out, att, graph_att): %s(%.2f, %.2f, %.2f, %.2f)" % ('variational', p_in, p_out, p_att, p_graph_att))
+    logger.info("dropout(in, out, hidden, att, graph_att): %s(%.2f, %.2f, %.2f, %.2f, %.2f)" % ('variational', p_in, p_out, p_hid, p_att, p_graph_att))
     logger.info('# of Parameters: %d' % (sum([param.numel() for param in network.parameters()])))
 
     logger.info("Reading Data")
@@ -271,7 +273,7 @@ def train(args):
     data_train = conllx_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True)
     data_dev = conllx_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True)
     data_test = conllx_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True)
-
+    num_data = sum(data_train[1])
     logger.info("training: #training data: %d, batch: %d, unk replace: %.2f" % (num_data, batch_size, unk_replace))
 
     pred_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, type_alphabet)
@@ -336,7 +338,7 @@ def train(args):
         for step, data in enumerate(iterate_data_and_sample(data_train, batch_size, bucketed=True, 
                             unk_replace=unk_replace, shuffle=True, max_layers=max_layers)):
             for n_layers, sub_data in data.items():
-                print ('number of previous layers:',n_layers)
+                #print ('number of previous layers:',n_layers)
                 optimizer.zero_grad()
                 words = sub_data['WORD'].to(device)
                 chars = sub_data['CHAR'].to(device)

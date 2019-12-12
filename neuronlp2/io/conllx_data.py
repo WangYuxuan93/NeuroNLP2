@@ -197,6 +197,8 @@ def read_data(source_path: str, word_alphabet: Alphabet, char_alphabet: Alphabet
         for j, wid in enumerate(wids):
             if word_alphabet.is_singleton(wid):
                 single[i, j] = 1
+                
+    masks[:,0] = 0
 
     words = torch.from_numpy(wid_inputs)
     chars = torch.from_numpy(cid_inputs)

@@ -150,7 +150,7 @@ def iterate_bucketed_batch_and_sample(data, batch_size, unk_replace=0., shuffle=
 
     stack_keys = ['STACK_HEAD', 'CHILD', 'SIBLING', 'STACK_TYPE', 'SKIP_CONNECT', 'MASK_DEC']
     exclude_keys = set(['SINGLE', 'WORD', 'LENGTH'] + stack_keys)
-    easyfirst_keys = ['WORD', 'LENGTH', 'POS', 'CHAR', 'HEAD', 'TYPE']
+    easyfirst_keys = ['WORD', 'MASK', 'POS', 'CHAR', 'HEAD', 'TYPE']
     stack_keys = set(stack_keys)
     for bucket_id in bucket_indices:
         data = data_tensor[bucket_id]
@@ -186,7 +186,7 @@ def iterate_bucketed_batch_and_sample(data, batch_size, unk_replace=0., shuffle=
             batch_by_layer = sample_generate_order(batch, lengths, n_recomp=max_layers-1)
             yield batch_by_layer
 
-def sample_generate_order(batch, lengths, n_recomp=3):
+def sample_generate_order(batch, lengths, n_recomp=3, debug=False):
 
     RECOMP = -1
     EOS = -2
@@ -205,7 +205,7 @@ def sample_generate_order(batch, lengths, n_recomp=3):
         np.random.shuffle(new_order)
         new_order = np.append(new_order,EOS)
         n_step = 0
-        generated_heads = np.zeros([1,batch_length], dtype=int)
+        generated_heads = np.zeros([1,batch_length], dtype=np.int32)
         # the input generated head list
         generated_heads_list = []
         # whether to recompute at this step
@@ -227,8 +227,8 @@ def sample_generate_order(batch, lengths, n_recomp=3):
                 # add one new head to the top layer of generated heads
                 generated_heads[-1,next_step] = 1
             n_step += 1
-        
-        #print ("new_order", new_order)
+        if debug:
+            print ("new_order", new_order)
         """
         print ('generated_heads_list:')
         for h in generated_heads_list:
@@ -243,9 +243,15 @@ def sample_generate_order(batch, lengths, n_recomp=3):
             batch_by_layer[n_layers]['GEN_HEAD'].append(gen_heads)
     for n_layers in batch_by_layer.keys():
         for key in batch_by_layer[n_layers].keys():
-            batch_by_layer[n_layers][key] = np.stack(batch_by_layer[n_layers][key])
+            batch_by_layer[n_layers][key] = torch.from_numpy(np.stack(batch_by_layer[n_layers][key]))
         batch_by_layer[n_layers]['GEN_HEAD'] = np.transpose(batch_by_layer[n_layers]['GEN_HEAD'], (1,0,2))
-    #print (batch_by_layer)
+        
+    if debug:
+        for i in batch_by_layer.keys():
+            print('-' * 50)
+            print ("layer-%d"%i)
+            for key in batch_by_layer[i].keys():
+                print ("%s\n"%key, batch_by_layer[i][key])
     return batch_by_layer
         
 

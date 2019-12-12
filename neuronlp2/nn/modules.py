@@ -12,7 +12,7 @@ from torch.nn.parameter import Parameter
 class BiAffine_v2(nn.Module):
 
     def __init__(self, n_in, n_out=1, bias_x=True, bias_y=True):
-        super(Biaffine, self).__init__()
+        super(BiAffine_v2, self).__init__()
 
         self.n_in = n_in
         self.n_out = n_out

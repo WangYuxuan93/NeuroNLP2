@@ -369,7 +369,6 @@ class GraphAttentionConfig(object):
     """Configuration class to store the configuration of a `GraphAttentionModel`.
     """
     def __init__(self,
-                vocab_size,
                 input_size=100,
                 hidden_size=768,
                 arc_space=600,
@@ -384,7 +383,6 @@ class GraphAttentionConfig(object):
         """Constructs BertConfig.
 
         Args:
-            vocab_size: Vocabulary size of `inputs_ids` in `BertModel`.
             hidden_size: Size of the encoder layers and the pooler layer.
             num_attention_heads: Number of attention heads for each attention layer in
                 the Transformer encoder.
@@ -402,7 +400,6 @@ class GraphAttentionConfig(object):
             initializer_range: The sttdev of the truncated_normal_initializer for
                 initializing all weight matrices.
         """
-        self.vocab_size = vocab_size
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.arc_space = arc_space
@@ -455,9 +452,9 @@ class GraphAttentionEmbeddings(nn.Module):
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def forward(self, input_tensor):
-    """
+        """
         input_tensor: (batch, seq_len, input_size)
-    """
+        """
         seq_length = input_tensor.size(1)
         batch_size = input_tensor.size(0)
 
@@ -504,7 +501,7 @@ class GraphAttention(nn.Module):
         attention_probs = self.dropout(graph_matrix)
         # (batch, seq_len, seq_len) * (batch, seq_len, arc_space) 
         # => (batch, seq_len, arc_space)
-        context_layer = torch.matmul(attention_probs, value_layer)
+        context_layer = torch.matmul(attention_probs.float(), value_layer)
         return context_layer
 
 
@@ -532,23 +529,22 @@ class GraphAttentionLayer(nn.Module):
         attention_output = self.attention(hidden_states, attention_mask)
         graph_attention_output = self.graph_attention(hidden_states, graph_matrix)
         # (batch, seq_len, hidden_size+arc_space)
-        concated_attention_output = torch.cat([attention_output, graph_attention_output].-1)
-        intermediate_output = self.intermediate(attention_output)
+        concated_attention_output = torch.cat([attention_output, graph_attention_output],-1)
+        intermediate_output = self.intermediate(concated_attention_output)
         layer_output = self.output(intermediate_output, attention_output)
         return layer_output
 
 
 class GraphAttentionEncoder(nn.Module):
-    def __init__(self, config, layer):
+    def __init__(self, config):
         super(GraphAttentionEncoder, self).__init__()
-        #layer = GraphAttentionLayer(config)
+        self.layer = GraphAttentionLayer(config)
         #self.layers = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.max_layers)])
-        self.layer = layer
 
     def forward(self, hidden_states, graph_matrices, attention_mask):
         all_encoder_layers = []
         for graph_matrix in graph_matrices:
-            hidden_states = layer(hidden_states, graph_matrix, attention_mask)
+            hidden_states = self.layer(hidden_states, graph_matrix, attention_mask)
             all_encoder_layers.append(hidden_states)
         return all_encoder_layers
 
