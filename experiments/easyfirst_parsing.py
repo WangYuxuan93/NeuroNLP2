@@ -63,13 +63,14 @@ def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_
         types = data['TYPE'].numpy()
         lengths = data['LENGTH'].numpy()
         masks = data['MASK'].to(device)
+        #print (words)
         heads_pred, types_pred = network.decode(words, chars, postags, mask=masks, 
                                                 max_layers=max_layers, max_steps=max_steps)
 
         words = words.cpu().numpy()
         postags = postags.cpu().numpy()
         pred_writer.write(words, postags, heads_pred, types_pred, lengths, symbolic_root=True)
-        gold_writer.write(words, postags, heads, types, lengths, symbolic_root=True)
+        #gold_writer.write(words, postags, heads, types, lengths, symbolic_root=True)
 
         stats, stats_nopunc, stats_root, num_inst = parser.eval(words, postags, heads_pred, types_pred, heads, types,
                                                                 word_alphabet, pos_alphabet, lengths, punct_set=punct_set, symbolic_root=True)
@@ -271,11 +272,11 @@ def train(args):
     logger.info("Reading Data")
 
     data_train = conllx_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
-                                                mask_out_root=True)
+                                                mask_out_root=False)
     data_dev = conllx_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
-                                        mask_out_root=True)
+                                        mask_out_root=False)
     data_test = conllx_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
-                                        mask_out_root=True)
+                                        mask_out_root=False)
     
 
     num_data = sum(data_train[1])
@@ -416,14 +417,14 @@ def train(args):
                 pred_filename = os.path.join(result_path, 'pred_dev%d' % epoch)
                 pred_writer.start(pred_filename)
                 gold_filename = os.path.join(result_path, 'gold_dev%d' % epoch)
-                gold_writer.start(gold_filename)
+                #gold_writer.start(gold_filename)
 
                 print('Evaluating dev:')
                 dev_stats, dev_stats_nopunct, dev_stats_root = eval(data_dev, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam,
                                                                     max_layers=max_layers, max_steps=max_steps)
 
                 pred_writer.close()
-                gold_writer.close()
+                #gold_writer.close()
 
                 dev_ucorr, dev_lcorr, dev_ucomlpete, dev_lcomplete, dev_total = dev_stats
                 dev_ucorr_nopunc, dev_lcorr_nopunc, dev_ucomlpete_nopunc, dev_lcomplete_nopunc, dev_total_nopunc = dev_stats_nopunct

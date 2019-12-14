@@ -185,12 +185,15 @@ class EasyFirst(nn.Module):
         # (batch)
         max_indices_dep = flatten_max_indices // seq_len
         max_indices_head = flatten_max_indices % seq_len
+        #print ("arc_logp:\n",arc_logp)
+        #print ("dep:{}, head:{}".format(max_indices_dep, max_indices_head))
+        #print ("dep_hidden_states:\n",dep_hidden_states[:,:,:3])
 
         ids_dep = max_indices_dep.unsqueeze(1).unsqueeze(2).expand(batch_size,1,hidden_size)
         #print (id_dep)
         # (batch, hidden_size)
         selected_dep_hidden_states = dep_hidden_states.gather(dim=1, index=ids_dep).squeeze(1)
-        #print (selected_dep_hidden_states)
+        #print ("selected_dep_hidden_states:\n",selected_dep_hidden_states[:,:3])
 
         ids_head = max_indices_head.unsqueeze(1).unsqueeze(2).expand(batch_size,1,hidden_size)
         #print (id_head)
@@ -264,25 +267,43 @@ class EasyFirst(nn.Module):
         """
         # preprocessing
         n_layers, batch_size, seq_len = gen_heads.size()
+
+        # (batch, seq_len), at position 0 is 0
+        root_mask = torch.arange(seq_len).gt(0).float().unsqueeze(0) * mask
+        # (batch, seq_len, seq_len)
+        mask_3D = (root_mask.unsqueeze(-1) * mask.unsqueeze(1))
+
         # (batch, seq_len), the mask of generated heads
         generated_head_mask = gen_heads.sum(0)
         # (batch, seq_len), mask of heads to be generated
-        ref_heads_mask = (1 - generated_head_mask) * mask
+        ref_heads_mask = (1 - generated_head_mask) * root_mask
         # (batch, seq_len, seq_len)
         ref_heads_onehot = torch.zeros(batch_size, seq_len, seq_len, dtype=torch.int32)
         ref_heads_onehot.scatter_(-1, (ref_heads_mask*heads).unsqueeze(-1).long(), 1)
-
+        ref_heads_onehot = ref_heads_onehot * ref_heads_mask.unsqueeze(2)
+        
+        #print ('mask:\n',mask)
+        #print ("root_mask:\n",root_mask)
+        """
+        print ("mask_3D:\n",mask_3D)
+        print ('ref_heads_mask:\n',ref_heads_mask)
+        print ('ref_heads_onehot:\n',ref_heads_onehot)
+        print ('gen_heads:\n', gen_heads)
+        print ('gen_heads*heads:\n', gen_heads*heads)
+        """
+        
         # (n_layers, batch, seq_len, seq_len)
         gen_heads_onehot = torch.zeros(n_layers, batch_size, seq_len, seq_len, dtype=torch.int32)
         gen_heads_onehot.scatter_(-1, torch.unsqueeze(gen_heads*heads, -1), 1)
-        # (1, batch, seq_len, 1)
-        expanded_mask = mask.unsqueeze(0).unsqueeze(-1)
+        # (1, batch, 1, seq_len)
+        #expanded_mask = mask.unsqueeze(0).unsqueeze(2)
         # (n_layers, batch, seq_len, seq_len)
-        gen_heads_onehot = gen_heads_onehot * expanded_mask
-
+        gen_heads_onehot = gen_heads_onehot * gen_heads.unsqueeze(-1)
+        
+        #np.set_printoptions(threshold=np.inf)
+        #print ('gen_heads_onehot:\n',gen_heads_onehot.cpu().numpy())
 
         encoder_output = self._get_encoder_output(input_word, input_char, input_pos, gen_heads_onehot, mask=mask)
-
         arc, type = self._mlp(encoder_output)
 
         # compute arc loss
@@ -291,7 +312,7 @@ class EasyFirst(nn.Module):
         arc_logits = self.arc_attn(arc_c, arc_h)
         # mask invalid position to -inf for log_softmax
         if mask is not None:
-            minus_mask = mask.eq(0).unsqueeze(2)
+            minus_mask = root_mask.eq(0).unsqueeze(2)
             arc_logits = arc_logits.masked_fill(minus_mask, float('-inf'))
 
         # (batch, seq_len, seq_len)
@@ -307,7 +328,7 @@ class EasyFirst(nn.Module):
         # (batch) number of ref heads in total
         n_heads = ref_heads_onehot.sum(dim=(1,2)) + 1e-5
         # (batch)
-        logp_selected_gold_heads = torch.logsumexp(selected_gold_heads_logp, dim=(1, 2)) / n_heads
+        logp_selected_gold_heads = torch.logsumexp(selected_gold_heads_logp, dim=(1, 2)) #/ n_heads
 
         # (batch), fill in no_recomp and do_recomp
         overall_logp = torch.where(recomps==0, logp_selected_gold_heads, do_recomp_logp)
@@ -319,7 +340,6 @@ class EasyFirst(nn.Module):
         # compute label loss
         # out_type shape [batch, length, type_space]
         rel_h, rel_c = type
-        # [batch_size, seq_len, seq_len, n_rels]
         # [batch, n_rels, seq_len, seq_len]
         rel_logits = self.rel_attn(rel_c, rel_h) #.permute(0, 2, 3, 1)
         
@@ -331,7 +351,7 @@ class EasyFirst(nn.Module):
         heads_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32)
         heads_3D.scatter_(-1, heads.unsqueeze(-1), 1)
         # (batch, seq_len, seq_len)
-        loss_type = self.criterion(rel_logits, rels_3D) * mask.unsqueeze(-1) * heads_3D
+        loss_type = self.criterion(rel_logits, rels_3D) * (mask_3D * heads_3D)
         loss_type = loss_type.sum()
 
         return loss_arc, loss_type
@@ -370,9 +390,12 @@ class EasyFirst(nn.Module):
             char = input_char[batch_id:batch_id+1, :, :]
             pos = input_pos[batch_id:batch_id+1, :]
             mask_ = mask[batch_id:batch_id+1, :]
+            # (batch, seq_len), at position 0 is 0
+            root_mask = torch.arange(seq_len).gt(0).float().unsqueeze(0) * mask_
             # (n_layers=1, batch=1, seq_len, seq_len)
             gen_heads_onehot = torch.zeros((1, 1, seq_len, seq_len), dtype=torch.int32)
-            recomp_minus_mask = torch.Tensor([0,0,0]).bool()
+            #recomp_minus_mask = torch.Tensor([0,0,0]).bool()
+            recomp_minus_mask = torch.Tensor([0,0,1]).bool()
 
             for n_step in range(max_steps):
                 if debug:
@@ -387,17 +410,16 @@ class EasyFirst(nn.Module):
 
                 # mask words that have heads, this only for tree parsing
                 #generated_mask = heads_pred[batch_id:batch_id+1,:].ne(0)
-                generated_mask = heads_mask[batch_id:batch_id+1,:].eq(1)
-                logit_mask = mask_.eq(0) + generated_mask
+                generated_mask = heads_mask[batch_id:batch_id+1,:]
+                # (1, seq_len, 1)
+                #logit_mask = (mask_.eq(0) + generated_mask).unsqueeze(2)
+                logit_mask = (root_mask * (1-generated_mask)).unsqueeze(2)
+                # (1, seq_len, seq_len)
+                minus_mask = (logit_mask * mask_.unsqueeze(1)).eq(0)
                 # mask invalid position to -inf for log_softmax
-                minus_mask = logit_mask.unsqueeze(2)
+                #minus_mask = logit_mask.unsqueeze(2)
                 arc_logits = arc_logits.masked_fill(minus_mask, float('-inf'))
-                if debug:
-                    print ("heads_pred:\n", heads_pred)
-                    print ("heads_mask:\n", heads_mask)
-                    print ("logit_mask:",logit_mask)
-                    print ("arc_logits:\n",arc_logits)
-
+                
                 # (batch, seq_len, seq_len), (batch, 3)
                 arc_logp, recomp_logp = self._get_arc_logp(arc_logits, arc_c, arc_h, encoder_output)
                 
@@ -406,6 +428,14 @@ class EasyFirst(nn.Module):
                 overall_logp = torch.cat([arc_logp.view(-1),recomp_logp.view(-1)[1:]])
                 eos_id = overall_logp.size(0) - 1
                 do_recomp_id = eos_id - 1
+
+                if debug:
+                    print ("heads_pred:\n", heads_pred)
+                    print ("heads_mask:\n", heads_mask)
+                    print ("root_mask:\n", root_mask)
+                    print ("minus_mask:",minus_mask)
+                    print ("arc_logp:\n", arc_logp)
+                    print ("recomp_logp:\n", recomp_logp)
 
                 prediction = torch.argmax(overall_logp)
                 recomp_pred = prediction.cpu().numpy()
@@ -421,7 +451,7 @@ class EasyFirst(nn.Module):
                     # (batch_size=1, seq_len, seq_len)
                     rel_ids = rel_logits.argmax(-1)
                     # (1, seq_len)
-                    masked_heads_pred = heads_pred[batch_id:batch_id+1,:] * mask_
+                    masked_heads_pred = heads_pred[batch_id:batch_id+1,:] * root_mask
                     # (1, seq_len)
                     gathered_rels_pred = rel_ids.gather(dim=-1, index=masked_heads_pred.unsqueeze(-1).long()).squeeze(-1)
                     # (1, seq_len)
@@ -436,7 +466,8 @@ class EasyFirst(nn.Module):
                     # update recomp_minus_mask, disable do_recomp action
                     n_layers = gen_heads_onehot.size(0)
                     if n_layers == max_layers:
-                        recomp_minus_mask = torch.Tensor([0,1,0]).bool()
+                        #recomp_minus_mask = torch.Tensor([0,1,0]).bool()
+                        recomp_minus_mask = torch.Tensor([0,1,1]).bool()
                 else:
                     # calculate the predicted arc
                     dep = prediction // seq_len
@@ -445,7 +476,21 @@ class EasyFirst(nn.Module):
                     heads_mask[batch_id,dep] = 1
                     # update it to gen_heads by layer for encoder input
                     gen_heads_onehot[-1,0,dep,head] = 1
-                    if torch.equal(heads_mask[batch_id], mask[batch_id].long()):
+                    #if torch.equal(heads_mask[batch_id], mask[batch_id].long()):
+                    if torch.equal(heads_mask[batch_id], root_mask[0].long()):
+                        # predict label here
+                        # out_type shape [batch, length, type_space]
+                        rel_h, rel_c = type
+                        # [batch_size=1, seq_len, seq_len, n_rels]
+                        rel_logits = self.rel_attn(rel_c, rel_h).permute(0, 2, 3, 1)
+                        # (batch_size=1, seq_len, seq_len)
+                        rel_ids = rel_logits.argmax(-1)
+                        # (1, seq_len)
+                        masked_heads_pred = heads_pred[batch_id:batch_id+1,:] * root_mask
+                        # (1, seq_len)
+                        gathered_rels_pred = rel_ids.gather(dim=-1, index=masked_heads_pred.unsqueeze(-1).long()).squeeze(-1)
+                        # (1, seq_len)
+                        rels_pred[batch_id:batch_id+1,:] = gathered_rels_pred
                         break
 
         return heads_pred.cpu().numpy(), rels_pred.cpu().numpy()

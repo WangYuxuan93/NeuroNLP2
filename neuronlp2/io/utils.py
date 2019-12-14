@@ -68,11 +68,12 @@ def get_bucketed_batch(data, batch_size, unk_replace=0.):
 
 
 def iterate_batch(data, batch_size, unk_replace=0., shuffle=False):
+    
     data, data_size = data
-
     words = data['WORD']
     single = data['SINGLE']
     max_length = words.size(1)
+
     if unk_replace:
         ones = single.new_ones(data_size, max_length)
         noise = single.new_empty(data_size, max_length).bernoulli_(unk_replace).long()
@@ -186,7 +187,7 @@ def iterate_bucketed_batch_and_sample(data, batch_size, unk_replace=0., shuffle=
             batch_by_layer = sample_generate_order(batch, lengths, n_recomp=max_layers-1)
             yield batch_by_layer
 
-def sample_generate_order(batch, lengths, n_recomp=3, debug=False):
+def sample_generate_order(batch, lengths, n_recomp=3, recomp_in_prev=True, debug=False):
 
     RECOMP = -1
     EOS = -2
@@ -201,9 +202,17 @@ def sample_generate_order(batch, lengths, n_recomp=3, debug=False):
 
     # for every sentence
     for i in range(len(lengths)):
-        new_order = np.append(np.arange(1,batch_length-1), np.ones(n_recomp) * RECOMP).astype(int)
-        np.random.shuffle(new_order)
-        new_order = np.append(new_order,EOS)
+        if recomp_in_prev:
+            new_order = np.arange(1,batch_length-1).astype(int)
+            np.random.shuffle(new_order)
+            new_order = np.append(np.ones(n_recomp).astype(int) * RECOMP, new_order)
+            new_order = np.append(new_order, EOS)
+        else:
+            new_order = np.append(np.arange(1,batch_length-1), np.ones(n_recomp) * RECOMP).astype(int)
+            np.random.shuffle(new_order)
+            new_order = np.append(new_order, EOS)
+        if debug:
+            print ("new_order", new_order)
         n_step = 0
         generated_heads = np.zeros([1,batch_length], dtype=np.int32)
         # the input generated head list
@@ -227,8 +236,6 @@ def sample_generate_order(batch, lengths, n_recomp=3, debug=False):
                 # add one new head to the top layer of generated heads
                 generated_heads[-1,next_step] = 1
             n_step += 1
-        if debug:
-            print ("new_order", new_order)
         """
         print ('generated_heads_list:')
         for h in generated_heads_list:
@@ -257,9 +264,9 @@ def sample_generate_order(batch, lengths, n_recomp=3, debug=False):
 
 def iterate_data(data, batch_size, bucketed=False, unk_replace=0., shuffle=False):
     if bucketed:
-        return iterate_bucketed_batch(data, batch_size, unk_replace==unk_replace, shuffle=shuffle)
+        return iterate_bucketed_batch(data, batch_size, unk_replace=unk_replace, shuffle=shuffle)
     else:
-        return iterate_batch(data, batch_size, unk_replace==unk_replace, shuffle=shuffle)
+        return iterate_batch(data, batch_size, unk_replace=unk_replace, shuffle=shuffle)
 
 def iterate_data_and_sample(data, batch_size, bucketed=False, unk_replace=0., shuffle=False, max_layers=6):
     return iterate_bucketed_batch_and_sample(data, batch_size, unk_replace==unk_replace, 
