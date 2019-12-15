@@ -328,7 +328,7 @@ class EasyFirst(nn.Module):
         eos_logp = recomp_logp[:,2]
 
         # (batch, seq_len, seq_len)
-        neg_inf_like_logp = torch.Tensor(arc_logp.size()).fill_(-1e9)
+        neg_inf_like_logp = torch.Tensor(arc_logp.size()).fill_(-1e9).to(device)
         selected_gold_heads_logp = torch.where(ref_heads_onehot==1, arc_logp, neg_inf_like_logp)
         # (batch) number of ref heads in total
         n_heads = ref_heads_onehot.sum(dim=(1,2)) + 1e-5
@@ -400,7 +400,7 @@ class EasyFirst(nn.Module):
             # (n_layers=1, batch=1, seq_len, seq_len)
             gen_heads_onehot = torch.zeros((1, 1, seq_len, seq_len), dtype=torch.int32, device=device)
             #recomp_minus_mask = torch.Tensor([0,0,0]).bool()
-            recomp_minus_mask = torch.Tensor([0,0,1]).bool()
+            recomp_minus_mask = torch.Tensor([0,0,1]).bool().to(device)
 
             for n_step in range(max_steps):
                 if debug:
@@ -472,7 +472,7 @@ class EasyFirst(nn.Module):
                     n_layers = gen_heads_onehot.size(0)
                     if n_layers == max_layers:
                         #recomp_minus_mask = torch.Tensor([0,1,0]).bool()
-                        recomp_minus_mask = torch.Tensor([0,1,1]).bool()
+                        recomp_minus_mask = torch.Tensor([0,1,1]).bool().to(device)
                 else:
                     # calculate the predicted arc
                     dep = prediction // seq_len
