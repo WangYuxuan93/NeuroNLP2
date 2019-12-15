@@ -254,7 +254,7 @@ class EasyFirst(nn.Module):
 
 
     def loss(self, input_word, input_char, input_pos, heads, rels, recomps, gen_heads,  
-             mask=None, next_head=None):
+             mask=None, next_head=None, device=torch.device('cpu')):
         """
         Input:
             input_word: (batch, seq_len)
@@ -271,7 +271,7 @@ class EasyFirst(nn.Module):
         n_layers, batch_size, seq_len = gen_heads.size()
 
         # (batch, seq_len), at position 0 is 0
-        root_mask = torch.arange(seq_len).gt(0).float().unsqueeze(0) * mask
+        root_mask = torch.arange(seq_len, device=device).gt(0).float().unsqueeze(0) * mask
         # (batch, seq_len, seq_len)
         mask_3D = (root_mask.unsqueeze(-1) * mask.unsqueeze(1))
 
@@ -283,7 +283,7 @@ class EasyFirst(nn.Module):
         else:
             ref_heads_mask = next_head
         # (batch, seq_len, seq_len)
-        ref_heads_onehot = torch.zeros(batch_size, seq_len, seq_len, dtype=torch.int32)
+        ref_heads_onehot = torch.zeros(batch_size, seq_len, seq_len, dtype=torch.int32, device=device)
         ref_heads_onehot.scatter_(-1, (ref_heads_mask*heads).unsqueeze(-1).long(), 1)
         ref_heads_onehot = ref_heads_onehot * ref_heads_mask.unsqueeze(2)
         
@@ -298,7 +298,7 @@ class EasyFirst(nn.Module):
         """
         
         # (n_layers, batch, seq_len, seq_len)
-        gen_heads_onehot = torch.zeros(n_layers, batch_size, seq_len, seq_len, dtype=torch.int32)
+        gen_heads_onehot = torch.zeros(n_layers, batch_size, seq_len, seq_len, dtype=torch.int32, device=device)
         gen_heads_onehot.scatter_(-1, torch.unsqueeze(gen_heads*heads, -1), 1)
         # (1, batch, 1, seq_len)
         #expanded_mask = mask.unsqueeze(0).unsqueeze(2)
@@ -349,11 +349,11 @@ class EasyFirst(nn.Module):
         rel_logits = self.rel_attn(rel_c, rel_h) #.permute(0, 2, 3, 1)
         
         # (batch, seq_len, seq_len)
-        rels_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.long)
+        rels_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.long, device=device)
         rels_3D.scatter_(-1, heads.unsqueeze(-1), rels.unsqueeze(-1))
 
         # (batch, seq_len, seq_len)
-        heads_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32)
+        heads_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=device)
         heads_3D.scatter_(-1, heads.unsqueeze(-1), 1)
         # (batch, seq_len, seq_len)
         loss_type = self.criterion(rel_logits, rels_3D) * (mask_3D * heads_3D)
@@ -375,7 +375,7 @@ class EasyFirst(nn.Module):
         return rels + leading_symbolic
 
     def decode(self, input_word, input_char, input_pos, mask=None, max_layers=6, max_steps=100,
-                debug=False):
+                debug=False, device=torch.device('cpu')):
         """
         Input:
             input_word: (batch, seq_len)
@@ -386,9 +386,9 @@ class EasyFirst(nn.Module):
         batch_size, seq_len = input_word.size()
 
         # (batch_size, seq_len)
-        heads_pred = torch.zeros((batch_size, seq_len), dtype=torch.int64)
-        heads_mask = torch.zeros_like(heads_pred)
-        rels_pred = torch.zeros_like(heads_pred)
+        heads_pred = torch.zeros((batch_size, seq_len), dtype=torch.int64, device=device)
+        heads_mask = torch.zeros_like(heads_pred, device=device)
+        rels_pred = torch.zeros_like(heads_pred, device=device)
 
         for batch_id in range(batch_size):
             word = input_word[batch_id:batch_id+1, :]
@@ -396,9 +396,9 @@ class EasyFirst(nn.Module):
             pos = input_pos[batch_id:batch_id+1, :]
             mask_ = mask[batch_id:batch_id+1, :]
             # (batch, seq_len), at position 0 is 0
-            root_mask = torch.arange(seq_len).gt(0).float().unsqueeze(0) * mask_
+            root_mask = torch.arange(seq_len, device=device).gt(0).float().unsqueeze(0) * mask_
             # (n_layers=1, batch=1, seq_len, seq_len)
-            gen_heads_onehot = torch.zeros((1, 1, seq_len, seq_len), dtype=torch.int32)
+            gen_heads_onehot = torch.zeros((1, 1, seq_len, seq_len), dtype=torch.int32, device=device)
             #recomp_minus_mask = torch.Tensor([0,0,0]).bool()
             recomp_minus_mask = torch.Tensor([0,0,1]).bool()
 
@@ -465,7 +465,7 @@ class EasyFirst(nn.Module):
                 elif recomp_pred == do_recomp_id:
                     # add a new layer to gen_heads
                     # (1, batch=1, seq_len, seq_len)
-                    gen_heads_new_layer = torch.zeros((1, 1, seq_len, seq_len), dtype=torch.int32)
+                    gen_heads_new_layer = torch.zeros((1, 1, seq_len, seq_len), dtype=torch.int32, device=device)
                     # (n_layers+1, batch=1, seq_len, seq_len)
                     gen_heads_onehot = torch.cat([gen_heads_onehot, gen_heads_new_layer], dim=0)
                     # update recomp_minus_mask, disable do_recomp action

@@ -65,7 +65,8 @@ def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_
         masks = data['MASK'].to(device)
         #print (words)
         heads_pred, types_pred = network.decode(words, chars, postags, mask=masks, 
-                                                max_layers=max_layers, max_steps=max_steps)
+                                                max_layers=max_layers, max_steps=max_steps,
+                                                device=device)
 
         words = words.cpu().numpy()
         postags = postags.cpu().numpy()
@@ -360,7 +361,8 @@ def train(args):
                 gen_heads = sub_data['GEN_HEAD'].to(device)
                 next_head = sub_data['NEXT_HEAD'].to(device)
                 nwords = masks.sum() - nbatch
-                loss_arc, loss_type = network.loss(words, chars, postags, heads, types, recomps, gen_heads, mask=masks, next_head=next_head)
+                loss_arc, loss_type = network.loss(words, chars, postags, heads, types, recomps, gen_heads, 
+                                                    mask=masks, next_head=next_head, device=device)
                 loss = 0.5 *((1.0 - type_loss_ratio) * loss_arc + type_loss_ratio * loss_type)
                 #if loss_ty_token:
                 #    loss = loss_total.div(nwords)
