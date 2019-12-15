@@ -187,7 +187,7 @@ def iterate_bucketed_batch_and_sample(data, batch_size, unk_replace=0., shuffle=
             batch_by_layer = sample_generate_order(batch, lengths, n_recomp=max_layers-1)
             yield batch_by_layer
 
-def sample_generate_order(batch, lengths, n_recomp=3, recomp_in_prev=True, debug=False):
+def sample_generate_order(batch, lengths, n_recomp=3, recomp_in_prev=False, debug=False):
 
     RECOMP = -1
     EOS = -2
@@ -197,7 +197,7 @@ def sample_generate_order(batch, lengths, n_recomp=3, recomp_in_prev=True, debug
     batch_length = lengths.max().item()
 
     easyfirst_keys = ['WORD', 'MASK', 'LENGTH', 'POS', 'CHAR', 'HEAD', 'TYPE']
-    all_keys = easyfirst_keys + ['RECOMP', 'GEN_HEAD']
+    all_keys = easyfirst_keys + ['RECOMP', 'GEN_HEAD', 'NEXT_HEAD']
     batch_by_layer = {i: {key: [] for key in all_keys} for i in range(n_recomp+1)}
 
     # for every sentence
@@ -215,22 +215,29 @@ def sample_generate_order(batch, lengths, n_recomp=3, recomp_in_prev=True, debug
             print ("new_order", new_order)
         n_step = 0
         generated_heads = np.zeros([1,batch_length], dtype=np.int32)
+        zero_mask = np.zeros([batch_length], dtype=np.int32)
         # the input generated head list
         generated_heads_list = []
         # whether to recompute at this step
         recomp_list = []
+        # the next head to be generated, in shape of 0-1 mask
+        next_list = []
         while n_step < len(new_order):
             next_step = new_order[n_step]
             if next_step == RECOMP:
+                next_list.append(np.copy(zero_mask))
                 generated_heads_list.append(np.copy(generated_heads))
                 recomp_list.append(DO_RECOMP)
                 prev_layers = generated_heads_list[-1]
                 # add a new layer
                 generated_heads = np.concatenate([prev_layers,np.zeros([1,batch_length], dtype=int)], axis=0)
             elif next_step == EOS:
+                next_list.append(np.copy(zero_mask))
                 generated_heads_list.append(np.copy(generated_heads))
                 recomp_list.append(DO_EOS)
             else:
+                next_list.append(np.copy(zero_mask))
+                next_list[-1][next_step] = 1
                 generated_heads_list.append(np.copy(generated_heads))
                 recomp_list.append(NO_RECOMP)
                 # add one new head to the top layer of generated heads
@@ -242,15 +249,17 @@ def sample_generate_order(batch, lengths, n_recomp=3, recomp_in_prev=True, debug
             print (h)
         print ('recomp_list:', recomp_list)"""
         
-        for gen_heads, recomp in zip(generated_heads_list, recomp_list):
-            n_layers = len(gen_heads) - 1
+        for n_step in range(len(recomp_list)):
+            n_layers = len(generated_heads_list[n_step]) - 1
             for key in easyfirst_keys:
                 batch_by_layer[n_layers][key].append(batch[key][i])
-            batch_by_layer[n_layers]['RECOMP'].append(recomp)
-            batch_by_layer[n_layers]['GEN_HEAD'].append(gen_heads)
+            batch_by_layer[n_layers]['RECOMP'].append(recomp_list[n_step])
+            batch_by_layer[n_layers]['GEN_HEAD'].append(generated_heads_list[n_step])
+            batch_by_layer[n_layers]['NEXT_HEAD'].append(next_list[n_step])
     for n_layers in batch_by_layer.keys():
         for key in batch_by_layer[n_layers].keys():
             batch_by_layer[n_layers][key] = torch.from_numpy(np.stack(batch_by_layer[n_layers][key]))
+        # (batch, n_layers, seq_len) -> (n_layers, batch, seq_len)
         batch_by_layer[n_layers]['GEN_HEAD'] = np.transpose(batch_by_layer[n_layers]['GEN_HEAD'], (1,0,2))
         
     if debug:

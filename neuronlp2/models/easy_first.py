@@ -253,7 +253,8 @@ class EasyFirst(nn.Module):
         return arc_logp, recomp_logp
 
 
-    def loss(self, input_word, input_char, input_pos, heads, rels, recomps, gen_heads, mask=None):
+    def loss(self, input_word, input_char, input_pos, heads, rels, recomps, gen_heads,  
+             mask=None, next_head=None):
         """
         Input:
             input_word: (batch, seq_len)
@@ -264,6 +265,7 @@ class EasyFirst(nn.Module):
             recomps: (batch)
             gen_heads: (n_layers, batch, seq_len), 0-1 mask
             mask: (batch, seq_len)
+            next_head: (batch, seq_len), 0-1 mask of the next head prediction
         """
         # preprocessing
         n_layers, batch_size, seq_len = gen_heads.size()
@@ -275,8 +277,11 @@ class EasyFirst(nn.Module):
 
         # (batch, seq_len), the mask of generated heads
         generated_head_mask = gen_heads.sum(0)
-        # (batch, seq_len), mask of heads to be generated
-        ref_heads_mask = (1 - generated_head_mask) * root_mask
+        if next_head is None:
+            # (batch, seq_len), mask of heads to be generated
+            ref_heads_mask = (1 - generated_head_mask) * root_mask
+        else:
+            ref_heads_mask = next_head
         # (batch, seq_len, seq_len)
         ref_heads_onehot = torch.zeros(batch_size, seq_len, seq_len, dtype=torch.int32)
         ref_heads_onehot.scatter_(-1, (ref_heads_mask*heads).unsqueeze(-1).long(), 1)

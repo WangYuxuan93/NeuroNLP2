@@ -358,8 +358,9 @@ def train(args):
                 recomps = sub_data['RECOMP'].to(device)
                 # (n_layers, batch, seq_len)
                 gen_heads = sub_data['GEN_HEAD'].to(device)
+                next_head = sub_data['NEXT_HEAD'].to(device)
                 nwords = masks.sum() - nbatch
-                loss_arc, loss_type = network.loss(words, chars, postags, heads, types, recomps, gen_heads, mask=masks)
+                loss_arc, loss_type = network.loss(words, chars, postags, heads, types, recomps, gen_heads, mask=masks, next_head=next_head)
                 loss = 0.5 *((1.0 - type_loss_ratio) * loss_arc + type_loss_ratio * loss_type)
                 #if loss_ty_token:
                 #    loss = loss_total.div(nwords)
