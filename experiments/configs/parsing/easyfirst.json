@@ -5,6 +5,7 @@
   "char_dim": 100,
   "pos": true,
   "use_char": false,
+  "use_chosen_head": false,
   "pos_dim": 100,
   "max_layers": 4,
   "max_steps": 100,

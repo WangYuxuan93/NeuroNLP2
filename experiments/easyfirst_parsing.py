@@ -237,6 +237,7 @@ def train(args):
     max_steps = hyps['max_steps']
     use_pos = hyps['pos']
     use_char = hyps['use_char']
+    use_chosen_head = hyps['use_chosen_head']
     pos_dim = hyps['pos_dim']
     hidden_size = hyps['hidden_size']
     arc_space = hyps['arc_space']
@@ -366,7 +367,10 @@ def train(args):
                 recomps = sub_data['RECOMP'].to(device)
                 # (n_layers, batch, seq_len)
                 gen_heads = sub_data['GEN_HEAD'].to(device)
-                next_head = sub_data['NEXT_HEAD'].to(device)
+                if use_chosen_head:
+                    next_head = sub_data['NEXT_HEAD'].to(device)
+                else:
+                    next_head = None
                 nwords = masks.sum() - nbatch
                 loss_arc, loss_type = network.loss(words, chars, postags, heads, types, recomps, gen_heads, 
                                                     mask=masks, next_head=next_head, device=device)
@@ -393,24 +397,23 @@ def train(args):
                         train_loss += loss.item()
                         train_arc_loss += loss_arc.item()
                         train_type_loss += loss_type.item()
-
-                # update log
-                if step % 100 == 0:
-                    torch.cuda.empty_cache()
-                    if not noscreen: 
-                        sys.stdout.write("\b" * num_back)
-                        sys.stdout.write(" " * num_back)
-                        sys.stdout.write("\b" * num_back)
-                        curr_lr = scheduler.get_lr()[0]
-                        num_insts = max(num_insts, 1)
-                        num_words = max(num_words, 1)
-                        log_info = '[%d/%d (%.0f%%) lr=%.6f (%d)] loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f)' % (step, num_batches, 100. * step / num_batches, curr_lr, num_nans,
-                                                                                                                             train_loss / num_insts, train_loss / num_words,
-                                                                                                                             train_arc_loss / num_insts, train_arc_loss / num_words,
-                                                                                                                            train_type_loss / num_insts, train_type_loss / num_words)
-                        sys.stdout.write(log_info)
-                        sys.stdout.flush()
-                        num_back = len(log_info)
+                torch.cuda.empty_cache()
+            # update log
+            if step % 100 == 0:
+                if not noscreen: 
+                    sys.stdout.write("\b" * num_back)
+                    sys.stdout.write(" " * num_back)
+                    sys.stdout.write("\b" * num_back)
+                    curr_lr = scheduler.get_lr()[0]
+                    num_insts = max(num_insts, 1)
+                    num_words = max(num_words, 1)
+                    log_info = '[%d/%d (%.0f%%) lr=%.6f (%d)] loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f)' % (step, num_batches, 100. * step / num_batches, curr_lr, num_nans,
+                                                                                                                         train_loss / num_insts, train_loss / num_words,
+                                                                                                                         train_arc_loss / num_insts, train_arc_loss / num_words,
+                                                                                                                        train_type_loss / num_insts, train_type_loss / num_words)
+                    sys.stdout.write(log_info)
+                    sys.stdout.flush()
+                    num_back = len(log_info)
         if not noscreen: 
             sys.stdout.write("\b" * num_back)
             sys.stdout.write(" " * num_back)
