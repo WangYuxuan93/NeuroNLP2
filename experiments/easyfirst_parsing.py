@@ -56,9 +56,12 @@ def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_
     accum_total_root = 0.0
     accum_total_inst = 0.0
     for data in iterate_data(data, batch_size):
-        words = data['WORD'].to(device)
-        chars = data['CHAR'].to(device)
-        postags = data['POS'].to(device)
+        #words = data['WORD'].to(device)
+        #chars = data['CHAR'].to(device)
+        #postags = data['POS'].to(device)
+        words = data['WORD']
+        chars = data['CHAR']
+        postags = data['POS']
         heads = data['HEAD'].numpy()
         types = data['TYPE'].numpy()
         lengths = data['LENGTH'].numpy()
@@ -253,6 +256,7 @@ def train(args):
         network = EasyFirst(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                            hidden_size, num_types, arc_space, type_space,
                            num_attention_heads, intermediate_size, recomp_att_dim,
+                           device=device, 
                            hidden_dropout_prob=p_hid,
                            attention_probs_dropout_prob=p_att,
                            graph_attention_probs_dropout_prob=p_graph_att,
@@ -264,7 +268,7 @@ def train(args):
     if freeze:
         freeze_embedding(network.word_embed)
 
-    network = network.to(device)
+    #network = network.to(device)
     model = "{}-{}".format(model_type, mode)
     logger.info("Network: %s, max_layer=%s, hidden=%d, act=%s" % (model, max_layers, hidden_size, activation))
     logger.info("dropout(in, out, hidden, att, graph_att): %s(%.2f, %.2f, %.2f, %.2f, %.2f)" % ('variational', p_in, p_out, p_hid, p_att, p_graph_att))
@@ -347,9 +351,12 @@ def train(args):
             for n_layers, sub_data in data.items():
                 #print ('number of previous layers:',n_layers)
                 optimizer.zero_grad()
-                words = sub_data['WORD'].to(device)
-                chars = sub_data['CHAR'].to(device)
-                postags = sub_data['POS'].to(device)
+                #words = sub_data['WORD'].to(device)
+                #chars = sub_data['CHAR'].to(device)
+                #postags = sub_data['POS'].to(device)
+                words = sub_data['WORD']
+                chars = sub_data['CHAR']
+                postags = sub_data['POS']
                 heads = sub_data['HEAD'].to(device)
                 nbatch = words.size(0)
 

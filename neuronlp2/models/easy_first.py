@@ -20,18 +20,24 @@ class PriorOrder(Enum):
 class EasyFirst(nn.Module):
     def __init__(self, word_dim, num_words, char_dim, num_chars, pos_dim, num_pos, hidden_size, num_labels, arc_space, type_space,
                  num_attention_heads, intermediate_size, recomp_att_dim,
+                 device=torch.device('cpu'),
                  hidden_dropout_prob=0.1,
                  attention_probs_dropout_prob=0.1, graph_attention_probs_dropout_prob=0,
                  embedd_word=None, embedd_char=None, embedd_pos=None, p_in=0.33, p_out=0.33, pos=True, use_char=False, activation='elu'):
         super(EasyFirst, self).__init__()
+        self.device = device
 
         self.word_embed = nn.Embedding(num_words, word_dim, _weight=embedd_word, padding_idx=1)
         self.pos_embed = nn.Embedding(num_pos, pos_dim, _weight=embedd_pos, padding_idx=1) if pos else None
-        self.char_embed = nn.Embedding(num_chars, char_dim, _weight=embedd_char, padding_idx=1) if use_char else None
-        self.char_cnn = CharCNN(2, char_dim, char_dim, hidden_channels=char_dim * 4, activation=activation)
+        if use_char:
+            self.char_embed = nn.Embedding(num_chars, char_dim, _weight=embedd_char, padding_idx=1)
+            self.char_cnn = CharCNN(2, char_dim, char_dim, hidden_channels=char_dim * 4, activation=activation).to(device)
+        else:
+            self.char_embed = None
+            self.char_cnn = None
 
-        self.dropout_in = nn.Dropout2d(p=p_in)
-        self.dropout_out = nn.Dropout2d(p=p_out)
+        self.dropout_in = nn.Dropout2d(p=p_in).to(device)
+        self.dropout_out = nn.Dropout2d(p=p_out).to(device)
         self.num_labels = num_labels
 
         dim_enc = word_dim
@@ -52,29 +58,29 @@ class EasyFirst(nn.Module):
                                             max_position_embeddings=256,
                                             initializer_range=0.02)
 
-        self.graph_attention = GraphAttentionModel(self.config)
+        self.graph_attention = GraphAttentionModel(self.config).to(device)
 
         out_dim = hidden_size
-        self.arc_h = nn.Linear(out_dim, arc_space)
-        self.arc_c = nn.Linear(out_dim, arc_space)
-        self.arc_attn = BiAffine_v2(arc_space, bias_x=True, bias_y=False)
+        self.arc_h = nn.Linear(out_dim, arc_space).to(device)
+        self.arc_c = nn.Linear(out_dim, arc_space).to(device)
+        self.arc_attn = BiAffine_v2(arc_space, bias_x=True, bias_y=False).to(device)
 
-        self.rel_h = nn.Linear(out_dim, type_space)
-        self.rel_c = nn.Linear(out_dim, type_space)
-        self.rel_attn = BiAffine_v2(type_space, n_out=self.num_labels, bias_x=True, bias_y=True)
+        self.rel_h = nn.Linear(out_dim, type_space).to(device)
+        self.rel_c = nn.Linear(out_dim, type_space).to(device)
+        self.rel_attn = BiAffine_v2(type_space, n_out=self.num_labels, bias_x=True, bias_y=True).to(device)
 
-        self.arc_hidden_to_att = nn.Linear(2*arc_space, recomp_att_dim)
-        self.encoder_to_att = nn.Linear(hidden_size, recomp_att_dim)
-        self.recomp_att = nn.Linear(recomp_att_dim, 1, bias=False)
-        self.tanh = nn.Tanh()
-        self.recomp = nn.Linear(2*arc_space+hidden_size, 3)
+        self.arc_hidden_to_att = nn.Linear(2*arc_space, recomp_att_dim).to(device)
+        self.encoder_to_att = nn.Linear(hidden_size, recomp_att_dim).to(device)
+        self.recomp_att = nn.Linear(recomp_att_dim, 1, bias=False).to(device)
+        self.tanh = nn.Tanh().to(device)
+        self.recomp = nn.Linear(2*arc_space+hidden_size, 3).to(device)
 
         assert activation in ['elu', 'tanh']
         if activation == 'elu':
-            self.activation = nn.ELU(inplace=True)
+            self.activation = nn.ELU(inplace=True).to(device)
         else:
-            self.activation = nn.Tanh()
-        self.criterion = nn.CrossEntropyLoss(reduction='none')
+            self.activation = nn.Tanh().to(device)
+        self.criterion = nn.CrossEntropyLoss(reduction='none').to(device)
         self.reset_parameters(embedd_word, embedd_char, embedd_pos)
 
     def reset_parameters(self, embedd_word, embedd_char, embedd_pos):
@@ -114,12 +120,12 @@ class EasyFirst(nn.Module):
         # [batch, length, word_dim]
         word = self.word_embed(input_word)
         # apply dropout word on input
-        word = self.dropout_in(word)
+        word = self.dropout_in(word).to(self.device)
         enc = word
 
         if self.char_embed is not None:
             # [batch, length, char_length, char_dim]
-            char = self.char_cnn(self.char_embed(input_char))
+            char = self.char_cnn(self.char_embed(input_char).to(self.device))
             char = self.dropout_in(char)
             # concatenate word and char [batch, length, word_dim+char_filter]
             enc = torch.cat([enc, char], dim=2)
@@ -128,7 +134,7 @@ class EasyFirst(nn.Module):
             # [batch, length, pos_dim]
             pos = self.pos_embed(input_pos)
             # apply dropout on input
-            pos = self.dropout_in(pos)
+            pos = self.dropout_in(pos).to(self.device)
             enc = torch.cat([enc, pos], dim=2)
 
         all_encoder_layers = self.graph_attention(enc, graph_matrices, mask)
