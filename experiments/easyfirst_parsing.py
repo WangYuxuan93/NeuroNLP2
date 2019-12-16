@@ -20,7 +20,7 @@ from torch.optim.adamw import AdamW
 from torch.optim import SGD
 from torch.nn.utils import clip_grad_norm_
 from neuronlp2.nn.utils import total_grad_norm
-from neuronlp2.io import get_logger, conllx_data, conllx_stacked_data, iterate_data, iterate_data_and_sample
+from neuronlp2.io import get_logger, conllx_data, iterate_data, iterate_data_and_sample, sample_from_model
 from neuronlp2.models import DeepBiAffine, NeuroMST, StackPtrNet, EasyFirst
 from neuronlp2.optim import ExponentialScheduler
 from neuronlp2 import utils
@@ -239,6 +239,7 @@ def train(args):
     use_pos = hyps['pos']
     use_char = hyps['use_char']
     use_chosen_head = hyps['use_chosen_head']
+    use_whole_seq = hyps['use_whole_seq']
     pos_dim = hyps['pos_dim']
     hidden_size = hyps['hidden_size']
     arc_space = hyps['arc_space']
@@ -351,8 +352,14 @@ def train(args):
         if sampler == 'random':
             data_sampler = iterate_data_and_sample(data_train, batch_size, bucketed=True, 
                             unk_replace=unk_replace, shuffle=True, max_layers=max_layers)
+        elif sampler == 'confidence':
+            data_sampler = sample_from_model(network, data_train, batch_size, bucketed=True, 
+                            unk_replace=unk_replace, shuffle=True, max_layers=max_layers,
+                            use_whole_seq=use_whole_seq, device=device)
         for step, data in enumerate(data_sampler):
             for n_layers, sub_data in data.items():
+                # continue if no sample in this layer
+                if sub_data['WORD'] is None: continue
                 #print ('number of previous layers:',n_layers)
                 optimizer.zero_grad()
                 #words = sub_data['WORD'].to(device)

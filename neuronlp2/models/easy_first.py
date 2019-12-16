@@ -507,8 +507,27 @@ class EasyFirst(nn.Module):
         return heads_pred.cpu().numpy(), rels_pred.cpu().numpy()
 
 
+    def _get_best_gold_head(self, gold_heads, arc_logp, device=torch.device('cpu'), debug=False):
+
+        batch_size, seq_len = gold_heads.size()
+        # (batch, seq_len, seq_len)
+        heads_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=device)
+        heads_3D.scatter_(-1, gold_heads.unsqueeze(-1), 1)
+        minus_mask = heads_3D.eq(0)
+        arc_logp = arc_logp.masked_fill(minus_mask, float('-inf'))
+        best_head_index = torch.argmax(arc_logp)
+        dep = best_head_index // seq_len
+        head = best_head_index % seq_len
+
+        if debug:
+            print ("new arc_logp:",arc_logp)
+            print ("dep:{}, head:{}".format(dep, head))
+            print ("gold_heads:\n", gold_heads)
+
+        return dep, head
+
     def inference(self, input_word, input_char, input_pos, gold_heads, batch, mask=None, 
-                  max_layers=6, debug=False, device=torch.device('cpu')):
+                  max_layers=6, use_whole_seq=True, debug=False, device=torch.device('cpu')):
         """
         Input:
             input_word: (batch, seq_len)
@@ -529,7 +548,8 @@ class EasyFirst(nn.Module):
         heads_mask = torch.zeros_like(heads_pred, device=device)
 
         # collect inference results
-        all_keys = ['RECOMP', 'GEN_HEAD', 'NEXT_HEAD']
+        easyfirst_keys = ['WORD', 'MASK', 'LENGTH', 'POS', 'CHAR', 'HEAD', 'TYPE']
+        all_keys =  easyfirst_keys + ['RECOMP', 'GEN_HEAD', 'NEXT_HEAD']
         batch_by_layer = {i: {key: [] for key in all_keys} for i in range(max_layers)}
 
         for batch_id in range(batch_size):
@@ -552,6 +572,8 @@ class EasyFirst(nn.Module):
             gen_heads_onehot = torch.zeros((1, 1, seq_len, seq_len), dtype=torch.int32, device=device)
             #recomp_minus_mask = torch.Tensor([0,0,0]).bool()
             recomp_minus_mask = torch.Tensor([0,0,1]).bool().to(device)
+
+            max_steps = batch['LENGTH'][batch_id] + max_layers
 
             for n_step in range(max_steps):
                 if debug:
@@ -596,14 +618,18 @@ class EasyFirst(nn.Module):
                 prediction = torch.argmax(overall_logp)
                 best_head_index = torch.argmax(arc_logp)
                 recomp_pred = prediction.cpu().numpy()
-                if debug:
-                    print ("prediction:",recomp_pred)
-                    print ("recomp_mask:",recomp_minus_mask)
-
+                
                 dep = best_head_index // seq_len
                 head = best_head_index % seq_len
+                #dep_id = dep.cpu().numpy()
+                #head_id = head.cpu().numpy()
+                if debug:
+                    print ("best_head_index:",best_head_index)
+                    print ("dep:{}, head:{}".format(dep, head))
+                    #print ("recomp_mask:",recomp_minus_mask)
+                    print ("gold_heads:\n", gold_heads)
                 # if the predicted arc in gold, chose it as next prediction
-                if gold_heads[batch_id][dep] == head:
+                if gold_heads[batch_id][dep] == head and dep != 0:
                     next_list.append(np.copy(zero_mask))
                     next_list[-1][dep] = 1
                     generated_heads_list.append(np.copy(generated_heads))
@@ -621,17 +647,35 @@ class EasyFirst(nn.Module):
                     next_list.append(np.copy(zero_mask))
                     generated_heads_list.append(np.copy(generated_heads))
                     recomp_list.append(DO_EOS)
+                    break
                 # in this case, we predict DO_RECOMP
                 else:
+                    if len(generated_heads) == max_layers:
+                        if use_whole_seq:
+                            dep, head = self._get_best_gold_head(gold_heads, arc_logp, device=device, debug=debug)
+                            next_list.append(np.copy(zero_mask))
+                            next_list[-1][dep] = 1
+                            generated_heads_list.append(np.copy(generated_heads))
+                            recomp_list.append(NO_RECOMP)
+                            # add one new head to the top layer of generated heads
+                            generated_heads[-1,dep] = 1
+
+                            # update states for input of next step
+                            heads_pred[batch_id,dep] = head
+                            heads_mask[batch_id,dep] = 1
+                            # update it to gen_heads by layer for encoder input
+                            gen_heads_onehot[-1,0,dep,head] = 1
+                            continue
+                        else:
+                            break
                     next_list.append(np.copy(zero_mask))
                     generated_heads_list.append(np.copy(generated_heads))
                     recomp_list.append(DO_RECOMP)
                     prev_layers = generated_heads_list[-1]
                     # add a new layer
-                    generated_heads = np.concatenate([prev_layers,np.zeros([1,batch_length], dtype=int)], axis=0)
+                    generated_heads = np.concatenate([prev_layers,np.zeros([1,seq_len], dtype=int)], axis=0)
                     # if the layer in next layer exceeds max_layers, break
-                    if len(generated_heads) > max_layers:
-                        break
+
                     # update states for input of next step
                     # add a new layer to gen_heads
                     # (1, batch=1, seq_len, seq_len)
@@ -643,6 +687,9 @@ class EasyFirst(nn.Module):
                     if n_layers == max_layers:
                         #recomp_minus_mask = torch.Tensor([0,1,0]).bool()
                         recomp_minus_mask = torch.Tensor([0,1,1]).bool().to(device)
+                if debug:
+                    print ("generated_heads_list:\n", generated_heads_list)
+                    print ("next_list:\n",next_list)
 
             # category steps by number of layers
             for n_step in range(len(recomp_list)):
@@ -652,11 +699,21 @@ class EasyFirst(nn.Module):
                 batch_by_layer[n_layers]['RECOMP'].append(recomp_list[n_step])
                 batch_by_layer[n_layers]['GEN_HEAD'].append(generated_heads_list[n_step])
                 batch_by_layer[n_layers]['NEXT_HEAD'].append(next_list[n_step])
+        if debug:
+            for i in batch_by_layer.keys():
+                print('-' * 50)
+                print ("layer-%d"%i)
+                for key in batch_by_layer[i].keys():
+                    print ("%s\n"%key, batch_by_layer[i][key])
         # convert batches into torch tensor
         for n_layers in batch_by_layer.keys():
             for key in batch_by_layer[n_layers].keys():
-                batch_by_layer[n_layers][key] = torch.from_numpy(np.stack(batch_by_layer[n_layers][key]))
-            # (batch, n_layers, seq_len) -> (n_layers, batch, seq_len)
-            batch_by_layer[n_layers]['GEN_HEAD'] = np.transpose(batch_by_layer[n_layers]['GEN_HEAD'], (1,0,2))
+                if batch_by_layer[n_layers][key]:
+                    batch_by_layer[n_layers][key] = torch.from_numpy(np.stack(batch_by_layer[n_layers][key]))
+                else:
+                    batch_by_layer[n_layers][key] = None
+            if batch_by_layer[n_layers]['GEN_HEAD'] is not None:
+                # (batch, n_layers, seq_len) -> (n_layers, batch, seq_len)
+                batch_by_layer[n_layers]['GEN_HEAD'] = np.transpose(batch_by_layer[n_layers]['GEN_HEAD'], (1,0,2))
 
         return batch_by_layer

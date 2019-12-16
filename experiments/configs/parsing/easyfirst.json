@@ -6,6 +6,7 @@
   "pos": true,
   "use_char": false,
   "use_chosen_head": true,
+  "use_whole_seq": true,
   "pos_dim": 100,
   "max_layers": 4,
   "max_steps": 100,

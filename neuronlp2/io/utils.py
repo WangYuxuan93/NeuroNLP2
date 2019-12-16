@@ -279,9 +279,74 @@ def iterate_data(data, batch_size, bucketed=False, unk_replace=0., shuffle=False
     else:
         return iterate_batch(data, batch_size, unk_replace=unk_replace, shuffle=shuffle)
 
-def iterate_data_and_sample(data, batch_size, bucketed=False, unk_replace=0., shuffle=False, max_layers=6):
-    return iterate_bucketed_batch_and_sample(data, batch_size, unk_replace==unk_replace, 
+def iterate_data_and_sample(data, batch_size, bucketed=False, unk_replace=0., shuffle=False, 
+                            max_layers=6):
+    return iterate_bucketed_batch_and_sample(data, batch_size, unk_replace=unk_replace, 
             shuffle=shuffle, max_layers=max_layers)
+
+
+def sample_from_model(network, data, batch_size, bucketed=False, unk_replace=0., shuffle=False, 
+                      max_layers=6, use_whole_seq=True, device=torch.device('cpu'), debug=False):
+    data_tensor, bucket_sizes = data
+
+    bucket_indices = np.arange(len(bucket_sizes))
+    if shuffle:
+        np.random.shuffle((bucket_indices))
+
+    stack_keys = ['STACK_HEAD', 'CHILD', 'SIBLING', 'STACK_TYPE', 'SKIP_CONNECT', 'MASK_DEC']
+    exclude_keys = set(['SINGLE', 'WORD', 'LENGTH'] + stack_keys)
+    easyfirst_keys = ['WORD', 'MASK', 'POS', 'CHAR', 'HEAD', 'TYPE']
+    stack_keys = set(stack_keys)
+    for bucket_id in bucket_indices:
+        data = data_tensor[bucket_id]
+        bucket_size = bucket_sizes[bucket_id]
+        if bucket_size == 0:
+            continue
+
+        words = data['WORD']
+        single = data['SINGLE']
+        bucket_length = words.size(1)
+        if unk_replace:
+            ones = single.new_ones(bucket_size, bucket_length)
+            noise = single.new_empty(bucket_size, bucket_length).bernoulli_(unk_replace).long()
+            words = words * (ones - single * noise)
+
+        indices = None
+        if shuffle:
+            indices = torch.randperm(bucket_size).long()
+            indices = indices.to(words.device)
+        for start_idx in range(0, bucket_size, batch_size):
+            if shuffle:
+                excerpt = indices[start_idx:start_idx + batch_size]
+            else:
+                excerpt = slice(start_idx, start_idx + batch_size)
+
+            lengths = data['LENGTH'][excerpt]
+            batch_length = lengths.max().item()
+            # [batch_size, batch_len]
+            heads = data['HEAD'][excerpt, :batch_length]
+            types = data['TYPE'][excerpt, :batch_length]
+            batch = {'WORD': words[excerpt, :batch_length], 'LENGTH': lengths}
+            batch.update({key: field[excerpt, :batch_length] for key, field in data.items() if key in easyfirst_keys})
+            # pre-process the input
+            input_word = batch['WORD'].to(device)
+            input_char = batch['CHAR'].to(device)
+            input_pos = batch['POS'].to(device)
+            gold_heads = batch['HEAD'].to(device)
+            mask = batch['MASK'].to(device)
+            batch_by_layer = network.inference(input_word, input_char, input_pos, gold_heads, 
+                                batch, mask=mask, max_layers=max_layers, use_whole_seq=use_whole_seq,
+                                device=device)
+
+            if debug:
+                for i in batch_by_layer.keys():
+                    print('-' * 50)
+                    print ("layer-%d"%i)
+                    for key in batch_by_layer[i].keys():
+                        print ("%s\n"%key, batch_by_layer[i][key])
+
+            yield batch_by_layer
+
 
 if __name__ == '__main__':
     easyfirst_keys = ['WORD', 'MASK', 'LENGTH', 'POS', 'CHAR', 'HEAD', 'TYPE']
