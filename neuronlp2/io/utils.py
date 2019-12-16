@@ -142,6 +142,7 @@ def iterate_bucketed_batch(data, batch_size, unk_replace=0., shuffle=False):
             batch.update({key: field[excerpt, :2 * batch_length - 1] for key, field in data.items() if key in stack_keys})
             yield batch
 
+
 def iterate_bucketed_batch_and_sample(data, batch_size, unk_replace=0., shuffle=False, max_layers=4):
     data_tensor, bucket_sizes = data
 
@@ -186,6 +187,7 @@ def iterate_bucketed_batch_and_sample(data, batch_size, unk_replace=0., shuffle=
             batch.update({key: field[excerpt, :batch_length] for key, field in data.items() if key in easyfirst_keys})
             batch_by_layer = sample_generate_order(batch, lengths, n_recomp=max_layers-1)
             yield batch_by_layer
+
 
 def sample_generate_order(batch, lengths, n_recomp=3, recomp_in_prev=False, debug=False):
 

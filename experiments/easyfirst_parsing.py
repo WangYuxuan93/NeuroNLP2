@@ -138,6 +138,7 @@ def train(args):
     loss_ty_token = args.loss_type == 'token'
     unk_replace = args.unk_replace
     freeze = args.freeze
+    sampler = args.sampler
 
     model_path = args.model_path
     model_name = os.path.join(model_path, 'model.pt')
@@ -347,8 +348,10 @@ def train(args):
         if args.cuda:
             torch.cuda.empty_cache()
         gc.collect()
-        for step, data in enumerate(iterate_data_and_sample(data_train, batch_size, bucketed=True, 
-                            unk_replace=unk_replace, shuffle=True, max_layers=max_layers)):
+        if sampler == 'random':
+            data_sampler = iterate_data_and_sample(data_train, batch_size, bucketed=True, 
+                            unk_replace=unk_replace, shuffle=True, max_layers=max_layers)
+        for step, data in enumerate(data_sampler):
             for n_layers, sub_data in data.items():
                 #print ('number of previous layers:',n_layers)
                 optimizer.zero_grad()
@@ -638,6 +641,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--weight_decay', type=float, default=0.0, help='weight for l2 norm decay')
     args_parser.add_argument('--unk_replace', type=float, default=0., help='The rate to replace a singleton word with UNK')
     args_parser.add_argument('--freeze', action='store_true', help='frozen the word embedding (disable fine-tuning).')
+    args_parser.add_argument('--sampler', choices=['random', 'confidence'], help='Sample strategy')
     args_parser.add_argument('--punctuation', nargs='+', type=str, help='List of punctuations')
     args_parser.add_argument('--beam', type=int, default=1, help='Beam size for decoding')
     args_parser.add_argument('--word_embedding', choices=['glove', 'senna', 'sskip', 'polyglot'], help='Embedding for words')
