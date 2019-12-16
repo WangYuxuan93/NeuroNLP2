@@ -466,8 +466,8 @@ def train(args):
 
                     pred_filename = os.path.join(result_path, 'pred_test%d' % epoch)
                     pred_writer.start(pred_filename)
-                    gold_filename = os.path.join(result_path, 'gold_test%d' % epoch)
-                    gold_writer.start(gold_filename)
+                    #gold_filename = os.path.join(result_path, 'gold_test%d' % epoch)
+                    #gold_writer.start(gold_filename)
 
                     print('Evaluating test:')
                     test_stats, test_stats_nopunct, test_stats_root = eval(data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam,
@@ -478,7 +478,7 @@ def train(args):
                     test_root_correct, test_total_root, test_total_inst = test_stats_root
 
                     pred_writer.close()
-                    gold_writer.close()
+                    #gold_writer.close()
                 else:
                     patient += 1
 
@@ -553,56 +553,50 @@ def parse(args):
     logger.info("loading network...")
     hyps = json.load(open(os.path.join(model_path, 'config.json'), 'r'))
     model_type = hyps['model']
-    assert model_type in ['DeepBiAffine', 'NeuroMST', 'StackPtr']
+    assert model_type in ['EasyFirst', 'DeepBiAffine', 'NeuroMST', 'StackPtr']
     word_dim = hyps['word_dim']
     char_dim = hyps['char_dim']
+    mode = hyps['transformer_mode']
+    max_layers = hyps['max_layers']
+    max_steps = hyps['max_steps']
     use_pos = hyps['pos']
+    use_char = hyps['use_char']
+    use_chosen_head = hyps['use_chosen_head']
     pos_dim = hyps['pos_dim']
-    mode = hyps['rnn_mode']
     hidden_size = hyps['hidden_size']
     arc_space = hyps['arc_space']
     type_space = hyps['type_space']
     p_in = hyps['p_in']
     p_out = hyps['p_out']
-    p_rnn = hyps['p_rnn']
     activation = hyps['activation']
-    prior_order = None
+    type_loss_ratio = hyps['type_loss_ratio']
 
-    alg = 'transition' if model_type == 'StackPtr' else 'graph'
-    if model_type == 'DeepBiAffine':
-        num_layers = hyps['num_layers']
-        network = DeepBiAffine(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
-                               mode, hidden_size, num_layers, num_types, arc_space, type_space,
-                               p_in=p_in, p_out=p_out, p_rnn=p_rnn, pos=use_pos, activation=activation)
-    elif model_type == 'NeuroMST':
-        num_layers = hyps['num_layers']
-        network = NeuroMST(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
-                           mode, hidden_size, num_layers, num_types, arc_space, type_space,
-                           p_in=p_in, p_out=p_out, p_rnn=p_rnn, pos=use_pos, activation=activation)
-    elif model_type == 'StackPtr':
-        encoder_layers = hyps['encoder_layers']
-        decoder_layers = hyps['decoder_layers']
-        num_layers = (encoder_layers, decoder_layers)
-        prior_order = hyps['prior_order']
-        grandPar = hyps['grandPar']
-        sibling = hyps['sibling']
-        network = StackPtrNet(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
-                              mode, hidden_size, encoder_layers, decoder_layers, num_types, arc_space, type_space,
-                              prior_order=prior_order, activation=activation, p_in=p_in, p_out=p_out, p_rnn=p_rnn,
-                              pos=use_pos, grandPar=grandPar, sibling=sibling)
+    if model_type == 'EasyFirst':
+        num_attention_heads = hyps['num_attention_heads']
+        intermediate_size = hyps['intermediate_size']
+        p_hid = hyps['hidden_dropout_prob']
+        p_att = hyps['attention_probs_dropout_prob']
+        p_graph_att = hyps['graph_attention_probs_dropout_prob']
+        recomp_att_dim = hyps['recomp_att_dim']
+        network = EasyFirst(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
+                           hidden_size, num_types, arc_space, type_space,
+                           num_attention_heads, intermediate_size, recomp_att_dim,
+                           device=device, 
+                           hidden_dropout_prob=p_hid,
+                           attention_probs_dropout_prob=p_att,
+                           graph_attention_probs_dropout_prob=p_graph_att,
+                           p_in=p_in, p_out=p_out, pos=use_pos, use_char=use_char, activation=activation)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
     network = network.to(device)
     network.load_state_dict(torch.load(model_name, map_location=device))
     model = "{}-{}".format(model_type, mode)
-    logger.info("Network: %s, num_layer=%s, hidden=%d, act=%s" % (model, num_layers, hidden_size, activation))
-
+    logger.info("Network: %s, max_layer=%s, hidden=%d, act=%s" % (model, max_layers, hidden_size, activation))
+    
     logger.info("Reading Data")
-    if alg == 'graph':
-        data_test = conllx_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True)
-    else:
-        data_test = conllx_stacked_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, prior_order=prior_order)
+    data_test = conllx_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
+                                        mask_out_root=False)
 
     beam = args.beam
     pred_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, type_alphabet)
@@ -615,7 +609,7 @@ def parse(args):
     with torch.no_grad():
         print('Parsing...')
         start_time = time.time()
-        eval(alg, data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam, batch_size=args.batch_size)
+        eval(data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam, batch_size=args.batch_size)
         print('Time: %.2fs' % (time.time() - start_time))
 
     pred_writer.close()
