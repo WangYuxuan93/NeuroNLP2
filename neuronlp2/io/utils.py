@@ -143,7 +143,7 @@ def iterate_bucketed_batch(data, batch_size, unk_replace=0., shuffle=False):
             yield batch
 
 
-def iterate_bucketed_batch_and_sample(data, batch_size, unk_replace=0., shuffle=False, max_layers=4):
+def iterate_bucketed_batch_and_sample(data, batch_size, step_batch_size=None, unk_replace=0., shuffle=False, max_layers=4):
     data_tensor, bucket_sizes = data
 
     bucket_indices = np.arange(len(bucket_sizes))
@@ -186,7 +186,10 @@ def iterate_bucketed_batch_and_sample(data, batch_size, unk_replace=0., shuffle=
             batch = {'WORD': words[excerpt, :batch_length], 'LENGTH': lengths}
             batch.update({key: field[excerpt, :batch_length] for key, field in data.items() if key in easyfirst_keys})
             batch_by_layer = sample_generate_order(batch, lengths, n_recomp=max_layers-1)
-            yield batch_by_layer
+            if step_batch_size is not None:
+                yield split_batch_by_layer(batch_by_layer, step_batch_size, shuffle=False)
+            else:
+                yield batch_by_layer
 
 
 def sample_generate_order(batch, lengths, n_recomp=3, recomp_in_prev=False, debug=False):
@@ -279,14 +282,15 @@ def iterate_data(data, batch_size, bucketed=False, unk_replace=0., shuffle=False
     else:
         return iterate_batch(data, batch_size, unk_replace=unk_replace, shuffle=shuffle)
 
-def iterate_data_and_sample(data, batch_size, bucketed=False, unk_replace=0., shuffle=False, 
+def iterate_data_and_sample(data, batch_size, step_batch_size=None, bucketed=False, unk_replace=0., shuffle=False, 
                             max_layers=6):
-    return iterate_bucketed_batch_and_sample(data, batch_size, unk_replace=unk_replace, 
-            shuffle=shuffle, max_layers=max_layers)
+    return iterate_bucketed_batch_and_sample(data, batch_size, step_batch_size=step_batch_size,
+                                unk_replace=unk_replace, shuffle=shuffle, max_layers=max_layers)
 
 
-def sample_from_model(network, data, batch_size, bucketed=False, unk_replace=0., shuffle=False, 
-                      max_layers=6, use_whole_seq=True, device=torch.device('cpu'), debug=False):
+def sample_from_model(network, data, batch_size, step_batch_size=None, bucketed=False, 
+                      unk_replace=0., shuffle=False, max_layers=6, use_whole_seq=True, 
+                      device=torch.device('cpu'), debug=False):
     data_tensor, bucket_sizes = data
 
     bucket_indices = np.arange(len(bucket_sizes))
@@ -344,8 +348,38 @@ def sample_from_model(network, data, batch_size, bucketed=False, unk_replace=0.,
                     print ("layer-%d"%i)
                     for key in batch_by_layer[i].keys():
                         print ("%s\n"%key, batch_by_layer[i][key])
+            if step_batch_size is not None:
+                yield split_batch_by_layer(batch_by_layer, step_batch_size, shuffle=False)
+            else:
+                yield batch_by_layer
 
-            yield batch_by_layer
+def split_batch_by_layer(batch_by_layer, step_batch_size, shuffle=False, debug=False):
+
+    batches = []
+    keys_ = batch_by_layer[0].keys() - ['LENGTH', 'RECOMP', 'GEN_HEAD']
+    for n_layers in batch_by_layer.keys():
+        if batch_by_layer[n_layers]['LENGTH'] is None: continue
+        bucket_size = len(batch_by_layer[n_layers]['LENGTH'])
+        for start_idx in range(0, bucket_size, step_batch_size):
+            if shuffle:
+                excerpt = indices[start_idx:start_idx + step_batch_size]
+            else:
+                excerpt = slice(start_idx, start_idx + step_batch_size)
+            # [step_batch_size, batch_len]
+            batch = {'LENGTH': batch_by_layer[n_layers]['LENGTH'][excerpt],
+                     'RECOMP': batch_by_layer[n_layers]['RECOMP'][excerpt],
+                     'GEN_HEAD': batch_by_layer[n_layers]['GEN_HEAD'][:,excerpt,:]}
+            batch.update({key: field[excerpt, :] for key, field in batch_by_layer[n_layers].items() if key in keys_})
+            batches.append(batch)
+
+    if debug:
+        print ("Split batches:")
+        for batch in batches:
+            print('-' * 50)
+            for key in batch.keys():
+                print ("%s\n"%key, batch[key])
+
+    return batches
 
 
 if __name__ == '__main__':

@@ -123,6 +123,7 @@ def train(args):
 
     num_epochs = args.num_epochs
     batch_size = args.batch_size
+    step_batch_size = args.step_batch_size
     optim = args.optim
     learning_rate = args.learning_rate
     lr_decay = args.lr_decay
@@ -350,17 +351,20 @@ def train(args):
             torch.cuda.empty_cache()
         gc.collect()
         if sampler == 'random':
-            data_sampler = iterate_data_and_sample(data_train, batch_size, bucketed=True, 
+            data_sampler = iterate_data_and_sample(data_train, batch_size, 
+                            step_batch_size=step_batch_size, bucketed=True, 
                             unk_replace=unk_replace, shuffle=True, max_layers=max_layers)
         elif sampler == 'confidence':
-            data_sampler = sample_from_model(network, data_train, batch_size, bucketed=True, 
+            data_sampler = sample_from_model(network, data_train, batch_size, 
+                            step_batch_size=step_batch_size, bucketed=True, 
                             unk_replace=unk_replace, shuffle=True, max_layers=max_layers,
                             use_whole_seq=use_whole_seq, device=device)
         for step, data in enumerate(data_sampler):
-            for n_layers, sub_data in data.items():
+            #for n_layers, sub_data in data.items():
+            for sub_data in data:
                 # continue if no sample in this layer
                 if sub_data['WORD'] is None: continue
-                #print ('number of previous layers:',n_layers)
+                #print ('number in batch:',len(sub_data['WORD']))
                 optimizer.zero_grad()
                 #words = sub_data['WORD'].to(device)
                 #chars = sub_data['CHAR'].to(device)
@@ -632,6 +636,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--config', type=str, help='config file')
     args_parser.add_argument('--num_epochs', type=int, default=200, help='Number of training epochs')
     args_parser.add_argument('--batch_size', type=int, default=16, help='Number of sentences in each batch')
+    args_parser.add_argument('--step_batch_size', type=int, default=16, help='Number of steps in each batch (for easyfirst parsing)')
     args_parser.add_argument('--loss_type', choices=['sentence', 'token'], default='sentence', help='loss type (default: sentence)')
     args_parser.add_argument('--optim', choices=['sgd', 'adam'], help='type of optimizer')
     args_parser.add_argument('--learning_rate', type=float, default=0.1, help='Learning rate')
