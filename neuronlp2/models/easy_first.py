@@ -652,7 +652,7 @@ class EasyFirst(nn.Module):
                 else:
                     if len(generated_heads) == max_layers:
                         if use_whole_seq:
-                            dep, head = self._get_best_gold_head(gold_heads, arc_logp, device=device, debug=debug)
+                            dep, head = self._get_best_gold_head(gold_heads[batch_id:batch_id+1, :], arc_logp, device=device, debug=debug)
                             next_list.append(np.copy(zero_mask))
                             next_list[-1][dep] = 1
                             generated_heads_list.append(np.copy(generated_heads))

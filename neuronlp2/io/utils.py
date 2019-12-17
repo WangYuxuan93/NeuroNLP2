@@ -333,9 +333,9 @@ def sample_from_model(network, data, batch_size, step_batch_size=None, bucketed=
             batch = {'WORD': words[excerpt, :batch_length], 'LENGTH': lengths}
             batch.update({key: field[excerpt, :batch_length] for key, field in data.items() if key in easyfirst_keys})
             # pre-process the input
-            input_word = batch['WORD'].to(device)
-            input_char = batch['CHAR'].to(device)
-            input_pos = batch['POS'].to(device)
+            input_word = batch['WORD']#.to(device)
+            input_char = batch['CHAR']#.to(device)
+            input_pos = batch['POS']#.to(device)
             gold_heads = batch['HEAD'].to(device)
             mask = batch['MASK'].to(device)
             batch_by_layer = network.inference(input_word, input_char, input_pos, gold_heads, 
