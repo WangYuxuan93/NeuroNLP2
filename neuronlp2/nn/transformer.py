@@ -531,7 +531,7 @@ class GraphAttentionLayer(nn.Module):
         # (batch, seq_len, hidden_size+arc_space)
         concated_attention_output = torch.cat([attention_output, graph_attention_output],-1)
         intermediate_output = self.intermediate(concated_attention_output)
-        layer_output = self.output(intermediate_output, attention_output)
+        layer_output = self.output(intermediate_output, concated_attention_output)
         return layer_output
 
 
@@ -588,5 +588,86 @@ class GraphAttentionModel(nn.Module):
 
         embedding_output = self.embeddings(input_tensor)
         all_encoder_layers = self.encoder(embedding_output, graph_matrices, extended_attention_mask)
+
+        return all_encoder_layers
+
+
+class GraphAttentionIntermediateV2(nn.Module):
+    def __init__(self, config):
+        super(GraphAttentionIntermediateV2, self).__init__()
+        self.dense = nn.Linear(config.arc_space, config.intermediate_size)
+        self.intermediate_act_fn = gelu
+
+    def forward(self, hidden_states):
+        hidden_states = self.dense(hidden_states)
+        hidden_states = self.intermediate_act_fn(hidden_states)
+        return hidden_states
+
+class GraphAttentionLayerV2(nn.Module):
+    def __init__(self, config):
+        super(GraphAttentionLayerV2, self).__init__()
+        self.graph_attention = GraphAttention(config)
+        self.intermediate = GraphAttentionIntermediateV2(config)
+        self.output = BERTOutput(config)
+
+    def forward(self, hidden_states, graph_matrix, attention_mask):
+        # (batch, seq_len, arc_space)
+        graph_attention_output = self.graph_attention(hidden_states, graph_matrix)
+        intermediate_output = self.intermediate(graph_attention_output)
+        layer_output = self.output(intermediate_output, graph_attention_output)
+        return layer_output
+
+
+class GraphAttentionEncoderV2(nn.Module):
+    def __init__(self, config):
+        super(GraphAttentionEncoderV2, self).__init__()
+        self.layer = GraphAttentionLayerV2(config)
+
+    def forward(self, hidden_states, graph_matrix, attention_mask):
+        all_encoder_layers = []
+        hidden_states = self.layer(hidden_states, graph_matrix, attention_mask)
+        all_encoder_layers.append(hidden_states)
+        return all_encoder_layers
+
+class GraphAttentionModelV2(nn.Module):
+    def __init__(self, config: GraphAttentionConfig):
+        """Constructor for BertModel.
+
+        Args:
+            config: `BertConfig` instance.
+        """
+        super(GraphAttentionModelV2, self).__init__()
+        self.embeddings = GraphAttentionEmbeddings(config)
+        self.encoder = GraphAttentionEncoderV2(config)
+
+    def forward(self, input_tensor, graph_matrix, attention_mask=None):
+        """
+        Input:
+            input_tensor: (batch, seq_len, input_size)
+            graph_matrix: (batch, seq_len, seq_len)
+            attention_mask: (batch, seq_len)
+        """
+        if attention_mask is None:
+            #attention_mask = torch.ones_like(input_ids)
+            # (batch, seq_len)
+            attention_mask = torch.ones(input_tensor.size(0),input_tensor.size(1))
+
+        # We create a 3D attention mask from a 2D tensor mask.
+        # Sizes are [batch_size, 1, 1, to_seq_length]
+        # So we can broadcast to [batch_size, num_heads, from_seq_length, to_seq_length]
+        # this attention mask is more simple than the triangular masking of causal attention
+        # used in OpenAI GPT, we just need to prepare the broadcast dimension here.
+        extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+
+        # Since attention_mask is 1.0 for positions we want to attend and 0.0 for
+        # masked positions, this operation will create a tensor which is 0.0 for
+        # positions we want to attend and -10000.0 for masked positions.
+        # Since we are adding it to the raw scores before the softmax, this is
+        # effectively the same as removing these entirely.
+        extended_attention_mask = extended_attention_mask.float()
+        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
+
+        embedding_output = self.embeddings(input_tensor)
+        all_encoder_layers = self.encoder(embedding_output, graph_matrix, extended_attention_mask)
 
         return all_encoder_layers

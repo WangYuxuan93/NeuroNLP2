@@ -21,7 +21,7 @@ from torch.optim import SGD
 from torch.nn.utils import clip_grad_norm_
 from neuronlp2.nn.utils import total_grad_norm
 from neuronlp2.io import get_logger, conllx_data, iterate_data, iterate_data_and_sample, sample_from_model, random_sample
-from neuronlp2.models import DeepBiAffine, NeuroMST, StackPtrNet, EasyFirst
+from neuronlp2.models import EasyFirstV2
 from neuronlp2.optim import ExponentialScheduler
 from neuronlp2 import utils
 from neuronlp2.io import CoNLLXWriter
@@ -237,6 +237,7 @@ def train(args):
     mode = hyps['transformer_mode']
     max_layers = hyps['max_layers']
     max_steps = hyps['max_steps']
+    n_arc_each_recomp = hyps['n_arc_each_recomp']
     use_pos = hyps['pos']
     use_char = hyps['use_char']
     use_chosen_head = hyps['use_chosen_head']
@@ -257,9 +258,9 @@ def train(args):
         p_att = hyps['attention_probs_dropout_prob']
         p_graph_att = hyps['graph_attention_probs_dropout_prob']
         recomp_att_dim = hyps['recomp_att_dim']
-        network = EasyFirst(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
+        network = EasyFirstV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                            hidden_size, num_types, arc_space, type_space,
-                           num_attention_heads, intermediate_size, recomp_att_dim,
+                           intermediate_size,
                            device=device, 
                            hidden_dropout_prob=p_hid,
                            attention_probs_dropout_prob=p_att,
@@ -351,67 +352,59 @@ def train(args):
             torch.cuda.empty_cache()
         gc.collect()
         if sampler == 'random':
-            data_sampler = iterate_data_and_sample(data_train, batch_size, 
-                            step_batch_size=step_batch_size, bucketed=True, 
-                            unk_replace=unk_replace, shuffle=True, max_layers=max_layers)
-        elif sampler == 'confidence':
-            data_sampler = sample_from_model(network, data_train, batch_size, 
-                            step_batch_size=step_batch_size, bucketed=True, 
-                            unk_replace=unk_replace, shuffle=True, max_layers=max_layers,
-                            use_whole_seq=use_whole_seq, device=device)
+            data_sampler = random_sample(data_train, batch_size, 
+                            step_batch_size=step_batch_size, unk_replace=unk_replace, 
+                            shuffle=True, n_arc_each_recomp=n_arc_each_recomp)
         for step, data in enumerate(data_sampler):
-            #for n_layers, sub_data in data.items():
-            for sub_data in data:
-                # continue if no sample in this layer
-                if sub_data['WORD'] is None: continue
-                #print ('number in batch:',len(sub_data['WORD']))
-                optimizer.zero_grad()
-                #words = sub_data['WORD'].to(device)
-                #chars = sub_data['CHAR'].to(device)
-                #postags = sub_data['POS'].to(device)
-                words = sub_data['WORD']
-                chars = sub_data['CHAR']
-                postags = sub_data['POS']
-                heads = sub_data['HEAD'].to(device)
-                nbatch = words.size(0)
+            #print ('number in batch:',len(sub_data['WORD']))
+            optimizer.zero_grad()
+            #words = sub_data['WORD'].to(device)
+            #chars = sub_data['CHAR'].to(device)
+            #postags = sub_data['POS'].to(device)
+            words = data['WORD']
+            chars = data['CHAR']
+            postags = data['POS']
+            heads = data['HEAD'].to(device)
+            nbatch = words.size(0)
 
-                types = sub_data['TYPE'].to(device)
-                masks = sub_data['MASK'].to(device)
-                # (batch)
-                recomps = sub_data['RECOMP'].to(device)
-                # (n_layers, batch, seq_len)
-                gen_heads = sub_data['GEN_HEAD'].to(device)
-                if use_chosen_head:
-                    next_head = sub_data['NEXT_HEAD'].to(device)
-                else:
-                    next_head = None
-                nwords = masks.sum() - nbatch
-                loss_arc, loss_type = network.loss(words, chars, postags, heads, types, recomps, gen_heads, 
-                                                    mask=masks, next_head=next_head, device=device)
-                loss = 0.5 *((1.0 - type_loss_ratio) * loss_arc + type_loss_ratio * loss_type)
-                #if loss_ty_token:
-                #    loss = loss_total.div(nwords)
-                #else:
-                #    loss = loss_total.div(nbatch)
-                loss.backward()
-                if grad_clip > 0:
-                    grad_norm = clip_grad_norm_(network.parameters(), grad_clip)
-                else:
-                    grad_norm = total_grad_norm(network.parameters())
+            types = data['TYPE'].to(device)
+            masks = data['MASK'].to(device)
+            # (batch, seq_len)
+            recomp_gen_mask = data['RECOMP_GEN_MASK'].to(device)
+            # (batch, seq_len)
+            no_recmp_gen_mask = data['NO_RECOMP_GEN_MASK'].to(device)
+            if use_chosen_head:
+                next_head_mask = sub_data['NEXT_HEAD_MASK'].to(device)
+            else:
+                next_head_mask = None
+            nwords = masks.sum() - nbatch
+            loss_arc, loss_type = network.loss(words, chars, postags, heads, types, 
+                                                recomp_gen_mask, no_recmp_gen_mask, 
+                                                mask=masks, next_head_mask=next_head_mask, device=device)
+            loss = 0.5 *((1.0 - type_loss_ratio) * loss_arc + type_loss_ratio * loss_type)
+            #if loss_ty_token:
+            #    loss = loss_total.div(nwords)
+            #else:
+            #    loss = loss_total.div(nbatch)
+            loss.backward()
+            if grad_clip > 0:
+                grad_norm = clip_grad_norm_(network.parameters(), grad_clip)
+            else:
+                grad_norm = total_grad_norm(network.parameters())
 
-                if math.isnan(grad_norm):
-                    num_nans += 1
-                else:
-                    optimizer.step()
-                    scheduler.step()
+            if math.isnan(grad_norm):
+                num_nans += 1
+            else:
+                optimizer.step()
+                scheduler.step()
 
-                    with torch.no_grad():
-                        num_insts += nbatch
-                        num_words += nwords
-                        train_loss += loss.item()
-                        train_arc_loss += loss_arc.item()
-                        train_type_loss += loss_type.item()
-                torch.cuda.empty_cache()
+                with torch.no_grad():
+                    num_insts += nbatch
+                    num_words += nwords
+                    train_loss += loss.item()
+                    train_arc_loss += loss_arc.item()
+                    train_type_loss += loss_type.item()
+            torch.cuda.empty_cache()
             # update log
             if step % 100 == 0:
                 if not noscreen: 
