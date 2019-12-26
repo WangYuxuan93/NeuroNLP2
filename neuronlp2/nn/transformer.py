@@ -592,10 +592,38 @@ class GraphAttentionModel(nn.Module):
         return all_encoder_layers
 
 
+class GraphAttentionV2(nn.Module):
+    def __init__(self, config):
+        super(GraphAttentionV2, self).__init__()
+
+        #self.arc_h = nn.Linear(hidden_size, arc_space)
+        #self.arc_c = nn.Linear(hidden_size, arc_space)
+        #self.biaffine = BiAffine(arc_space, arc_space)
+        self.value = nn.Linear(config.hidden_size, config.hidden_size//2)
+
+        self.dropout = nn.Dropout(config.graph_attention_probs_dropout_prob)
+
+    def forward(self, hidden_states, graph_matrix):
+        """
+        Inputs:
+            hidden_states: (batch, seq_len, hidden_size)
+            graph_matrix: (batch, seq_len, seq_len), adjacency matrix
+        """
+        # input: (batch, seq_len, arc_space)
+        value_layer = self.value(hidden_states)
+        #print ("graph_matrix:\n", graph_matrix)
+        # This is actually dropping out entire tokens to attend to, which might
+        # seem a bit unusual, but is taken from the original Transformer paper.
+        attention_probs = self.dropout(graph_matrix)
+        # (batch, seq_len, seq_len) * (batch, seq_len, arc_space) 
+        # => (batch, seq_len, arc_space)
+        context_layer = torch.matmul(attention_probs.float(), value_layer)
+        return context_layer
+
 class GraphAttentionIntermediateV2(nn.Module):
     def __init__(self, config):
         super(GraphAttentionIntermediateV2, self).__init__()
-        self.dense = nn.Linear(config.arc_space, config.intermediate_size)
+        self.dense = nn.Linear(config.hidden_size, config.intermediate_size)
         self.intermediate_act_fn = gelu
 
     def forward(self, hidden_states):
@@ -603,16 +631,34 @@ class GraphAttentionIntermediateV2(nn.Module):
         hidden_states = self.intermediate_act_fn(hidden_states)
         return hidden_states
 
+class GraphAttentionOutputV2(nn.Module):
+    def __init__(self, config):
+        super(BERTOutput, self).__init__()
+        self.dense = nn.Linear(config.intermediate_size, config.hidden_size)
+        self.LayerNorm = BERTLayerNorm(config)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+
+    def forward(self, hidden_states, input_tensor):
+        hidden_states = self.dense(hidden_states)
+        hidden_states = self.dropout(hidden_states)
+        hidden_states = self.LayerNorm(hidden_states + input_tensor)
+        return hidden_states
+
 class GraphAttentionLayerV2(nn.Module):
     def __init__(self, config):
         super(GraphAttentionLayerV2, self).__init__()
-        self.graph_attention = GraphAttention(config)
+        # information flow in bidirection
+        self.fw_graph_attention = GraphAttentionV2(config)
+        self.bw_graph_attention = GraphAttentionV2(config)
         self.intermediate = GraphAttentionIntermediateV2(config)
         self.output = BERTOutput(config)
 
     def forward(self, hidden_states, graph_matrix, attention_mask):
-        # (batch, seq_len, arc_space)
-        graph_attention_output = self.graph_attention(hidden_states, graph_matrix)
+        # (batch, seq_len, hidden_size/2)
+        fw_ga_output = self.fw_graph_attention(hidden_states, graph_matrix)
+        bw_ga_output = self.bw_graph_attention(hidden_states, graph_matrix.transpose(-1,-2))
+        # (batch, seq_len, hidden_size)
+        graph_attention_output = torch.cat([fw_ga_output,fw_ga_output], dim=-1)
         intermediate_output = self.intermediate(graph_attention_output)
         layer_output = self.output(intermediate_output, graph_attention_output)
         return layer_output

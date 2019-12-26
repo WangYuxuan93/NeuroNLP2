@@ -249,7 +249,7 @@ def train(args):
     p_in = hyps['p_in']
     p_out = hyps['p_out']
     activation = hyps['activation']
-    type_loss_ratio = hyps['type_loss_ratio']
+    loss_interpolation = hyps['loss_interpolation']
 
     if model_type == 'EasyFirst':
         num_attention_heads = hyps['num_attention_heads']
@@ -266,7 +266,9 @@ def train(args):
                            attention_probs_dropout_prob=p_att,
                            graph_attention_probs_dropout_prob=p_graph_att,
                            embedd_word=word_table, embedd_char=char_table,
-                           p_in=p_in, p_out=p_out, pos=use_pos, use_char=use_char, activation=activation)
+                           p_in=p_in, p_out=p_out, pos=use_pos, use_char=use_char, 
+                           activation=activation, dep_prob_depend_on_head=False, 
+                           use_top2_margin=False, target_recomp_prob=0.25)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -340,7 +342,8 @@ def train(args):
         start_time = time.time()
         train_loss = 0.
         train_arc_loss = 0.
-        train_type_loss = 0.
+        train_rel_loss = 0.
+        train_recomp_loss = 0.
         num_insts = 0
         num_words = 0
         num_back = 0
@@ -378,10 +381,10 @@ def train(args):
             else:
                 next_head_mask = None
             nwords = masks.sum() - nbatch
-            loss_arc, loss_type = network.loss(words, chars, postags, heads, types, 
+            loss_arc, loss_rel, loss_recomp = network.loss(words, chars, postags, heads, types, 
                                                 recomp_gen_mask, no_recmp_gen_mask, 
                                                 mask=masks, next_head_mask=next_head_mask, device=device)
-            loss = 0.5 *((1.0 - type_loss_ratio) * loss_arc + type_loss_ratio * loss_type)
+            loss = 0.5 *((1.0 - loss_interpolation) * loss_arc + loss_interpolation * loss_rel) + loss_recomp
             #if loss_ty_token:
             #    loss = loss_total.div(nwords)
             #else:
@@ -403,7 +406,8 @@ def train(args):
                     num_words += nwords
                     train_loss += loss.item()
                     train_arc_loss += loss_arc.item()
-                    train_type_loss += loss_type.item()
+                    train_rel_loss += loss_rel.item()
+                    train_recomp_loss += loss_recomp.item()
             torch.cuda.empty_cache()
             # update log
             if step % 100 == 0:
@@ -417,7 +421,7 @@ def train(args):
                     log_info = '[%d/%d (%.0f%%) lr=%.6f (%d)] loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f)' % (step, num_batches, 100. * step / num_batches, curr_lr, num_nans,
                                                                                                                          train_loss / num_insts, train_loss / num_words,
                                                                                                                          train_arc_loss / num_insts, train_arc_loss / num_words,
-                                                                                                                        train_type_loss / num_insts, train_type_loss / num_words)
+                                                                                                                        train_rel_loss / num_insts, train_rel_loss / num_words)
                     sys.stdout.write(log_info)
                     sys.stdout.flush()
                     num_back = len(log_info)
@@ -425,9 +429,10 @@ def train(args):
             sys.stdout.write("\b" * num_back)
             sys.stdout.write(" " * num_back)
             sys.stdout.write("\b" * num_back)
-        print('total: %d (%d), loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f), time: %.2fs' % (num_insts, num_words, train_loss / num_insts, train_loss / num_words,
-                                                                                                       train_arc_loss / num_insts, train_arc_loss / num_words,
-                                                                                                       train_type_loss / num_insts, train_type_loss / num_words,
+        print('total: %d (%d), loss: %.4f, arc: %.4f, rel: %.4f, recomp: %.4f, time: %.2fs' % (num_insts, num_words, train_loss / num_insts,
+                                                                                                       train_arc_loss / num_insts,
+                                                                                                       train_rel_loss / num_insts,
+                                                                                                       train_recomp_loss / num_insts,
                                                                                                        time.time() - start_time))
         print('-' * 125)
 
@@ -576,7 +581,7 @@ def parse(args):
     p_in = hyps['p_in']
     p_out = hyps['p_out']
     activation = hyps['activation']
-    type_loss_ratio = hyps['type_loss_ratio']
+    loss_interpolation = hyps['loss_interpolation']
 
     if model_type == 'EasyFirst':
         num_attention_heads = hyps['num_attention_heads']
