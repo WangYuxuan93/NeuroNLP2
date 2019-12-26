@@ -360,8 +360,8 @@ class EasyFirstV2(nn.Module):
 
         # ----- encoding -----
         # (batch, seq_len, hidden_size)
-        rc_encoder_output = self._get_encoder_output(input_word, input_char, input_pos, rc_gen_heads_onehot, mask=mask)
-        norc_encoder_output = self._get_encoder_output(input_word, input_char, input_pos, norc_gen_heads_onehot, mask=mask)
+        rc_encoder_output = self._get_encoder_output(input_word, input_char, input_pos, rc_gen_heads_onehot, mask=root_mask)
+        norc_encoder_output = self._get_encoder_output(input_word, input_char, input_pos, norc_gen_heads_onehot, mask=root_mask)
         
 
         # ----- compute arc loss -----
@@ -370,8 +370,13 @@ class EasyFirstV2(nn.Module):
         norc_arc_h, norc_arc_c = norc_arc
         # (batch, seq_len, seq_len)
         norc_head_logp_given_norc = self._get_head_logp(norc_arc_c, norc_arc_h, norc_encoder_output)
+        
+        # (batch, seq_len, seq_len)
+        neg_inf_logp = torch.Tensor(norc_head_logp_given_norc.size()).fill_(-1e9).to(device)
+        # (batch, seq_len, seq_len), mask out generated heads
+        masked_norc_head_logp = torch.where(rc_gen_heads_onehot==0, norc_head_logp_given_norc.detach(), neg_inf_logp)
         # (batch)
-        rc_probs, rc_logp, norc_logp = self._get_recomp_logp(norc_head_logp_given_norc.detach(), rc_gen_mask, norc_gen_mask, root_mask)
+        rc_probs, rc_logp, norc_logp = self._get_recomp_logp(masked_norc_head_logp, rc_gen_mask, norc_gen_mask, root_mask)
         # (batch, seq_len, seq_len)
         norc_head_logp = norc_logp.unsqueeze(1).unsqueeze(2) + norc_head_logp_given_norc
 
@@ -432,7 +437,94 @@ class EasyFirstV2(nn.Module):
         _, rels = out_type.max(dim=2)
         return rels + leading_symbolic
 
-    def decode(self, input_word, input_char, input_pos, mask=None, max_layers=6, max_steps=100,
+
+    def _decode_one_step(self, head_logp, mask, device=torch.device('cpu')):
+        """
+        Input:
+            head_logp: (batch, seq_len, seq_len)
+            mask: (batch, seq_len)
+        """
+        batch_size, seq_len, _ = head_logp.size()
+        sent_lens = mask.sum(-1).float().unsqueeze(-1)
+        num_new_arcs = torch.zeros(batch_size).float().unsqueeze(-1)
+        # (batch, seq_len, seq_len)
+        masked_head_logp = head_logp.detach()
+        # (batch, seq_len, seq_len)
+        neg_inf_logp = torch.Tensor(head_logp.size()).fill_(-1e9).to(device)
+        # (batch, seq_len, seq_len)
+        gen_heads_onehot = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=device)
+        null_arc_adder = torch.zeros_like(gen_heads_onehot)
+        rc_probs_list = []
+        for i in range(seq_len):
+            # ----- compute recompute prob -----
+            features = []
+            # (batch, seq_len*seq_len)
+            flatten_logp = masked_head_logp.view([batch_size, -1])
+            # (batch, 2), get top 2 logp
+            top2_values, top2_indices = torch.topk(flatten_logp, k=2, dim=-1)
+            # (batch)
+            max_head_logp = top2_values[:,0]
+            # (batch)
+            second_head_logp = top2_values[:,1]
+            # feature: max head logp
+            features.append(max_head_logp.unsqueeze(-1))
+            # feature: sentence length
+            # (batch)
+            features.append(sent_lens)
+            # feature: number of new arcs after last recompute
+            # (batch)
+            features.append(num_new_arcs)
+            # add one newly generated arc
+            num_new_arcs = num_new_arcs + 1.0
+
+            if self.use_top2_margin:
+                # feature: margin between top 2 head logp
+                # (batch)
+                top2_margin = max_head_logp - second_head_logp
+                features.append(top2_margin.unsqueeze(-1))
+
+            # (batch, n_feature)
+            features = torch.cat(features, -1)
+            # (batch)
+            rc_probs = torch.sigmoid(self.recomp_dense(features)).squeeze(-1)
+            rc_probs_list.append(rc_probs)
+
+            # ----- get top arc & update state -----
+            # (batch)
+            max_dep_indices = top2_indices[:,0] // seq_len
+            max_head_indices = top2_indices[:,0] % seq_len
+
+            # (batch, seq_len, seq_len)
+            max_head_onehot = torch.zeros(batch_size, seq_len, seq_len, dtype=torch.int32, device=device)
+            max_head_onehot.scatter_(2, max_head_indices.unsqueeze(1).unsqueeze(2).expand_as(max_head_onehot), 1)
+            # (batch, seq_len, seq_len)
+            max_arc_onehot = max_dep_onehot * max_head_onehot
+
+            if i == 0:
+                # at least add one new arc
+                gen_heads_onehot = gen_heads_onehot + new_arc_onehot
+                rc_mask = torch.ones_like(rc_probs)
+            else:
+                # (batch), True if do recompute, otherwise False
+                rc_mask = torch.ge(rc_probs, 0.5)
+                # if all sent in the batch choose to recompute, return
+                if rc_mask.sum() == batch_size:
+                    break
+                new_arc_onehot = torch.where(rc_mask.unsqueeze(1).unsqueeze(2).expand_as(gen_heads_onehot),
+                                            null_arc_adder, max_arc_onehot)
+            # update logp
+            max_dep_mask = torch.zeros(batch_size, seq_len, seq_len, dtype=torch.int32, device=device)
+            # (batch, seq_len, seq_len)
+            max_dep_mask.scatter_(1, max_dep_indices.unsqueeze(1).unsqueeze(2).expand_as(max_dep_onehot), 1)
+            rc_mask_3D = rc_mask.int().unsqueeze(1).unsqueeze(2).expand_as(max_dep_mask)
+            # (batch, seq_len, seq_len), mask out the whole row of newly generated heads
+            # ensure it will not be choosed in next step
+            # only mask out rows that will be generated in this step
+            masked_head_logp = torch.where(max_dep_mask*rc_mask_3D==1, neg_inf_logp, masked_head_logp)
+
+        return rc_probs_list, gen_heads_onehot
+
+    def decode(self, input_word, input_char, input_pos, mask=None, max_steps=100,
                 debug=False, device=torch.device('cpu')):
         """
         Input:
@@ -442,11 +534,56 @@ class EasyFirstV2(nn.Module):
             mask: (batch, seq_len)
         """
         batch_size, seq_len = input_word.size()
-
+        # ----- preprocessing -----
         # (batch_size, seq_len)
         heads_pred = torch.zeros((batch_size, seq_len), dtype=torch.int64, device=device)
         heads_mask = torch.zeros_like(heads_pred, device=device)
         rels_pred = torch.zeros_like(heads_pred, device=device)
+        # (batch, seq_len, seq_len)
+        gen_heads_onehot = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=device)
+        # (batch, seq_len), seq mask, where at position 0 is 0
+        root_mask = torch.arange(seq_len, device=device).gt(0).float().unsqueeze(0) * mask
+
+        while True:
+            # ----- encoding -----
+            # (batch, seq_len, hidden_size)
+            encoder_output = self._get_encoder_output(input_word, input_char, input_pos, gen_heads_onehot, mask=root_mask)
+
+            # ----- compute arc probs -----
+            # compute arc logp for no recompute generate mask
+            arc, type = self._mlp(encoder_output)
+            arc_h, arc_c = arc
+            # (batch, seq_len, seq_len)
+            head_logp = self._get_head_logp(arc_c, arc_h, encoder_output)
+            
+            # (batch, seq_len, seq_len)
+            neg_inf_logp = torch.Tensor(head_logp.size()).fill_(-1e9).to(device)
+            # (batch, seq_len, seq_len), mask out generated heads
+            masked_head_logp = torch.where(gen_heads_onehot==0, head_logp.detach(), neg_inf_logp)
+            # rc_probs_list: k* (batch), the probability of recompute after each arc generated
+            # new_heads_onehot: (batch, seq_len, seq_len), newly generated arcs
+            rc_probs_list, new_heads_onehot = self._decode_one_step(masked_head_logp, root_mask)
+            # update the generated head tensor
+            gen_heads_onehot = gen_heads_onehot + new_heads_onehot
+            # should convert this to 2D (heads_pred & heads_mask)
+
+
+        # ----- compute rel probs -----
+        encoder_output = self._get_encoder_output(input_word, input_char, input_pos, gen_heads_onehot, mask=root_mask)
+        # compute arc logp for no recompute generate mask
+        arc, type = self._mlp(encoder_output)
+        rel_h, rel_c = type
+        # [batch_size=1, seq_len, seq_len, n_rels]
+        rel_logits = self.rel_attn(rel_c, rel_h).permute(0, 2, 3, 1)
+        # (batch_size=1, seq_len, seq_len)
+        rel_ids = rel_logits.argmax(-1)
+        # (1, seq_len)
+        masked_heads_pred = heads_pred[batch_id:batch_id+1,:] * root_mask
+        # (1, seq_len)
+        gathered_rels_pred = rel_ids.gather(dim=-1, index=masked_heads_pred.unsqueeze(-1).long()).squeeze(-1)
+        # (1, seq_len)
+        rels_pred[batch_id:batch_id+1,:] = gathered_rels_pred
+
 
         for batch_id in range(batch_size):
             word = input_word[batch_id:batch_id+1, :]
@@ -455,10 +592,8 @@ class EasyFirstV2(nn.Module):
             mask_ = mask[batch_id:batch_id+1, :]
             # (batch, seq_len), at position 0 is 0
             root_mask = torch.arange(seq_len, device=device).gt(0).float().unsqueeze(0) * mask_
-            # (n_layers=1, batch=1, seq_len, seq_len)
-            gen_heads_onehot = torch.zeros((1, 1, seq_len, seq_len), dtype=torch.int32, device=device)
-            #recomp_minus_mask = torch.Tensor([0,0,0]).bool()
-            recomp_minus_mask = torch.Tensor([0,0,1]).bool().to(device)
+            # (batch=1, seq_len, seq_len)
+            gen_heads_onehot = torch.zeros((1, seq_len, seq_len), dtype=torch.int32, device=device)
 
             for n_step in range(max_steps):
                 if debug:
