@@ -68,7 +68,6 @@ def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_
         masks = data['MASK'].to(device)
         #print (words)
         heads_pred, types_pred = network.decode(words, chars, postags, mask=masks, 
-                                                max_layers=max_layers, max_steps=max_steps,
                                                 device=device)
 
         words = words.cpu().numpy()
