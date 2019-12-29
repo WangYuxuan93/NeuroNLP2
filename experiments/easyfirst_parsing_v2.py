@@ -356,7 +356,7 @@ def train(args):
         if sampler == 'random':
             data_sampler = random_sample(data_train, batch_size, 
                             step_batch_size=step_batch_size, unk_replace=unk_replace, 
-                            shuffle=True, n_arc_each_recomp=n_arc_each_recomp)
+                            shuffle=False, n_arc_each_recomp=n_arc_each_recomp)
         for step, data in enumerate(data_sampler):
             #print ('number in batch:',len(sub_data['WORD']))
             optimizer.zero_grad()

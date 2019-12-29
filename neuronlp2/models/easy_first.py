@@ -398,8 +398,14 @@ class EasyFirstV2(nn.Module):
         loss_arc = -(0.5*norc_ref_heads_logp.sum()+0.5*rc_ref_heads_logp.sum())
         # regularizer of recompute prob, prevent always predicting recompute
         loss_recomp = self.l2_loss(rc_probs.mean(dim=-1,keepdim=True), torch.Tensor([self.target_recomp_prob]).to(device))
-        print ("rc_probs: ({})\n {}".format(self.target_recomp_prob, rc_probs))
-        print ("rc_probs.mean:\n",rc_probs.mean(dim=-1,keepdim=True))
+        #print ("rc_probs: ({})\n {}".format(self.target_recomp_prob, rc_probs))
+        #print ("rc_probs.mean:\n",rc_probs.mean(dim=-1,keepdim=True))
+
+        if debug:
+            print ('ref_heads_onehot:\n',ref_heads_onehot)
+            print ('norc_head_logp:\n', norc_head_logp)
+            print ('norc_head_logp * ref_heads_onehot:\n', norc_head_logp * ref_heads_onehot)
+
 
         # ----- compute label loss -----
         num_total_heads = heads_3D.sum()
@@ -520,6 +526,16 @@ class EasyFirstV2(nn.Module):
                 new_arc_onehot = torch.where(keep_mask_3D==0,
                                             null_arc_adder, max_arc_onehot)
                 gen_heads_onehot = gen_heads_onehot + new_arc_onehot
+            
+            if debug:
+                print ("rc_mask:\n",rc_mask)
+                print ("keep_mask:\n",keep_mask)
+                print ("max_dep_mask*keep_mask:\n",max_dep_mask*keep_mask_3D)
+                print ("max_arc_onehot:\n",max_arc_onehot)
+                print ("heads_mask:\n",heads_mask)
+                print ("gen_heads_onehot:\n",gen_heads_onehot)
+                print ("masked_head_logp:\n",masked_head_logp)
+
             # update logp
             #norc_mask_3D = (1-rc_mask.int()).unsqueeze(1).unsqueeze(2).expand_as(max_dep_mask)
             # (batch, seq_len, seq_len), mask out the whole row of newly generated heads
@@ -528,14 +544,7 @@ class EasyFirstV2(nn.Module):
             masked_head_logp = torch.where(max_dep_mask*keep_mask_3D==1, neg_inf_logp, masked_head_logp)
             new_heads_mask = max_dep_mask[:,:,0]
             heads_mask = heads_mask + new_heads_mask*keep_mask
-            if debug:
-                print ("rc_mask:\n",rc_mask)
-                print ("keep_mask:\n",keep_mask)
-                print ("max_dep_mask*keep_mask:\n",max_dep_mask*keep_mask_3D)
-                print ("max_arc_onehot:\n",max_arc_onehot)
-                print ("gen_heads_onehot:\n",gen_heads_onehot)
-                print ("heads_mask:\n",heads_mask)
-                print ("masked_head_logp:\n",masked_head_logp)
+            
         return rc_probs_list, gen_heads_onehot
 
     def decode(self, input_word, input_char, input_pos, mask=None, debug=False, device=torch.device('cpu')):
@@ -556,7 +565,8 @@ class EasyFirstV2(nn.Module):
         gen_heads_onehot = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=device)
         # (batch, seq_len), seq mask, where at position 0 is 0
         root_mask = torch.arange(seq_len, device=device).gt(0).float().unsqueeze(0) * mask
-
+        # (batch, seq_len, seq_len)
+        mask_3D = (root_mask.unsqueeze(-1) * mask.unsqueeze(1))
         while True:
             # ----- encoding -----
             # (batch, seq_len, hidden_size)
@@ -571,7 +581,7 @@ class EasyFirstV2(nn.Module):
             
             # (batch, seq_len, seq_len)
             neg_inf_logp = torch.Tensor(head_logp.size()).fill_(-1e9).to(device)
-            logp_mask = ((1-heads_mask)*root_mask).unsqueeze(-1).expand_as(head_logp)
+            logp_mask = (1-heads_mask).unsqueeze(-1).expand_as(head_logp) * mask_3D
             # (batch, seq_len, seq_len), mask out generated heads
             masked_head_logp = torch.where(logp_mask==1, head_logp.detach(), neg_inf_logp)
             # rc_probs_list: k* (batch), the probability of recompute after each arc generated
@@ -592,8 +602,8 @@ class EasyFirstV2(nn.Module):
             new_heads_pred = new_heads_pred * new_heads_mask
             heads_mask = heads_mask + new_heads_mask
             heads_pred = heads_pred + new_heads_pred
-            print ("rc_probs_list:\n", rc_probs_list)
             if debug:
+                print ("rc_probs_list:\n", rc_probs_list)
                 print ("logp_mask:\n",logp_mask)
                 print ("rc_probs_list:\n", rc_probs_list)
                 print ("new_heads_mask:\n", new_heads_mask)

@@ -3,7 +3,7 @@ __author__ = 'max'
 import numpy as np
 import torch
 
-def random_sample(data, batch_size, step_batch_size=None, unk_replace=0., shuffle=False, n_arc_each_recomp=4):
+def random_sample_(data, batch_size, step_batch_size=None, unk_replace=0., shuffle=False, n_arc_each_recomp=4):
     data_tensor, bucket_sizes = data
 
     bucket_indices = np.arange(len(bucket_sizes))
@@ -46,6 +46,59 @@ def random_sample(data, batch_size, step_batch_size=None, unk_replace=0., shuffl
             sampled_batch = sample_generate_order(batch, lengths, n_arc_each_recomp=n_arc_each_recomp)
             yield sampled_batch
 
+def random_sample(data, batch_size, step_batch_size=None, unk_replace=0., shuffle=False, 
+                    n_arc_each_recomp=4, debug=False):
+    data_tensor, bucket_sizes = data
+
+    bucket_indices = np.arange(len(bucket_sizes))
+    if shuffle:
+        np.random.shuffle((bucket_indices))
+
+    easyfirst_keys = ['MASK', 'POS', 'CHAR', 'HEAD', 'TYPE','RECOMP_GEN_MASK', 'NO_RECOMP_GEN_MASK', 'NEXT_HEAD_MASK']
+    for bucket_id in bucket_indices:
+        data = data_tensor[bucket_id]
+        bucket_size = bucket_sizes[bucket_id]
+        if bucket_size == 0:
+            continue
+
+        sampled_data = sample_generate_order(data, data['LENGTH'], n_arc_each_recomp=n_arc_each_recomp)
+        sample_size = sampled_data['WORD'].size(0)
+        if sample_size == 0:
+            continue
+
+        indices = None
+        if shuffle:
+            indices = torch.randperm(sample_size).long()
+            indices = indices.to(data['WORD'].device)
+
+        for start_idx in range(0, sample_size, batch_size):
+            if shuffle:
+                excerpt = indices[start_idx:start_idx + batch_size]
+            else:
+                excerpt = slice(start_idx, start_idx + batch_size)
+
+            words = sampled_data['WORD']
+            single = sampled_data['SINGLE']
+            bucket_length = words.size(1)
+
+            if unk_replace:
+                ones = single.new_ones(sample_size, bucket_length)
+                noise = single.new_empty(sample_size, bucket_length).bernoulli_(unk_replace).long()
+                words = words * (ones - single * noise)
+
+            lengths = sampled_data['LENGTH'][excerpt]
+            batch_length = lengths.max().item()
+            # [batch_size, batch_len]
+            heads = sampled_data['HEAD'][excerpt, :batch_length]
+            types = sampled_data['TYPE'][excerpt, :batch_length]
+            batch = {'WORD': words[excerpt, :batch_length], 'LENGTH': lengths}
+            batch.update({key: field[excerpt, :batch_length] for key, field in sampled_data.items() if key in easyfirst_keys})
+            
+            if debug:
+                for key in batch.keys():
+                    print ("%s\n"%key, batch[key])
+
+            yield batch
 
 def sample_generate_order(batch, lengths, n_arc_each_recomp=4, recomp_in_prev=False, debug=False):
 
@@ -56,7 +109,7 @@ def sample_generate_order(batch, lengths, n_arc_each_recomp=4, recomp_in_prev=Fa
     #DO_EOS = 2
     batch_length = lengths.max().item()
 
-    easyfirst_keys = ['WORD', 'MASK', 'LENGTH', 'POS', 'CHAR', 'HEAD', 'TYPE']
+    easyfirst_keys = ['WORD', 'MASK', 'LENGTH', 'POS', 'CHAR', 'HEAD', 'TYPE', 'SINGLE']
     all_keys = easyfirst_keys + ['RECOMP_GEN_MASK', 'NO_RECOMP_GEN_MASK', 'NEXT_HEAD_MASK']
     sampled_batch = {key: [] for key in all_keys}
 

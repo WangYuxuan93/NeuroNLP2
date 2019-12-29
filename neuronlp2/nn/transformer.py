@@ -615,6 +615,8 @@ class GraphAttentionV2(nn.Module):
         # This is actually dropping out entire tokens to attend to, which might
         # seem a bit unusual, but is taken from the original Transformer paper.
         attention_probs = self.dropout(graph_matrix)
+        smoothing_rate = 0.2
+        attention_probs = attention_probs * (1-smoothing_rate) + 0.5 * smoothing_rate
         # (batch, seq_len, seq_len) * (batch, seq_len, arc_space) 
         # => (batch, seq_len, arc_space)
         context_layer = torch.matmul(attention_probs.float(), value_layer)
@@ -659,6 +661,7 @@ class GraphAttentionLayerV2(nn.Module):
         bw_ga_output = self.bw_graph_attention(hidden_states, graph_matrix.transpose(-1,-2))
         # (batch, seq_len, hidden_size)
         graph_attention_output = torch.cat([fw_ga_output,fw_ga_output], dim=-1)
+        #print ("graph_attention_output:\n",graph_attention_output)
         intermediate_output = self.intermediate(graph_attention_output)
         layer_output = self.output(intermediate_output, graph_attention_output)
         return layer_output
