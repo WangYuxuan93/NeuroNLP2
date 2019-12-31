@@ -60,6 +60,8 @@ class EasyFirstV2(nn.Module):
 
         self.graph_attention = GraphAttentionModelV2(self.config).to(device)
 
+        #self.rnn = VarFastLSTM(dim_enc, hidden_size, num_layers=3, batch_first=True, bidirectional=True, dropout=(0,0))
+
         out_dim = hidden_size
         self.arc_h = nn.Linear(out_dim, arc_space).to(device)
         self.arc_c = nn.Linear(out_dim, arc_space).to(device)
@@ -133,13 +135,17 @@ class EasyFirstV2(nn.Module):
             pos = self.dropout_in(pos).to(self.device)
             enc = torch.cat([enc, pos], dim=2)
 
+        # output from rnn [batch, length, hidden_size]
+        #output, _ = self.rnn(enc, mask)
+
+        #all_encoder_layers = self.graph_attention(output, graph_matrix, mask)
         all_encoder_layers = self.graph_attention(enc, graph_matrix, mask)
         # [batch, length, hidden_size]
         output = all_encoder_layers[-1]
 
         # apply dropout for output
         # [batch, length, hidden_size] --> [batch, hidden_size, length] --> [batch, length, hidden_size]
-        output = self.dropout_out(output.transpose(1, 2)).transpose(1, 2)
+        #output = self.dropout_out(output.transpose(1, 2)).transpose(1, 2)
 
         return output
 
@@ -155,14 +161,16 @@ class EasyFirstV2(nn.Module):
         # apply dropout on arc
         # [batch, length, dim] --> [batch, 2 * length, dim]
         arc = torch.cat([arc_h, arc_c], dim=1)
-        type = torch.cat([rel_h, rel_c], dim=1)
-        arc = self.dropout_out(arc.transpose(1, 2)).transpose(1, 2)
+        rel = torch.cat([rel_h, rel_c], dim=1)
+        #arc = self.dropout_out(arc.transpose(1, 2)).transpose(1, 2)
+        arc = self.dropout_out(arc)
         arc_h, arc_c = arc.chunk(2, 1)
 
-        # apply dropout on type
+        # apply dropout on rel
         # [batch, length, dim] --> [batch, 2 * length, dim]
-        type = self.dropout_out(type.transpose(1, 2)).transpose(1, 2)
-        rel_h, rel_c = type.chunk(2, 1)
+        #rel = self.dropout_out(rel.transpose(1, 2)).transpose(1, 2)
+        rel = self.dropout_out(rel)
+        rel_h, rel_c = rel.chunk(2, 1)
         rel_h = rel_h.contiguous()
         rel_c = rel_c.contiguous()
 
@@ -206,7 +214,7 @@ class EasyFirstV2(nn.Module):
         top_arc_hidden_states = torch.cat([selected_dep_hidden_states, selected_head_hidden_states], -1)
         return top_arc_hidden_states
 
-    def _get_recomp_logp(self, head_logp, rc_gen_mask, norc_gen_mask, mask):
+    def _get_recomp_logp(self, head_logp, rc_gen_mask, norc_gen_mask, mask, debug=False):
         """
         Input:
             head_logp: (batch, seq_len, seq_len)
@@ -241,6 +249,14 @@ class EasyFirstV2(nn.Module):
             top2_margin = max_head_logp - second_head_logp
             features.append(top2_margin.unsqueeze(-1))
 
+        if debug:
+            print ("flatten_logp:\n", flatten_logp)
+            print ("max_head_logp:\n", max_head_logp)
+            print ("sent_lens:\n", sent_lens)
+            print ("rc_gen_mask:\n",rc_gen_mask)
+            print ("norc_gen_mask:\n",norc_gen_mask)
+            print ("num_new_arcs:\n", num_new_arcs)
+
         # (batch, n_feature)
         features = torch.cat(features, -1)
         # (batch)
@@ -250,7 +266,7 @@ class EasyFirstV2(nn.Module):
         norc_logp = torch.log(1.0 - rc_probs)
         return rc_probs, rc_logp, norc_logp
 
-    def _get_head_logp(self, arc_h, arc_c, encoder_output, mask=None):
+    def _get_head_logp(self, arc_c, arc_h, encoder_output, mask=None, debug=False):
         """
         Input:
             encoder_output: (batch, seq_len, hidden_size)
@@ -261,6 +277,12 @@ class EasyFirstV2(nn.Module):
         # compute head logp given dep
         # (batch, seq_len, seq_len)
         head_logits = self.arc_attn(arc_c, arc_h)
+
+        if debug:
+            print ("arc_h:\n", arc_h)
+            print ("arc_c:\n", arc_c)
+            print ("head_logits:\n", head_logits)
+
         # mask invalid position to -inf for log_softmax
         if mask is not None:
             minus_mask = mask.eq(0).unsqueeze(2)
@@ -268,18 +290,22 @@ class EasyFirstV2(nn.Module):
   
         # (batch, seq_len, seq_len), log softmax over all possible arcs
         head_logp_given_dep = F.log_softmax(head_logits, dim=-1)
-
+        
         # compute dep logp
         if self.dep_prob_depend_on_head:
             # (batch, seq_len, seq_len) * (batch, seq_len, hidden_size) 
             # => (batch, seq_len, hidden_size)
             # stop grads, prevent it from messing up head probs
-            context_layer = torch.matmul(head_logits.detach(), encoder_output)
+            context_layer = torch.matmul(head_logits.detach(), encoder_output.detach())
         else:
             # (batch, seq_len, hidden_size)
-            context_layer = encoder_output
+            context_layer = encoder_output.detach()
         # (batch, seq_len)
         dep_logp = F.log_softmax(self.dep_dense(context_layer).squeeze(-1), dim=-1)
+        if debug:
+            print ("head_logp_given_dep:\n", head_logp_given_dep)
+            print ("dep_logits:\n",self.dep_dense(context_layer).squeeze(-1))
+            print ("dep_logp:\n", dep_logp)
         # (batch, seq_len, seq_len)
         head_logp = head_logp_given_dep + dep_logp.unsqueeze(2)
 
@@ -344,6 +370,10 @@ class EasyFirstV2(nn.Module):
         # (batch, seq_len, seq_len)
         rc_gen_heads_onehot = rc_gen_heads_onehot * rc_gen_mask.unsqueeze(-1)
 
+        if debug:
+            print ('rc_gen_heads_onehot:\n',rc_gen_heads_onehot.cpu().numpy())
+
+        #"""
         # (batch, seq_len, seq_len)
         norc_gen_heads_onehot = torch.zeros(batch_size, seq_len, seq_len, dtype=torch.int32, device=device)
         norc_gen_heads_onehot.scatter_(-1, (norc_gen_mask*heads).unsqueeze(-1), 1)
@@ -356,15 +386,16 @@ class EasyFirstV2(nn.Module):
             print ('norc_gen_mask:\n', norc_gen_mask)
             print ('norc_gen_mask*heads:\n', norc_gen_mask*heads)
             print ('norc_gen_heads_onehot:\n',norc_gen_heads_onehot.cpu().numpy())
-
+        #"""
 
         # ----- encoding -----
         # (batch, seq_len, hidden_size)
         rc_encoder_output = self._get_encoder_output(input_word, input_char, input_pos, rc_gen_heads_onehot, mask=root_mask)
         norc_encoder_output = self._get_encoder_output(input_word, input_char, input_pos, norc_gen_heads_onehot, mask=root_mask)
-        
+        #print ("rc_encoder_output:\n",rc_encoder_output)
 
         # ----- compute arc loss -----
+        #"""
         # compute arc logp for no recompute generate mask
         norc_arc, norc_type = self._mlp(norc_encoder_output)
         norc_arc_h, norc_arc_c = norc_arc
@@ -373,15 +404,17 @@ class EasyFirstV2(nn.Module):
         
         # (batch, seq_len, seq_len)
         neg_inf_logp = torch.Tensor(norc_head_logp_given_norc.size()).fill_(-1e9).to(device)
+        # (batch, seq_len, seq_len)
+        logp_mask = (1-rc_gen_mask.unsqueeze(2)) * mask_3D
         # (batch, seq_len, seq_len), mask out generated heads
-        masked_norc_head_logp = torch.where(rc_gen_heads_onehot==0, norc_head_logp_given_norc.detach(), neg_inf_logp)
+        masked_norc_head_logp = torch.where(logp_mask==1, norc_head_logp_given_norc.detach(), neg_inf_logp)
         # (batch)
         rc_probs, rc_logp, norc_logp = self._get_recomp_logp(masked_norc_head_logp, rc_gen_mask, norc_gen_mask, root_mask)
         # (batch, seq_len, seq_len)
         norc_head_logp = norc_logp.unsqueeze(1).unsqueeze(2) + norc_head_logp_given_norc
-
+        #"""
         # compute arc logp for recompute generate mask
-        rc_arc, rc_type = self._mlp(rc_encoder_output)
+        rc_arc, rc_rel = self._mlp(rc_encoder_output)
         rc_arc_h, rc_arc_c = rc_arc
         # (batch, seq_len, seq_len)
         rc_head_logp_given_rc = self._get_head_logp(rc_arc_c, rc_arc_h, rc_encoder_output)
@@ -389,27 +422,34 @@ class EasyFirstV2(nn.Module):
         rc_head_logp = rc_logp.unsqueeze(1).unsqueeze(2) + rc_head_logp_given_rc
 
         # (batch), number of ref heads in total
-        num_heads = ref_heads_onehot.sum(dim=(1,2)) + 1e-5
+        num_heads = ref_heads_onehot.sum() + 1e-5
         # (batch), reference loss for no recompute
-        norc_ref_heads_logp = (norc_head_logp * ref_heads_onehot).sum(dim=(1,2)) / num_heads
+        norc_ref_heads_logp = (norc_head_logp * ref_heads_onehot).sum(dim=(1,2))
         # (batch), reference loss for recompute
-        rc_ref_heads_logp = (rc_head_logp * ref_heads_onehot).sum(dim=(1,2)) / num_heads
+        rc_ref_heads_logp = (rc_head_logp * ref_heads_onehot).sum(dim=(1,2))
         
-        loss_arc = -(0.5*norc_ref_heads_logp.sum()+0.5*rc_ref_heads_logp.sum())
+        loss_arc = -(0.5*norc_ref_heads_logp.sum()+0.5*rc_ref_heads_logp.sum()) / num_heads
+        #loss_arc = - rc_ref_heads_logp.sum() / num_heads
         # regularizer of recompute prob, prevent always predicting recompute
         loss_recomp = self.l2_loss(rc_probs.mean(dim=-1,keepdim=True), torch.Tensor([self.target_recomp_prob]).to(device))
         #print ("rc_probs: ({})\n {}".format(self.target_recomp_prob, rc_probs))
-        #print ("rc_probs.mean:\n",rc_probs.mean(dim=-1,keepdim=True))
-
+        if debug:
+            print ('ref_heads_onehot:\n',ref_heads_onehot)
+            print ('rc_head_logp:\n', rc_head_logp)
+            print ('rc_head_logp * ref_heads_onehot:\n', rc_head_logp * ref_heads_onehot)
+        """
         if debug:
             print ('ref_heads_onehot:\n',ref_heads_onehot)
             print ('norc_head_logp:\n', norc_head_logp)
+            print ('rc_head_logp:\n', rc_head_logp)
+            print ('rc_head_logp * ref_heads_onehot:\n', rc_head_logp * ref_heads_onehot)
             print ('norc_head_logp * ref_heads_onehot:\n', norc_head_logp * ref_heads_onehot)
-
+        """
 
         # ----- compute label loss -----
         num_total_heads = heads_3D.sum()
         # compute label loss for no recompute
+        """
         # (batch, length, type_space), out_type shape 
         norc_rel_h, norc_rel_c = norc_type
         # (batch, n_rels, seq_len, seq_len)
@@ -417,19 +457,30 @@ class EasyFirstV2(nn.Module):
         # (batch, seq_len, seq_len)
         norc_rel_loss = self.criterion(norc_rel_logits, rels_3D) * (mask_3D * heads_3D)
         norc_rel_loss = norc_rel_loss.sum() / num_total_heads
+        """
 
         # compute label loss for no recompute
+        if debug:
+            print ("rels:\n",rels)
+            print ("rels_3D:\n",rels_3D)
+            print ("mask_3D * heads_3D:\n", mask_3D * heads_3D)
+            print ("num_total_heads:",num_total_heads)
         # (batch, length, type_space), out_type shape 
-        rc_rel_h, rc_rel_c = rc_type
+        rc_rel_h, rc_rel_c = rc_rel
         # (batch, n_rels, seq_len, seq_len)
         rc_rel_logits = self.rel_attn(rc_rel_c, rc_rel_h) #.permute(0, 2, 3, 1)
         # (batch, seq_len, seq_len)
         rc_rel_loss = self.criterion(rc_rel_logits, rels_3D) * (mask_3D * heads_3D)
+
+        #print ("rc_rel_loss:\n",rc_rel_loss)
+
         rc_rel_loss = rc_rel_loss.sum() / num_total_heads
 
-        loss_rel = 0.5*norc_rel_loss + 0.5*rc_rel_loss
+        #loss_rel = 0.5*norc_rel_loss + 0.5*rc_rel_loss
+        loss_rel = rc_rel_loss
 
         return loss_arc, loss_rel, loss_recomp
+
 
     def _decode_rels(self, out_type, heads, leading_symbolic):
         # out_type shape [batch, length, type_space]
@@ -445,7 +496,8 @@ class EasyFirstV2(nn.Module):
         return rels + leading_symbolic
 
 
-    def _decode_one_step(self, head_logp, heads_mask, mask, device=torch.device('cpu'), debug=False):
+    def _decode_one_step(self, head_logp, heads_mask, mask, device=torch.device('cpu'), 
+                            debug=False):
         """
         Input:
             head_logp: (batch, seq_len, seq_len)
@@ -453,14 +505,17 @@ class EasyFirstV2(nn.Module):
             mask: (batch, seq_len)
         """
         batch_size, seq_len, _ = head_logp.size()
+        # (batch)
+        num_words = mask.sum(-1)
+        # (batch, 1)
         sent_lens = mask.sum(-1).float().unsqueeze(-1)
         # (batch, seq_len, seq_len)
         masked_head_logp = head_logp.detach()
         # (batch, seq_len, seq_len)
         neg_inf_logp = torch.Tensor(head_logp.size()).fill_(-1e9).to(device)
         # (batch, seq_len, seq_len)
-        gen_heads_onehot = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=device)
-        null_arc_adder = torch.zeros_like(gen_heads_onehot)
+        new_heads_onehot = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=device)
+        null_arc_adder = torch.zeros_like(new_heads_onehot)
         rc_probs_list = []
         for i in range(seq_len):
             # ----- compute recompute prob -----
@@ -479,7 +534,7 @@ class EasyFirstV2(nn.Module):
             # (batch)
             features.append(sent_lens)
             # feature: number of new arcs after last recompute
-            num_new_arcs = gen_heads_onehot.sum(dim=(1,2)).float()
+            num_new_arcs = new_heads_onehot.sum(dim=(1,2)).float()
             # (batch)
             features.append(num_new_arcs.unsqueeze(-1))
 
@@ -508,32 +563,43 @@ class EasyFirstV2(nn.Module):
             max_head_onehot.scatter_(2, max_head_indices.unsqueeze(1).unsqueeze(2).expand_as(max_head_onehot), 1)
             # (batch, seq_len, seq_len)
             max_arc_onehot = max_dep_mask * max_head_onehot
+
+            # (batch), number of generated heads of each sent
+            num_heads = heads_mask.sum(-1)
+            # (batch), = 1 if all heads found
+            finish_mask = (num_words == num_heads).int()
             if i == 0:
+                continue_mask = (1 - finish_mask)
+                # if all heads generated
+                if continue_mask.sum() == 0:
+                    break
                 # at least add one new arc
-                gen_heads_onehot = gen_heads_onehot + max_arc_onehot
-                rc_mask = torch.zeros_like(rc_probs)
-                keep_mask = (1-rc_mask).unsqueeze(1).expand_as(heads_mask)*(1-heads_mask)*mask
-                keep_mask_3D = keep_mask.unsqueeze(2).expand_as(gen_heads_onehot)
+                new_heads_onehot = new_heads_onehot + max_arc_onehot
+                norc_mask = torch.ones_like(rc_probs)
+                keep_mask = (norc_mask).unsqueeze(1).expand_as(heads_mask)*(1-heads_mask)*mask
+                keep_mask_3D = keep_mask.unsqueeze(2).expand_as(new_heads_onehot)
             else:
                 # (batch), True if do recompute, otherwise False
-                rc_mask = torch.ge(rc_probs, 0.5).int()
+                norc_mask = torch.le(rc_probs, 0.5).int()
+                continue_mask = norc_mask * (1 - finish_mask)
                 # if all sent in the batch choose to recompute, return
-                if rc_mask.sum() == batch_size:
+                if continue_mask.sum() == 0:
                     break
                 # (batch, seq_len), if 1, keep the arc
-                keep_mask = (1-rc_mask).unsqueeze(1).expand_as(heads_mask)*(1-heads_mask)*mask
-                keep_mask_3D = keep_mask.unsqueeze(2).expand_as(gen_heads_onehot)
+                keep_mask = norc_mask.unsqueeze(1).expand_as(heads_mask)*(1-heads_mask)*mask
+                keep_mask_3D = keep_mask.unsqueeze(2).expand_as(new_heads_onehot)
                 new_arc_onehot = torch.where(keep_mask_3D==0,
                                             null_arc_adder, max_arc_onehot)
-                gen_heads_onehot = gen_heads_onehot + new_arc_onehot
+                new_heads_onehot = new_heads_onehot + new_arc_onehot
             
             if debug:
-                print ("rc_mask:\n",rc_mask)
+                print ("norc_mask:\n",norc_mask)
+                print ("continue_mask:\n",continue_mask)
                 print ("keep_mask:\n",keep_mask)
                 print ("max_dep_mask*keep_mask:\n",max_dep_mask*keep_mask_3D)
                 print ("max_arc_onehot:\n",max_arc_onehot)
                 print ("heads_mask:\n",heads_mask)
-                print ("gen_heads_onehot:\n",gen_heads_onehot)
+                print ("new_heads_onehot:\n",new_heads_onehot)
                 print ("masked_head_logp:\n",masked_head_logp)
 
             # update logp
@@ -545,7 +611,8 @@ class EasyFirstV2(nn.Module):
             new_heads_mask = max_dep_mask[:,:,0]
             heads_mask = heads_mask + new_heads_mask*keep_mask
             
-        return rc_probs_list, gen_heads_onehot
+        return rc_probs_list, new_heads_onehot
+
 
     def decode(self, input_word, input_char, input_pos, mask=None, debug=False, device=torch.device('cpu')):
         """
@@ -557,6 +624,8 @@ class EasyFirstV2(nn.Module):
         """
         batch_size, seq_len = input_word.size()
         # ----- preprocessing -----
+        # (batch), the number of recompute of each sentence
+        num_recomp = torch.zeros(batch_size, dtype=torch.int32, device=device)
         # (batch_size, seq_len)
         heads_pred = torch.zeros((batch_size, seq_len), dtype=torch.int64, device=device)
         heads_mask = torch.zeros_like(heads_pred, device=device)
@@ -571,7 +640,6 @@ class EasyFirstV2(nn.Module):
             # ----- encoding -----
             # (batch, seq_len, hidden_size)
             encoder_output = self._get_encoder_output(input_word, input_char, input_pos, gen_heads_onehot, mask=root_mask)
-
             # ----- compute arc probs -----
             # compute arc logp for no recompute generate mask
             arc, type = self._mlp(encoder_output)
@@ -602,6 +670,8 @@ class EasyFirstV2(nn.Module):
             new_heads_pred = new_heads_pred * new_heads_mask
             heads_mask = heads_mask + new_heads_mask
             heads_pred = heads_pred + new_heads_pred
+            num_recomp = num_recomp + (new_heads_mask.sum(-1).ge(1)).int()
+            print ("rc_probs_list:\n", rc_probs_list)
             if debug:
                 print ("rc_probs_list:\n", rc_probs_list)
                 print ("logp_mask:\n",logp_mask)
@@ -619,9 +689,9 @@ class EasyFirstV2(nn.Module):
             print ("heads_mask:\n", heads_mask)
 
         # ----- compute rel probs -----
-        encoder_output = self._get_encoder_output(input_word, input_char, input_pos, gen_heads_onehot, mask=root_mask)
+        #encoder_output = self._get_encoder_output(input_word, input_char, input_pos, gen_heads_onehot, mask=root_mask)
         # compute arc logp for no recompute generate mask
-        arc, type = self._mlp(encoder_output)
+        #arc, type = self._mlp(encoder_output)
         rel_h, rel_c = type
         # (batch_size, seq_len, seq_len, n_rels)
         rel_logits = self.rel_attn(rel_c, rel_h).permute(0, 2, 3, 1)
@@ -631,11 +701,22 @@ class EasyFirstV2(nn.Module):
         masked_heads_pred = heads_pred * root_mask
         # (batch_size, seq_len)
         rels_pred = rel_ids.gather(dim=-1, index=masked_heads_pred.unsqueeze(-1).long()).squeeze(-1)
-
+        
         if debug:
+            print ("rel_ids:\n", rel_ids)
+            print ("masked_heads_pred:\n", masked_heads_pred)
             print ("rels_pred:\n", rels_pred)
 
-        return heads_pred.cpu().numpy(), rels_pred.cpu().numpy()
+        # (batch)
+        num_words = root_mask.sum(-1)
+        freq_recomp = (num_recomp- 1) / num_words
+        if debug:
+            print ("num_recomp:\n", num_recomp)
+            print ("num_words:\n", num_words)
+            print ("freq_recomp:\n", freq_recomp)
+
+
+        return heads_pred.cpu().numpy(), rels_pred.cpu().numpy(), freq_recomp.mean().cpu().numpy()
 
 
 class EasyFirst(nn.Module):

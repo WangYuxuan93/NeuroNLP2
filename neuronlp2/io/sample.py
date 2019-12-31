@@ -2,8 +2,9 @@ __author__ = 'max'
 
 import numpy as np
 import torch
-
-def random_sample_(data, batch_size, step_batch_size=None, unk_replace=0., shuffle=False, n_arc_each_recomp=4):
+"""
+def random_sample_(data, batch_size, step_batch_size=None, unk_replace=0., shuffle=False, 
+                    target_recomp_prob=0.25):
     data_tensor, bucket_sizes = data
 
     bucket_indices = np.arange(len(bucket_sizes))
@@ -43,11 +44,12 @@ def random_sample_(data, batch_size, step_batch_size=None, unk_replace=0., shuff
             batch = {'WORD': words[excerpt, :batch_length], 'LENGTH': lengths}
             batch.update({key: field[excerpt, :batch_length] for key, field in data.items() if key in easyfirst_keys})
             
-            sampled_batch = sample_generate_order(batch, lengths, n_arc_each_recomp=n_arc_each_recomp)
+            sampled_batch = sample_generate_order(batch, lengths, target_recomp_prob=target_recomp_prob)
             yield sampled_batch
+"""
 
 def random_sample(data, batch_size, step_batch_size=None, unk_replace=0., shuffle=False, 
-                    n_arc_each_recomp=4, debug=False):
+                    target_recomp_prob=0.25, debug=False):
     data_tensor, bucket_sizes = data
 
     bucket_indices = np.arange(len(bucket_sizes))
@@ -61,7 +63,7 @@ def random_sample(data, batch_size, step_batch_size=None, unk_replace=0., shuffl
         if bucket_size == 0:
             continue
 
-        sampled_data = sample_generate_order(data, data['LENGTH'], n_arc_each_recomp=n_arc_each_recomp)
+        sampled_data = sample_generate_order(data, data['LENGTH'], target_recomp_prob=target_recomp_prob)
         sample_size = sampled_data['WORD'].size(0)
         if sample_size == 0:
             continue
@@ -100,7 +102,7 @@ def random_sample(data, batch_size, step_batch_size=None, unk_replace=0., shuffl
 
             yield batch
 
-def sample_generate_order(batch, lengths, n_arc_each_recomp=4, recomp_in_prev=False, debug=False):
+def sample_generate_order(batch, lengths, target_recomp_prob=0.25, recomp_in_prev=False, debug=False):
 
     RECOMP = -1
     #EOS = -2
@@ -116,7 +118,7 @@ def sample_generate_order(batch, lengths, n_arc_each_recomp=4, recomp_in_prev=Fa
     # for every sentence
     for i in range(len(lengths)):
         seq_len = lengths[i]
-        n_recomp = seq_len // n_arc_each_recomp
+        n_recomp = int(seq_len * target_recomp_prob)
         arc_order = np.arange(1,seq_len)
         np.random.shuffle(arc_order)
         recomp_pos = np.arange(1,seq_len-1)
@@ -279,4 +281,4 @@ if __name__ == '__main__':
              'POS':[[0,1,2,3,4,5],[0,6,7,8,0,0]], 'LENGTH':np.array([6,5]),
              'CHAR':[[0,1,2,3,4,5],[0,6,7,8,0,0]],'HEAD':[[0,3,1,0,3,5],[0,6,7,8,0,0]],'TYPE':[[0,1,2,3,4,5],[0,6,7,8,0,0]]}
     lengths = batch['LENGTH']
-    sample_generate_order(batch, lengths, n_arc_each_recomp=3)
+    sample_generate_order(batch, lengths, target_recomp_prob=0.25)

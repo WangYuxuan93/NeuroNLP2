@@ -40,7 +40,7 @@ def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgra
 
 
 def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, 
-        device, beam=1, batch_size=256, max_layers=6, max_steps=100):
+        device, beam=1, batch_size=256):
     network.eval()
     accum_ucorr = 0.0
     accum_lcorr = 0.0
@@ -55,6 +55,8 @@ def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_
     accum_root_corr = 0.0
     accum_total_root = 0.0
     accum_total_inst = 0.0
+    accum_recomp_freq = 0.0
+    n_step = 0
     for data in iterate_data(data, batch_size):
         #words = data['WORD'].to(device)
         #chars = data['CHAR'].to(device)
@@ -67,8 +69,11 @@ def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_
         lengths = data['LENGTH'].numpy()
         masks = data['MASK'].to(device)
         #print (words)
-        heads_pred, types_pred = network.decode(words, chars, postags, mask=masks, 
+        heads_pred, types_pred, recomp_freq = network.decode(words, chars, postags, mask=masks, 
                                                 device=device)
+
+        n_step += 1
+        accum_recomp_freq += recomp_freq
 
         words = words.cpu().numpy()
         postags = postags.cpu().numpy()
@@ -106,6 +111,7 @@ def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_
         accum_lcorr_nopunc * 100 / accum_total_nopunc,
         accum_ucomlpete_nopunc * 100 / accum_total_inst, accum_lcomplete_nopunc * 100 / accum_total_inst))
     print('Root: corr: %d, total: %d, acc: %.2f%%' %(accum_root_corr, accum_total_root, accum_root_corr * 100 / accum_total_root))
+    print ('AVG Recompute frequency: %.2f' % (accum_recomp_freq / n_step))
     return (accum_ucorr, accum_lcorr, accum_ucomlpete, accum_lcomplete, accum_total), \
            (accum_ucorr_nopunc, accum_lcorr_nopunc, accum_ucomlpete_nopunc, accum_lcomplete_nopunc, accum_total_nopunc), \
            (accum_root_corr, accum_total_root, accum_total_inst)
@@ -234,9 +240,7 @@ def train(args):
     else:
         char_dim = hyps['char_dim']
     mode = hyps['transformer_mode']
-    max_layers = hyps['max_layers']
-    max_steps = hyps['max_steps']
-    n_arc_each_recomp = hyps['n_arc_each_recomp']
+    target_recomp_prob = hyps['target_recomp_prob']
     use_pos = hyps['pos']
     use_char = hyps['use_char']
     use_chosen_head = hyps['use_chosen_head']
@@ -257,6 +261,9 @@ def train(args):
         p_att = hyps['attention_probs_dropout_prob']
         p_graph_att = hyps['graph_attention_probs_dropout_prob']
         recomp_att_dim = hyps['recomp_att_dim']
+        dep_prob_depend_on_head = hyps['dep_prob_depend_on_head']
+        use_top2_margin = hyps['use_top2_margin']
+        
         network = EasyFirstV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                            hidden_size, num_types, arc_space, type_space,
                            intermediate_size,
@@ -266,8 +273,8 @@ def train(args):
                            graph_attention_probs_dropout_prob=p_graph_att,
                            embedd_word=word_table, embedd_char=char_table,
                            p_in=p_in, p_out=p_out, pos=use_pos, use_char=use_char, 
-                           activation=activation, dep_prob_depend_on_head=False, 
-                           use_top2_margin=False, target_recomp_prob=0.25)
+                           activation=activation, dep_prob_depend_on_head=dep_prob_depend_on_head, 
+                           use_top2_margin=use_top2_margin, target_recomp_prob=target_recomp_prob)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -276,7 +283,7 @@ def train(args):
 
     #network = network.to(device)
     model = "{}-{}".format(model_type, mode)
-    logger.info("Network: %s, max_layer=%s, hidden=%d, act=%s" % (model, max_layers, hidden_size, activation))
+    logger.info("Network: %s, hidden=%d, act=%s" % (model, hidden_size, activation))
     logger.info("dropout(in, out, hidden, att, graph_att): %s(%.2f, %.2f, %.2f, %.2f, %.2f)" % ('variational', p_in, p_out, p_hid, p_att, p_graph_att))
     logger.info('# of Parameters: %d' % (sum([param.numel() for param in network.parameters()])))
 
@@ -343,6 +350,7 @@ def train(args):
         train_arc_loss = 0.
         train_rel_loss = 0.
         train_recomp_loss = 0.
+        num_steps = 0
         num_insts = 0
         num_words = 0
         num_back = 0
@@ -356,7 +364,7 @@ def train(args):
         if sampler == 'random':
             data_sampler = random_sample(data_train, batch_size, 
                             step_batch_size=step_batch_size, unk_replace=unk_replace, 
-                            shuffle=False, n_arc_each_recomp=n_arc_each_recomp)
+                            shuffle=True, target_recomp_prob=target_recomp_prob)
         for step, data in enumerate(data_sampler):
             #print ('number in batch:',len(sub_data['WORD']))
             optimizer.zero_grad()
@@ -376,7 +384,7 @@ def train(args):
             # (batch, seq_len)
             no_recmp_gen_mask = data['NO_RECOMP_GEN_MASK'].to(device)
             if use_chosen_head:
-                next_head_mask = sub_data['NEXT_HEAD_MASK'].to(device)
+                next_head_mask = data['NEXT_HEAD_MASK'].to(device)
             else:
                 next_head_mask = None
             nwords = masks.sum() - nbatch
@@ -396,6 +404,7 @@ def train(args):
 
             if math.isnan(grad_norm):
                 num_nans += 1
+                print ("nan detected")
             else:
                 optimizer.step()
                 scheduler.step()
@@ -403,6 +412,7 @@ def train(args):
                 with torch.no_grad():
                     num_insts += nbatch
                     num_words += nwords
+                    num_steps += 1
                     train_loss += loss.item()
                     train_arc_loss += loss_arc.item()
                     train_rel_loss += loss_rel.item()
@@ -428,10 +438,10 @@ def train(args):
             sys.stdout.write("\b" * num_back)
             sys.stdout.write(" " * num_back)
             sys.stdout.write("\b" * num_back)
-        print('total: %d (%d), loss: %.4f, arc: %.4f, rel: %.4f, recomp: %.4f, time: %.2fs' % (num_insts, num_words, train_loss / num_insts,
-                                                                                                       train_arc_loss / num_insts,
-                                                                                                       train_rel_loss / num_insts,
-                                                                                                       train_recomp_loss / num_insts,
+        print('total: %d (%d), steps: %d, loss: %.4f, arc: %.4f, rel: %.4f, recomp: %.4f, time: %.2fs' % (num_insts, num_words, num_steps, train_loss / (num_steps+1e-9),
+                                                                                                       train_arc_loss / num_steps,
+                                                                                                       train_rel_loss / num_steps,
+                                                                                                       train_recomp_loss / num_steps,
                                                                                                        time.time() - start_time))
         print('-' * 125)
 
@@ -444,8 +454,7 @@ def train(args):
                 #gold_writer.start(gold_filename)
 
                 print('Evaluating dev:')
-                dev_stats, dev_stats_nopunct, dev_stats_root = eval(data_dev, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam,
-                                                                    max_layers=max_layers, max_steps=max_steps)
+                dev_stats, dev_stats_nopunct, dev_stats_root = eval(data_dev, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam)
 
                 pred_writer.close()
                 #gold_writer.close()
@@ -481,8 +490,7 @@ def train(args):
                     #gold_writer.start(gold_filename)
 
                     print('Evaluating test:')
-                    test_stats, test_stats_nopunct, test_stats_root = eval(data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam,
-                                                                            max_layers=max_layers, max_steps=max_steps)
+                    test_stats, test_stats_nopunct, test_stats_root = eval(data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam)
 
                     test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total = test_stats
                     test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
@@ -495,28 +503,28 @@ def train(args):
 
                 print('-' * 125)
                 print('best dev  W. Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%% (epoch: %d)' % (
-                    best_ucorrect, best_lcorrect, best_total, best_ucorrect * 100 / best_total, best_lcorrect * 100 / best_total,
+                    best_ucorrect, best_lcorrect, best_total, best_ucorrect * 100 / (best_total+1e-9), best_lcorrect * 100 / (best_total+1e-9),
                     best_ucomlpete * 100 / dev_total_inst, best_lcomplete * 100 / dev_total_inst,
                     best_epoch))
                 print('best dev  Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%% (epoch: %d)' % (
                     best_ucorrect_nopunc, best_lcorrect_nopunc, best_total_nopunc,
-                    best_ucorrect_nopunc * 100 / best_total_nopunc, best_lcorrect_nopunc * 100 / best_total_nopunc,
-                    best_ucomlpete_nopunc * 100 / best_total_inst, best_lcomplete_nopunc * 100 / best_total_inst,
+                    best_ucorrect_nopunc * 100 / (best_total_nopunc+1e-9), best_lcorrect_nopunc * 100 / (best_total_nopunc+1e-9),
+                    best_ucomlpete_nopunc * 100 / (best_total_inst+1e-9), best_lcomplete_nopunc * 100 / (best_total_inst+1e-9),
                     best_epoch))
                 print('best dev  Root: corr: %d, total: %d, acc: %.2f%% (epoch: %d)' % (
-                    best_root_correct, best_total_root, best_root_correct * 100 / best_total_root, best_epoch))
+                    best_root_correct, best_total_root, best_root_correct * 100 / (best_total_root+1e-9), best_epoch))
                 print('-' * 125)
                 print('best test W. Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%% (epoch: %d)' % (
-                    test_ucorrect, test_lcorrect, test_total, test_ucorrect * 100 / test_total, test_lcorrect * 100 / test_total,
-                    test_ucomlpete * 100 / test_total_inst, test_lcomplete * 100 / test_total_inst,
+                    test_ucorrect, test_lcorrect, test_total, test_ucorrect * 100 / (test_total+1e-9), test_lcorrect * 100 / (test_total+1e-9),
+                    test_ucomlpete * 100 / (test_total_inst+1e-9), test_lcomplete * 100 / (test_total_inst+1e-9),
                     best_epoch))
                 print('best test Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%% (epoch: %d)' % (
                     test_ucorrect_nopunc, test_lcorrect_nopunc, test_total_nopunc,
-                    test_ucorrect_nopunc * 100 / test_total_nopunc, test_lcorrect_nopunc * 100 / test_total_nopunc,
-                    test_ucomlpete_nopunc * 100 / test_total_inst, test_lcomplete_nopunc * 100 / test_total_inst,
+                    test_ucorrect_nopunc * 100 / (test_total_nopunc+1e-9), test_lcorrect_nopunc * 100 / (test_total_nopunc+1e-9),
+                    test_ucomlpete_nopunc * 100 / (test_total_inst+1e-9), test_lcomplete_nopunc * 100 / (test_total_inst+1e-9),
                     best_epoch))
                 print('best test Root: corr: %d, total: %d, acc: %.2f%% (epoch: %d)' % (
-                    test_root_correct, test_total_root, test_root_correct * 100 / test_total_root, best_epoch))
+                    test_root_correct, test_total_root, test_root_correct * 100 / (test_total_root+1e-9), best_epoch))
                 print('=' * 125)
 
                 if patient >= reset:
