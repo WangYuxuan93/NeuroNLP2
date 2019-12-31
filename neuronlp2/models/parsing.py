@@ -18,19 +18,26 @@ class PriorOrder(Enum):
 
 
 class DeepBiAffine(nn.Module):
-    def __init__(self, word_dim, num_words, char_dim, num_chars, pos_dim, num_pos, rnn_mode, hidden_size, num_layers, num_labels, arc_space, type_space,
-                 embedd_word=None, embedd_char=None, embedd_pos=None, p_in=0.33, p_out=0.33, p_rnn=(0.33, 0.33), pos=True, activation='elu'):
+    def __init__(self, word_dim, num_words, char_dim, num_chars, pos_dim, num_pos, rnn_mode, 
+                 hidden_size, num_layers, num_labels, arc_space, type_space,
+                 embedd_word=None, embedd_char=None, embedd_pos=None, p_in=0.33, p_out=0.33, 
+                 p_rnn=(0.33, 0.33), pos=True, use_char=False, activation='elu'):
         super(DeepBiAffine, self).__init__()
 
         self.word_embed = nn.Embedding(num_words, word_dim, _weight=embedd_word, padding_idx=1)
         self.pos_embed = nn.Embedding(num_pos, pos_dim, _weight=embedd_pos, padding_idx=1) if pos else None
-        self.char_embed = nn.Embedding(num_chars, char_dim, _weight=embedd_char, padding_idx=1)
-        self.char_cnn = CharCNN(2, char_dim, char_dim, hidden_channels=char_dim * 4, activation=activation)
+        if use_char:
+            self.char_embed = nn.Embedding(num_chars, char_dim, _weight=embedd_char, padding_idx=1)
+            self.char_cnn = CharCNN(2, char_dim, char_dim, hidden_channels=char_dim * 4, activation=activation)
+        else:
+            self.char_embed = None
+            self.char_cnn = None
 
         self.dropout_in = nn.Dropout2d(p=p_in)
         self.dropout_out = nn.Dropout2d(p=p_out)
         self.num_labels = num_labels
 
+        self.linear_encoder = False
         if rnn_mode == 'RNN':
             RNN = VarRNN
         elif rnn_mode == 'LSTM':
@@ -39,16 +46,26 @@ class DeepBiAffine(nn.Module):
             RNN = VarFastLSTM
         elif rnn_mode == 'GRU':
             RNN = VarGRU
+        elif rnn_mode == 'Linear':
+            print ("Using Linear Encoder!")
+            self.linear_encoder = True
         else:
             raise ValueError('Unknown RNN mode: %s' % rnn_mode)
+        print ("Use Char:", use_char)
 
-        dim_enc = word_dim + char_dim
+        dim_enc = word_dim
+        if use_char:
+            dim_enc += char_dim
         if pos:
             dim_enc += pos_dim
 
-        self.rnn = RNN(dim_enc, hidden_size, num_layers=num_layers, batch_first=True, bidirectional=True, dropout=p_rnn)
+        if self.linear_encoder:
+            self.input_encoder = nn.Linear(dim_enc, hidden_size)
+            out_dim = hidden_size
+        else:
+            self.input_encoder = RNN(dim_enc, hidden_size, num_layers=num_layers, batch_first=True, bidirectional=True, dropout=p_rnn) 
+            out_dim = hidden_size * 2
 
-        out_dim = hidden_size * 2
         self.arc_h = nn.Linear(out_dim, arc_space)
         self.arc_c = nn.Linear(out_dim, arc_space)
         self.biaffine = BiAffine(arc_space, arc_space)
@@ -68,14 +85,15 @@ class DeepBiAffine(nn.Module):
     def reset_parameters(self, embedd_word, embedd_char, embedd_pos):
         if embedd_word is None:
             nn.init.uniform_(self.word_embed.weight, -0.1, 0.1)
-        if embedd_char is None:
+        if embedd_char is None and self.char_embed is not None:
             nn.init.uniform_(self.char_embed.weight, -0.1, 0.1)
         if embedd_pos is None and self.pos_embed is not None:
             nn.init.uniform_(self.pos_embed.weight, -0.1, 0.1)
 
         with torch.no_grad():
             self.word_embed.weight[self.word_embed.padding_idx].fill_(0)
-            self.char_embed.weight[self.char_embed.padding_idx].fill_(0)
+            if self.char_embed is not None:
+                self.char_embed.weight[self.char_embed.padding_idx].fill_(0)
             if self.pos_embed is not None:
                 self.pos_embed.weight[self.pos_embed.padding_idx].fill_(0)
 
@@ -89,19 +107,23 @@ class DeepBiAffine(nn.Module):
         nn.init.xavier_uniform_(self.type_c.weight)
         nn.init.constant_(self.type_c.bias, 0.)
 
+        if self.linear_encoder:
+            nn.init.xavier_uniform_(self.input_encoder.weight)
+            nn.init.constant_(self.input_encoder.bias, 0.)
+
     def _get_rnn_output(self, input_word, input_char, input_pos, mask=None):
         # [batch, length, word_dim]
         word = self.word_embed(input_word)
-
-        # [batch, length, char_length, char_dim]
-        char = self.char_cnn(self.char_embed(input_char))
-
         # apply dropout word on input
         word = self.dropout_in(word)
-        char = self.dropout_in(char)
+        enc = word
 
-        # concatenate word and char [batch, length, word_dim+char_filter]
-        enc = torch.cat([word, char], dim=2)
+        if self.char_embed is not None:
+            # [batch, length, char_length, char_dim]
+            char = self.char_cnn(self.char_embed(input_char))
+            char = self.dropout_in(char)
+            # concatenate word and char [batch, length, word_dim+char_filter]
+            enc = torch.cat([enc, char], dim=2)
 
         if self.pos_embed is not None:
             # [batch, length, pos_dim]
@@ -111,7 +133,10 @@ class DeepBiAffine(nn.Module):
             enc = torch.cat([enc, pos], dim=2)
 
         # output from rnn [batch, length, hidden_size]
-        output, _ = self.rnn(enc, mask)
+        if self.linear_encoder:
+            output = self.input_encoder(enc)
+        else:
+            output, _ = self.input_encoder(enc, mask)
 
         # apply dropout for output
         # [batch, length, hidden_size] --> [batch, hidden_size, length] --> [batch, length, hidden_size]
@@ -330,13 +355,17 @@ class StackPtrNet(nn.Module):
     def __init__(self, word_dim, num_words, char_dim, num_chars, pos_dim, num_pos, rnn_mode, hidden_size,
                  encoder_layers, decoder_layers, num_labels, arc_space, type_space,
                  embedd_word=None, embedd_char=None, embedd_pos=None, p_in=0.33, p_out=0.33, p_rnn=(0.33, 0.33),
-                 pos=True, prior_order='inside_out', grandPar=False, sibling=False, activation='elu'):
+                 pos=True, use_char=False, prior_order='inside_out', grandPar=False, sibling=False, activation='elu'):
 
         super(StackPtrNet, self).__init__()
         self.word_embed = nn.Embedding(num_words, word_dim, _weight=embedd_word, padding_idx=1)
         self.pos_embed = nn.Embedding(num_pos, pos_dim, _weight=embedd_pos, padding_idx=1) if pos else None
-        self.char_embed = nn.Embedding(num_chars, char_dim, _weight=embedd_char, padding_idx=1)
-        self.char_cnn = CharCNN(2, char_dim, char_dim, hidden_channels=char_dim * 4, activation=activation)
+        if use_char:
+            self.char_embed = nn.Embedding(num_chars, char_dim, _weight=embedd_char, padding_idx=1)
+            self.char_cnn = CharCNN(2, char_dim, char_dim, hidden_channels=char_dim * 4, activation=activation)
+        else:
+            self.char_embed = None
+            self.char_cnn = None
 
         self.dropout_in = nn.Dropout2d(p=p_in)
         self.dropout_out = nn.Dropout2d(p=p_out)
@@ -369,7 +398,9 @@ class StackPtrNet(nn.Module):
         else:
             raise ValueError('Unknown RNN mode: %s' % rnn_mode)
 
-        dim_enc = word_dim + char_dim
+        dim_enc = word_dim
+        if use_char:
+            dim_enc += char_dim
         if pos:
             dim_enc += pos_dim
 
@@ -403,14 +434,15 @@ class StackPtrNet(nn.Module):
     def reset_parameters(self, embedd_word, embedd_char, embedd_pos):
         if embedd_word is None:
             nn.init.uniform_(self.word_embed.weight, -0.1, 0.1)
-        if embedd_char is None:
+        if embedd_char is None and self.char_embed is not None:
             nn.init.uniform_(self.char_embed.weight, -0.1, 0.1)
         if embedd_pos is None and self.pos_embed is not None:
             nn.init.uniform_(self.pos_embed.weight, -0.1, 0.1)
 
         with torch.no_grad():
             self.word_embed.weight[self.word_embed.padding_idx].fill_(0)
-            self.char_embed.weight[self.char_embed.padding_idx].fill_(0)
+            if self.char_embed is not None:
+                self.char_embed.weight[self.char_embed.padding_idx].fill_(0)
             if self.pos_embed is not None:
                 self.pos_embed.weight[self.pos_embed.padding_idx].fill_(0)
 
@@ -427,16 +459,16 @@ class StackPtrNet(nn.Module):
     def _get_encoder_output(self, input_word, input_char, input_pos, mask=None):
         # [batch, length, word_dim]
         word = self.word_embed(input_word)
-
-        # [batch, length, char_length, char_dim]
-        char = self.char_cnn(self.char_embed(input_char))
-
         # apply dropout word on input
         word = self.dropout_in(word)
-        char = self.dropout_in(char)
+        enc = word
 
-        # concatenate word and char [batch, length, word_dim+char_filter]
-        enc = torch.cat([word, char], dim=2)
+        if self.char_embed is not None:
+            # [batch, length, char_length, char_dim]
+            char = self.char_cnn(self.char_embed(input_char))
+            char = self.dropout_in(char)
+            # concatenate word and char [batch, length, word_dim+char_filter]
+            enc = torch.cat([enc, char], dim=2)
 
         if self.pos_embed is not None:
             # [batch, length, pos_dim]

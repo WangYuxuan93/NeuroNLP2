@@ -244,10 +244,12 @@ def train(args):
     alg = 'transition' if model_type == 'StackPtr' else 'graph'
     if model_type == 'DeepBiAffine':
         num_layers = hyps['num_layers']
+        use_char = hyps['use_char']
         network = DeepBiAffine(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                                mode, hidden_size, num_layers, num_types, arc_space, type_space,
                                embedd_word=word_table, embedd_char=char_table,
-                               p_in=p_in, p_out=p_out, p_rnn=p_rnn, pos=use_pos, activation=activation)
+                               p_in=p_in, p_out=p_out, p_rnn=p_rnn, pos=use_pos, use_char=use_char,
+                               activation=activation)
     elif model_type == 'NeuroMST':
         num_layers = hyps['num_layers']
         network = NeuroMST(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
@@ -261,10 +263,12 @@ def train(args):
         prior_order = hyps['prior_order']
         grandPar = hyps['grandPar']
         sibling = hyps['sibling']
+        use_char = hyps['use_char']
         network = StackPtrNet(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos, mode, hidden_size,
                               encoder_layers, decoder_layers, num_types, arc_space, type_space,
                               embedd_word=word_table, embedd_char=char_table, prior_order=prior_order, activation=activation,
-                              p_in=p_in, p_out=p_out, p_rnn=p_rnn, pos=use_pos, grandPar=grandPar, sibling=sibling)
+                              p_in=p_in, p_out=p_out, p_rnn=p_rnn, pos=use_pos, use_char=use_char,
+                              grandPar=grandPar, sibling=sibling)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 

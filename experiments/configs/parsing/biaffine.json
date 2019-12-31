@@ -3,6 +3,7 @@
   "word_dim": 100,
   "char_dim": 100,
   "pos": true,
+  "use_char": false,
   "pos_dim": 100,
   "rnn_mode": "FastLSTM",
   "num_layers":3,
