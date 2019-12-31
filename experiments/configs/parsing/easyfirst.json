@@ -9,6 +9,7 @@
   "use_whole_seq": true,
   "use_top2_margin": true,
   "dep_prob_depend_on_head": false,
+  "extra_self_attention_layer": false,
   "pos_dim": 100,
   "target_recomp_prob": 0.25,
   "hidden_size": 256,

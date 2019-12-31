@@ -379,7 +379,8 @@ class GraphAttentionConfig(object):
                 attention_probs_dropout_prob=0.1,
                 graph_attention_probs_dropout_prob=0,
                 max_position_embeddings=512,
-                initializer_range=0.02):
+                initializer_range=0.02,
+                extra_self_attention_layer=False):
         """Constructs BertConfig.
 
         Args:
@@ -399,6 +400,8 @@ class GraphAttentionConfig(object):
                 (e.g., 512 or 1024 or 2048).
             initializer_range: The sttdev of the truncated_normal_initializer for
                 initializing all weight matrices.
+            extra_self_attention_layer: whether to use a BERT self attention layer on top
+                of graph attention layer
         """
         self.input_size = input_size
         self.hidden_size = hidden_size
@@ -411,6 +414,7 @@ class GraphAttentionConfig(object):
         self.graph_attention_probs_dropout_prob = graph_attention_probs_dropout_prob
         self.max_position_embeddings = max_position_embeddings
         self.initializer_range = initializer_range
+        self.extra_self_attention_layer = extra_self_attention_layer
 
     @classmethod
     def from_dict(cls, json_object):
@@ -668,6 +672,9 @@ class GraphAttentionLayerV2(nn.Module):
         self.self_output = GraphAttentionSelfOutputV2(config)
         self.intermediate = GraphAttentionIntermediateV2(config)
         self.output = BERTOutput(config)
+        self.self_attention = None
+        if config.extra_self_attention_layer:
+            self.self_attention = BERTAttention(config)
 
     def forward(self, hidden_states, graph_matrix, attention_mask):
         # (batch, seq_len, hidden_size/2)
@@ -679,9 +686,12 @@ class GraphAttentionLayerV2(nn.Module):
         #print ("fw_ga_output:\n", fw_ga_output)
         #print ("graph_attention_output:\n",graph_attention_output)
         # (batch, seq_len, hidden_size), residual layer
-        graph_attention_output = self.self_output(hidden_states, concat_output)
-        intermediate_output = self.intermediate(graph_attention_output)
-        layer_output = self.output(intermediate_output, graph_attention_output)
+        attention_output = self.self_output(hidden_states, concat_output)
+        if self.self_attention is not None:
+            # (batch, seq_len, hidden_size), extra self attention layer
+            attention_output = self.self_attention(attention_output, attention_mask)
+        intermediate_output = self.intermediate(attention_output)
+        layer_output = self.output(intermediate_output, attention_output)
         return layer_output
 
 
