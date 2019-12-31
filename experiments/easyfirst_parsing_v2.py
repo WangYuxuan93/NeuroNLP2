@@ -408,7 +408,6 @@ def train(args):
 
             if math.isnan(grad_norm):
                 num_nans += 1
-                print ("nan detected")
             else:
                 optimizer.step()
                 scheduler.step()
@@ -442,8 +441,8 @@ def train(args):
             sys.stdout.write("\b" * num_back)
             sys.stdout.write(" " * num_back)
             sys.stdout.write("\b" * num_back)
-        print('total: %d (%d), steps: %d, loss: %.4f, arc: %.4f, rel: %.4f, recomp: %.4f, time: %.2fs' % (num_insts, num_words, num_steps, train_loss / (num_steps+1e-9),
-                                                                                                       train_arc_loss / num_steps,
+        print('total: %d (%d), steps: %d, loss: %.4f (nans: %d), arc: %.4f, rel: %.4f, recomp: %.4f, time: %.2fs' % (num_insts, num_words, num_steps, train_loss / (num_steps+1e-9),
+                                                                                                       num_nans, train_arc_loss / num_steps,
                                                                                                        train_rel_loss / num_steps,
                                                                                                        train_recomp_loss / num_steps,
                                                                                                        time.time() - start_time))

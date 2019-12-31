@@ -657,7 +657,7 @@ class EasyFirstV2(nn.Module):
             masked_head_logp = torch.where(logp_mask==1, head_logp.detach(), neg_inf_logp)
             # rc_probs_list: k* (batch), the probability of recompute after each arc generated
             # new_heads_onehot: (batch, seq_len, seq_len), newly generated arcs
-            rc_probs_list, new_heads_onehot = self._decode_one_step(masked_head_logp, heads_mask, root_mask)
+            rc_probs_list, new_heads_onehot = self._decode_one_step(masked_head_logp, heads_mask, root_mask, device=device)
             
             # prevent generating new arcs for rows that have heads
             # (batch, seq_len)
@@ -674,7 +674,7 @@ class EasyFirstV2(nn.Module):
             heads_mask = heads_mask + new_heads_mask
             heads_pred = heads_pred + new_heads_pred
             num_recomp = num_recomp + (new_heads_mask.sum(-1).ge(1)).int()
-            print ("rc_probs_list:\n", rc_probs_list)
+            #print ("rc_probs_list:\n", rc_probs_list)
             if debug:
                 print ("rc_probs_list:\n", rc_probs_list)
                 print ("logp_mask:\n",logp_mask)
