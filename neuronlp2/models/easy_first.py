@@ -51,10 +51,10 @@ class EasyFirstV2(nn.Module):
 
         self.input_encoder_type = input_encoder
         if input_encoder == 'Linear':
-            self.input_encoder = nn.Linear(dim_enc, hidden_size)
+            self.input_encoder = nn.Linear(dim_enc, hidden_size).to(device)
             out_dim = hidden_size
         elif input_encoder == 'FastLSTM':
-            self.input_encoder = VarFastLSTM(dim_enc, hidden_size, num_layers=num_layers, batch_first=True, bidirectional=True, dropout=p_rnn)
+            self.input_encoder = VarFastLSTM(dim_enc, hidden_size, num_layers=num_layers, batch_first=True, bidirectional=True, dropout=p_rnn).to(device)
             out_dim = hidden_size * 2
         elif input_encoder == 'None':
             self.input_encoder = None
