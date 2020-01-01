@@ -380,7 +380,9 @@ class GraphAttentionConfig(object):
                 graph_attention_probs_dropout_prob=0,
                 max_position_embeddings=512,
                 initializer_range=0.02,
-                extra_self_attention_layer=False):
+                extra_self_attention_layer=False,
+                input_self_attention_layer=False,
+                num_input_attention_layers=3):
         """Constructs BertConfig.
 
         Args:
@@ -415,6 +417,8 @@ class GraphAttentionConfig(object):
         self.max_position_embeddings = max_position_embeddings
         self.initializer_range = initializer_range
         self.extra_self_attention_layer = extra_self_attention_layer
+        self.input_self_attention_layer = input_self_attention_layer
+        self.num_input_attention_layers = num_input_attention_layers
 
     @classmethod
     def from_dict(cls, json_object):
@@ -596,6 +600,20 @@ class GraphAttentionModel(nn.Module):
         return all_encoder_layers
 
 
+class SelfAttentionEncoder(nn.Module):
+    def __init__(self, config, n_layers=3):
+        super(SelfAttentionEncoder, self).__init__()
+        layer = BERTLayer(config)
+        self.layers = nn.ModuleList([copy.deepcopy(layer) for _ in range(n_layers)])    
+
+    def forward(self, hidden_states, attention_mask):
+        #all_encoder_layers = []
+        for layer_module in self.layers:
+            hidden_states = layer_module(hidden_states, attention_mask)
+            #all_encoder_layers.append(hidden_states)
+        return hidden_states
+
+
 class GraphAttentionV2(nn.Module):
     def __init__(self, config):
         super(GraphAttentionV2, self).__init__()
@@ -650,6 +668,7 @@ class GraphAttentionIntermediateV2(nn.Module):
         hidden_states = self.intermediate_act_fn(hidden_states)
         return hidden_states
 
+
 class GraphAttentionOutputV2(nn.Module):
     def __init__(self, config):
         super(BERTOutput, self).__init__()
@@ -663,9 +682,13 @@ class GraphAttentionOutputV2(nn.Module):
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
 
+
 class GraphAttentionLayerV2(nn.Module):
     def __init__(self, config):
         super(GraphAttentionLayerV2, self).__init__()
+        self.input_encoder = None
+        if config.input_self_attention_layer:
+            self.input_encoder = SelfAttentionEncoder(config, n_layers=config.num_input_attention_layers)
         # information flow in bidirection
         self.fw_graph_attention = GraphAttentionV2(config)
         self.bw_graph_attention = GraphAttentionV2(config)
@@ -677,6 +700,8 @@ class GraphAttentionLayerV2(nn.Module):
             self.self_attention = BERTAttention(config)
 
     def forward(self, hidden_states, graph_matrix, attention_mask):
+        if self.input_encoder is not None:
+            hidden_states = self.input_encoder(hidden_states, attention_mask)
         # (batch, seq_len, hidden_size/2)
         fw_ga_output = self.fw_graph_attention(hidden_states, graph_matrix)
         bw_ga_output = self.bw_graph_attention(hidden_states, graph_matrix.transpose(-1,-2))

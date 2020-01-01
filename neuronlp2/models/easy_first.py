@@ -23,7 +23,8 @@ class EasyFirstV2(nn.Module):
                  pos=True, use_char=False, activation='elu',
                  dep_prob_depend_on_head=False, use_top2_margin=False, target_recomp_prob=0.25,
                  extra_self_attention_layer=False, num_attention_heads=4,
-                 input_encoder='Linear', num_layers=3, p_rnn=(0.33, 0.33)):
+                 input_encoder='Linear', num_layers=3, p_rnn=(0.33, 0.33),
+                 input_self_attention_layer=False, num_input_attention_layers=3):
         super(EasyFirstV2, self).__init__()
         self.device = device
         self.dep_prob_depend_on_head = dep_prob_depend_on_head
@@ -74,7 +75,9 @@ class EasyFirstV2(nn.Module):
                                             graph_attention_probs_dropout_prob=graph_attention_probs_dropout_prob,
                                             max_position_embeddings=256,
                                             initializer_range=0.02,
-                                            extra_self_attention_layer=extra_self_attention_layer)
+                                            extra_self_attention_layer=extra_self_attention_layer,
+                                            input_self_attention_layer=input_self_attention_layer,
+                                            num_input_attention_layers=num_input_attention_layers)
 
         self.graph_attention = GraphAttentionModelV2(self.config).to(device)
 

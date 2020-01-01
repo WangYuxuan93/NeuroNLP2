@@ -264,6 +264,8 @@ def train(args):
         dep_prob_depend_on_head = hyps['dep_prob_depend_on_head']
         use_top2_margin = hyps['use_top2_margin']
         extra_self_attention_layer = hyps['extra_self_attention_layer']
+        input_self_attention_layer = hyps['input_self_attention_layer']
+        num_input_attention_layers = hyps['num_input_attention_layers']
         num_attention_heads = hyps['num_attention_heads']
         input_encoder = hyps['input_encoder']
         num_layers = hyps['num_layers']
@@ -282,7 +284,9 @@ def train(args):
                            use_top2_margin=use_top2_margin, target_recomp_prob=target_recomp_prob,
                            extra_self_attention_layer=extra_self_attention_layer,
                            num_attention_heads=num_attention_heads,
-                           input_encoder=input_encoder, num_layers=num_layers, p_rnn=p_rnn)
+                           input_encoder=input_encoder, num_layers=num_layers, p_rnn=p_rnn,
+                           input_self_attention_layer=input_self_attention_layer,
+                           num_input_attention_layers=num_input_attention_layers)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -293,6 +297,9 @@ def train(args):
     model = "{}-{}".format(model_type, mode)
     logger.info("Network: %s, hidden=%d, act=%s" % (model, hidden_size, activation))
     logger.info("dropout(in, out, hidden, att, graph_att): %s(%.2f, %.2f, %.2f, %.2f, %.2f)" % ('variational', p_in, p_out, p_hid, p_att, p_graph_att))
+    logger.info("Input Encoder Type: %s" % input_encoder)
+    logger.info("Use Input Self Attention Layer: %s (layer: %d)" % (input_self_attention_layer, num_input_attention_layers))
+    logger.info("Use Top Self Attention Layer: %s" % extra_self_attention_layer)
     logger.info("Input Encoder Type: %s" % input_encoder)
     logger.info('# of Parameters: %d' % (sum([param.numel() for param in network.parameters()])))
 
