@@ -599,6 +599,51 @@ class GraphAttentionModel(nn.Module):
 
         return all_encoder_layers
 
+class SelfAttentionConfig(object):
+    """Configuration class to store the configuration of a `BertModel`.
+    """
+    def __init__(self,
+                input_size=100,
+                hidden_size=768,
+                num_hidden_layers=12,
+                num_attention_heads=12,
+                intermediate_size=3072,
+                hidden_act="gelu",
+                hidden_dropout_prob=0.1,
+                attention_probs_dropout_prob=0.1,
+                max_position_embeddings=512,
+                initializer_range=0.02):
+        """Constructs BertConfig.
+
+        Args:
+            hidden_size: Size of the encoder layers and the pooler layer.
+            num_hidden_layers: Number of hidden layers in the Transformer encoder.
+            num_attention_heads: Number of attention heads for each attention layer in
+                the Transformer encoder.
+            intermediate_size: The size of the "intermediate" (i.e., feed-forward)
+                layer in the Transformer encoder.
+            hidden_act: The non-linear activation function (function or string) in the
+                encoder and pooler.
+            hidden_dropout_prob: The dropout probabilitiy for all fully connected
+                layers in the embeddings, encoder, and pooler.
+            attention_probs_dropout_prob: The dropout ratio for the attention
+                probabilities.
+            max_position_embeddings: The maximum sequence length that this model might
+                ever be used with. Typically set this to something large just in case
+                (e.g., 512 or 1024 or 2048).
+            initializer_range: The sttdev of the truncated_normal_initializer for
+                initializing all weight matrices.
+        """
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.num_hidden_layers = num_hidden_layers
+        self.num_attention_heads = num_attention_heads
+        self.hidden_act = hidden_act
+        self.intermediate_size = intermediate_size
+        self.hidden_dropout_prob = hidden_dropout_prob
+        self.attention_probs_dropout_prob = attention_probs_dropout_prob
+        self.max_position_embeddings = max_position_embeddings
+        self.initializer_range = initializer_range
 
 class SelfAttentionEncoder(nn.Module):
     def __init__(self, config, n_layers=3):
@@ -613,6 +658,48 @@ class SelfAttentionEncoder(nn.Module):
             #all_encoder_layers.append(hidden_states)
         return hidden_states
 
+
+class SelfAttentionModel(nn.Module):
+    def __init__(self, config: BertConfig):
+        """Constructor for BertModel.
+
+        Args:
+            config: `BertConfig` instance.
+        """
+        super(SelfAttentionModel, self).__init__()
+        self.embeddings = GraphAttentionEmbeddings(config)
+        self.encoder = BERTEncoder(config)
+
+    def forward(self, input_tensor, attention_mask=None):
+        """
+        Input:
+            input_tensor: (batch, seq_len, input_size)
+            attention_mask: (batch, seq_len)
+        """
+        if attention_mask is None:
+            #attention_mask = torch.ones_like(input_ids)
+            # (batch, seq_len)
+            attention_mask = torch.ones(input_tensor.size(0),input_tensor.size(1))
+
+        # We create a 3D attention mask from a 2D tensor mask.
+        # Sizes are [batch_size, 1, 1, to_seq_length]
+        # So we can broadcast to [batch_size, num_heads, from_seq_length, to_seq_length]
+        # this attention mask is more simple than the triangular masking of causal attention
+        # used in OpenAI GPT, we just need to prepare the broadcast dimension here.
+        extended_attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
+
+        # Since attention_mask is 1.0 for positions we want to attend and 0.0 for
+        # masked positions, this operation will create a tensor which is 0.0 for
+        # positions we want to attend and -10000.0 for masked positions.
+        # Since we are adding it to the raw scores before the softmax, this is
+        # effectively the same as removing these entirely.
+        extended_attention_mask = extended_attention_mask.float()
+        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
+
+        embedding_output = self.embeddings(input_tensor)
+        all_encoder_layers = self.encoder(embedding_output, extended_attention_mask)
+
+        return all_encoder_layers
 
 class GraphAttentionV2(nn.Module):
     def __init__(self, config):

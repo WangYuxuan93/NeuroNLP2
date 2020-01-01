@@ -6,9 +6,11 @@ from enum import Enum
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from neuronlp2.io import get_logger
 from neuronlp2.nn import TreeCRF, VarGRU, VarRNN, VarLSTM, VarFastLSTM
 from neuronlp2.nn import BiAffine, BiLinear, CharCNN
 from neuronlp2.tasks import parser
+from neuronlp2.nn.transformer import SelfAttentionConfig, SelfAttentionModel
 
 
 class PriorOrder(Enum):
@@ -21,7 +23,8 @@ class DeepBiAffine(nn.Module):
     def __init__(self, word_dim, num_words, char_dim, num_chars, pos_dim, num_pos, rnn_mode, 
                  hidden_size, num_layers, num_labels, arc_space, type_space,
                  embedd_word=None, embedd_char=None, embedd_pos=None, p_in=0.33, p_out=0.33, 
-                 p_rnn=(0.33, 0.33), pos=True, use_char=False, activation='elu'):
+                 p_rnn=(0.33, 0.33), pos=True, use_char=False, activation='elu',
+                 num_attention_heads=8, intermediate_size=1024):
         super(DeepBiAffine, self).__init__()
 
         self.word_embed = nn.Embedding(num_words, word_dim, _weight=embedd_word, padding_idx=1)
@@ -37,7 +40,7 @@ class DeepBiAffine(nn.Module):
         self.dropout_out = nn.Dropout2d(p=p_out)
         self.num_labels = num_labels
 
-        self.linear_encoder = False
+        self.input_encoder_type = rnn_mode
         if rnn_mode == 'RNN':
             RNN = VarRNN
         elif rnn_mode == 'LSTM':
@@ -48,10 +51,13 @@ class DeepBiAffine(nn.Module):
             RNN = VarGRU
         elif rnn_mode == 'Linear':
             print ("Using Linear Encoder!")
-            self.linear_encoder = True
+            #self.linear_encoder = True
+        elif rnn_mode == 'Transformer':
+            print ("Using Transformer Encoder!")
         else:
             raise ValueError('Unknown RNN mode: %s' % rnn_mode)
-        print ("Use Char:", use_char)
+        print ("Use Char: %s" % use_char)
+        print ("Input Encoder Type: %s" % self.input_encoder_type)
 
         dim_enc = word_dim
         if use_char:
@@ -59,8 +65,21 @@ class DeepBiAffine(nn.Module):
         if pos:
             dim_enc += pos_dim
 
-        if self.linear_encoder:
+        if self.input_encoder_type == 'Linear':
             self.input_encoder = nn.Linear(dim_enc, hidden_size)
+            out_dim = hidden_size
+        elif self.input_encoder_type == 'Transformer':
+            self.config = SelfAttentionConfig(input_size=dim_enc,
+                                        hidden_size=hidden_size,
+                                        num_hidden_layers=num_layers,
+                                        num_attention_heads=num_attention_heads,
+                                        intermediate_size=intermediate_size,
+                                        hidden_act="gelu",
+                                        hidden_dropout_prob=0.1,
+                                        attention_probs_dropout_prob=0.1,
+                                        max_position_embeddings=256,
+                                        initializer_range=0.02)
+            self.input_encoder = SelfAttentionModel(self.config)
             out_dim = hidden_size
         else:
             self.input_encoder = RNN(dim_enc, hidden_size, num_layers=num_layers, batch_first=True, bidirectional=True, dropout=p_rnn) 
@@ -107,7 +126,7 @@ class DeepBiAffine(nn.Module):
         nn.init.xavier_uniform_(self.type_c.weight)
         nn.init.constant_(self.type_c.bias, 0.)
 
-        if self.linear_encoder:
+        if self.input_encoder_type == 'Linear':
             nn.init.xavier_uniform_(self.input_encoder.weight)
             nn.init.constant_(self.input_encoder.bias, 0.)
 
@@ -133,8 +152,12 @@ class DeepBiAffine(nn.Module):
             enc = torch.cat([enc, pos], dim=2)
 
         # output from rnn [batch, length, hidden_size]
-        if self.linear_encoder:
+        if self.input_encoder_type == 'Linear':
             output = self.input_encoder(enc)
+        elif self.input_encoder_type == 'Transformer':
+            all_encoder_layers = self.input_encoder(enc, mask)
+            # [batch, length, hidden_size]
+            output = all_encoder_layers[-1]
         else:
             output, _ = self.input_encoder(enc, mask)
 
