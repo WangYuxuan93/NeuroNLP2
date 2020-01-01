@@ -22,7 +22,8 @@ class EasyFirstV2(nn.Module):
                  embedd_word=None, embedd_char=None, embedd_pos=None, p_in=0.33, p_out=0.33, 
                  pos=True, use_char=False, activation='elu',
                  dep_prob_depend_on_head=False, use_top2_margin=False, target_recomp_prob=0.25,
-                 extra_self_attention_layer=False, num_attention_heads=4):
+                 extra_self_attention_layer=False, num_attention_heads=4,
+                 input_encoder='Linear', num_layers=3, p_rnn=(0.33, 0.33)):
         super(EasyFirstV2, self).__init__()
         self.device = device
         self.dep_prob_depend_on_head = dep_prob_depend_on_head
@@ -48,7 +49,21 @@ class EasyFirstV2(nn.Module):
         if pos:
             dim_enc += pos_dim
 
-        self.config = GraphAttentionConfig(input_size=dim_enc,
+        self.input_encoder_type = input_encoder
+        if input_encoder == 'Linear':
+            self.input_encoder = nn.Linear(dim_enc, hidden_size)
+            out_dim = hidden_size
+        elif input_encoder == 'FastLSTM':
+            self.input_encoder = VarFastLSTM(dim_enc, hidden_size, num_layers=num_layers, batch_first=True, bidirectional=True, dropout=p_rnn)
+            out_dim = hidden_size * 2
+        elif input_encoder == 'None':
+            self.input_encoder = None
+            out_dim = dim_enc
+        else:
+            self.input_encoder = None
+            out_dim = dim_enc
+
+        self.config = GraphAttentionConfig(input_size=out_dim,
                                             hidden_size=hidden_size,
                                             arc_space=arc_space,
                                             num_attention_heads=num_attention_heads,
@@ -62,8 +77,6 @@ class EasyFirstV2(nn.Module):
                                             extra_self_attention_layer=extra_self_attention_layer)
 
         self.graph_attention = GraphAttentionModelV2(self.config).to(device)
-
-        #self.rnn = VarFastLSTM(dim_enc, hidden_size, num_layers=3, batch_first=True, bidirectional=True, dropout=(0,0))
 
         out_dim = hidden_size
         self.arc_h = nn.Linear(out_dim, arc_space).to(device)
@@ -117,6 +130,10 @@ class EasyFirstV2(nn.Module):
         nn.init.xavier_uniform_(self.recomp_dense.weight)
         nn.init.constant_(self.recomp_dense.bias, 0.)
 
+        if self.input_encoder_type == 'Linear':
+            nn.init.xavier_uniform_(self.input_encoder.weight)
+            nn.init.constant_(self.input_encoder.bias, 0.)
+
     def _get_encoder_output(self, input_word, input_char, input_pos, graph_matrix, mask=None):
         # [batch, length, word_dim]
         word = self.word_embed(input_word)
@@ -139,10 +156,15 @@ class EasyFirstV2(nn.Module):
             enc = torch.cat([enc, pos], dim=2)
 
         # output from rnn [batch, length, hidden_size]
-        #output, _ = self.rnn(enc, mask)
+        if self.input_encoder is not None:
+            if self.input_encoder_type == 'Linear':
+                output = self.input_encoder(enc)
+            elif self.input_encoder_type == 'FastLSTM':
+                output, _ = self.input_encoder(enc, mask)
+        else:
+            output = enc
 
-        #all_encoder_layers = self.graph_attention(output, graph_matrix, mask)
-        all_encoder_layers = self.graph_attention(enc, graph_matrix, mask)
+        all_encoder_layers = self.graph_attention(output, graph_matrix, mask)
         # [batch, length, hidden_size]
         output = all_encoder_layers[-1]
 

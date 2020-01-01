@@ -265,6 +265,9 @@ def train(args):
         use_top2_margin = hyps['use_top2_margin']
         extra_self_attention_layer = hyps['extra_self_attention_layer']
         num_attention_heads = hyps['num_attention_heads']
+        input_encoder = hyps['input_encoder']
+        num_layers = hyps['num_layers']
+        p_rnn = hyps['p_rnn']
         
         network = EasyFirstV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                            hidden_size, num_types, arc_space, type_space,
@@ -278,7 +281,8 @@ def train(args):
                            activation=activation, dep_prob_depend_on_head=dep_prob_depend_on_head, 
                            use_top2_margin=use_top2_margin, target_recomp_prob=target_recomp_prob,
                            extra_self_attention_layer=extra_self_attention_layer,
-                           num_attention_heads=num_attention_heads)
+                           num_attention_heads=num_attention_heads,
+                           input_encoder=input_encoder, num_layers=num_layers, p_rnn=p_rnn)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -289,6 +293,7 @@ def train(args):
     model = "{}-{}".format(model_type, mode)
     logger.info("Network: %s, hidden=%d, act=%s" % (model, hidden_size, activation))
     logger.info("dropout(in, out, hidden, att, graph_att): %s(%.2f, %.2f, %.2f, %.2f, %.2f)" % ('variational', p_in, p_out, p_hid, p_att, p_graph_att))
+    logger.info("Input Encoder Type: %s" % input_encoder)
     logger.info('# of Parameters: %d' % (sum([param.numel() for param in network.parameters()])))
 
     logger.info("Reading Data")
@@ -322,6 +327,7 @@ def train(args):
     best_total_nopunc = 0
     best_total_inst = 0
     best_total_root = 0
+    best_recomp_freq = 0.0
 
     best_epoch = 0
 
@@ -339,6 +345,7 @@ def train(args):
     test_total_nopunc = 0
     test_total_inst = 0
     test_total_root = 0
+    test_recomp_freq = 0.0
 
     patient = 0
     beam = args.beam
