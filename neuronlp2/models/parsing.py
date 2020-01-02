@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from neuronlp2.io import get_logger
 from neuronlp2.nn import TreeCRF, VarGRU, VarRNN, VarLSTM, VarFastLSTM
-from neuronlp2.nn import BiAffine, BiLinear, CharCNN
+from neuronlp2.nn import BiAffine, BiLinear, CharCNN, BiAffine_v2
 from neuronlp2.tasks import parser
 from neuronlp2.nn.transformer import SelfAttentionConfig, SelfAttentionModel
 
@@ -87,11 +87,13 @@ class DeepBiAffine(nn.Module):
 
         self.arc_h = nn.Linear(out_dim, arc_space)
         self.arc_c = nn.Linear(out_dim, arc_space)
-        self.biaffine = BiAffine(arc_space, arc_space)
+        #self.biaffine = BiAffine(arc_space, arc_space)
+        self.biaffine = BiAffine_v2(arc_space, bias_x=True, bias_y=False)
 
         self.type_h = nn.Linear(out_dim, type_space)
         self.type_c = nn.Linear(out_dim, type_space)
-        self.bilinear = BiLinear(type_space, type_space, self.num_labels)
+        #self.bilinear = BiLinear(type_space, type_space, self.num_labels)
+        self.bilinear = BiAffine_v2(type_space, n_out=self.num_labels, bias_x=True, bias_y=True)
 
         assert activation in ['elu', 'tanh']
         if activation == 'elu':
@@ -193,7 +195,8 @@ class DeepBiAffine(nn.Module):
         # output from rnn [batch, length, dim]
         arc, type = self._get_rnn_output(input_word, input_char, input_pos, mask=mask)
         # [batch, length_head, length_child]
-        out_arc = self.biaffine(arc[0], arc[1], mask_query=mask, mask_key=mask)
+        #out_arc = self.biaffine(arc[0], arc[1], mask_query=mask, mask_key=mask)
+        out_arc = self.biaffine(arc[1], arc[0])
         return out_arc, type
 
     def loss(self, input_word, input_char, input_pos, heads, types, mask=None):
@@ -203,9 +206,18 @@ class DeepBiAffine(nn.Module):
         type_h, type_c = out_type
 
         # get vector for heads [batch, length, type_space],
-        type_h = type_h.gather(dim=1, index=heads.unsqueeze(2).expand(type_h.size()))
+        #type_h = type_h.gather(dim=1, index=heads.unsqueeze(2).expand(type_h.size()))
         # compute output for type [batch, length, num_labels]
-        out_type = self.bilinear(type_h, type_c)
+        #out_type = self.bilinear(type_h, type_c)
+        batch_size, seq_len = input_word.size()
+        # (batch, seq_len, seq_len)
+        heads_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32)
+        heads_3D.scatter_(-1, heads.unsqueeze(-1), 1)
+        # (batch, seq_len, seq_len)
+        types_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.long)
+        types_3D.scatter_(-1, heads.unsqueeze(-1), types.unsqueeze(-1))
+        # (batch, n_rels, seq_len, seq_len)
+        out_type = self.bilinear(type_c, type_h)
 
         # mask invalid position to -inf for log_softmax
         if mask is not None:
@@ -214,7 +226,8 @@ class DeepBiAffine(nn.Module):
 
         # loss_arc shape [batch, length_c]
         loss_arc = self.criterion(out_arc, heads)
-        loss_type = self.criterion(out_type.transpose(1, 2), types)
+        #loss_type = self.criterion(out_type.transpose(1, 2), types)
+        loss_type = (self.criterion(out_type, types_3D) * heads_3D).sum(-1)
 
         # mask invalid position to 0 for sum loss
         if mask is not None:
@@ -286,10 +299,13 @@ class DeepBiAffine(nn.Module):
         type_h, type_c = out_type
         batch, max_len, type_space = type_h.size()
 
-        type_h = type_h.unsqueeze(2).expand(batch, max_len, max_len, type_space).contiguous()
-        type_c = type_c.unsqueeze(1).expand(batch, max_len, max_len, type_space).contiguous()
+        #type_h = type_h.unsqueeze(2).expand(batch, max_len, max_len, type_space).contiguous()
+        #type_c = type_c.unsqueeze(1).expand(batch, max_len, max_len, type_space).contiguous()
         # compute output for type [batch, length_h, length_c, num_labels]
-        out_type = self.bilinear(type_h, type_c)
+        #out_type = self.bilinear(type_h, type_c)
+        # (batch, n_rels, seq_len_c, seq_len_h)
+        # => (batch, length_h, length_c, num_labels)
+        out_type = self.bilinear(type_c, type_h).permute(0,3,2,1)
 
         if mask is not None:
             minus_mask = mask.eq(0).unsqueeze(2)

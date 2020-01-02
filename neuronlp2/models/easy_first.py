@@ -190,14 +190,14 @@ class EasyFirstV2(nn.Module):
         # [batch, length, dim] --> [batch, 2 * length, dim]
         arc = torch.cat([arc_h, arc_c], dim=1)
         rel = torch.cat([rel_h, rel_c], dim=1)
-        #arc = self.dropout_out(arc.transpose(1, 2)).transpose(1, 2)
-        arc = self.dropout_out(arc)
+        arc = self.dropout_out(arc.transpose(1, 2)).transpose(1, 2)
+        #arc = self.dropout_out(arc)
         arc_h, arc_c = arc.chunk(2, 1)
 
         # apply dropout on rel
         # [batch, length, dim] --> [batch, 2 * length, dim]
-        #rel = self.dropout_out(rel.transpose(1, 2)).transpose(1, 2)
-        rel = self.dropout_out(rel)
+        rel = self.dropout_out(rel.transpose(1, 2)).transpose(1, 2)
+        #rel = self.dropout_out(rel)
         rel_h, rel_c = rel.chunk(2, 1)
         rel_h = rel_h.contiguous()
         rel_c = rel_c.contiguous()
