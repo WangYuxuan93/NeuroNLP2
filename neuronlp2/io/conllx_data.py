@@ -145,6 +145,7 @@ def read_data(source_path: str, word_alphabet: Alphabet, char_alphabet: Alphabet
     counter = 0
     reader = CoNLLXReader(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet)
     inst = reader.getNext(normalize_digits=normalize_digits, symbolic_root=symbolic_root, symbolic_end=symbolic_end)
+    src_words = []
     while inst is not None and (not max_size or counter < max_size):
         counter += 1
         if counter % 10000 == 0:
@@ -152,6 +153,7 @@ def read_data(source_path: str, word_alphabet: Alphabet, char_alphabet: Alphabet
 
         sent = inst.sentence
         data.append([sent.word_ids, sent.char_id_seqs, inst.pos_ids, inst.heads, inst.type_ids])
+        src_words.append(sent.words)
         max_len = max([len(char_seq) for char_seq in sent.char_seqs])
         if max_char_length < max_len:
             max_char_length = max_len
@@ -211,7 +213,7 @@ def read_data(source_path: str, word_alphabet: Alphabet, char_alphabet: Alphabet
     lengths = torch.from_numpy(lengths)
 
     data_tensor = {'WORD': words, 'CHAR': chars, 'POS': pos, 'HEAD': heads, 'TYPE': types,
-                   'MASK': masks, 'SINGLE': single, 'LENGTH': lengths}
+                   'MASK': masks, 'SINGLE': single, 'LENGTH': lengths, 'SRC': src_words}
     return data_tensor, data_size
 
 

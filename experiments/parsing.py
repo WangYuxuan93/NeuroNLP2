@@ -70,8 +70,8 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
 
         words = words.cpu().numpy()
         postags = postags.cpu().numpy()
-        pred_writer.write(words, postags, heads_pred, types_pred, lengths, symbolic_root=True)
-        gold_writer.write(words, postags, heads, types, lengths, symbolic_root=True)
+        pred_writer.write(words, postags, heads_pred, types_pred, lengths, symbolic_root=True, src_words=data['SRC'])
+        #gold_writer.write(words, postags, heads, types, lengths, symbolic_root=True, src_words=data['SRC'])
 
         stats, stats_nopunc, stats_root, num_inst = parser.eval(words, postags, heads_pred, types_pred, heads, types,
                                                                 word_alphabet, pos_alphabet, lengths, punct_set=punct_set, symbolic_root=True)
@@ -436,13 +436,13 @@ def train(args):
                 pred_filename = os.path.join(result_path, 'pred_dev%d' % epoch)
                 pred_writer.start(pred_filename)
                 gold_filename = os.path.join(result_path, 'gold_dev%d' % epoch)
-                gold_writer.start(gold_filename)
+                #gold_writer.start(gold_filename)
 
                 print('Evaluating dev:')
                 dev_stats, dev_stats_nopunct, dev_stats_root = eval(alg, data_dev, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam)
 
                 pred_writer.close()
-                gold_writer.close()
+                #gold_writer.close()
 
                 dev_ucorr, dev_lcorr, dev_ucomlpete, dev_lcomplete, dev_total = dev_stats
                 dev_ucorr_nopunc, dev_lcorr_nopunc, dev_ucomlpete_nopunc, dev_lcomplete_nopunc, dev_total_nopunc = dev_stats_nopunct
@@ -472,7 +472,7 @@ def train(args):
                     pred_filename = os.path.join(result_path, 'pred_test%d' % epoch)
                     pred_writer.start(pred_filename)
                     gold_filename = os.path.join(result_path, 'gold_test%d' % epoch)
-                    gold_writer.start(gold_filename)
+                    #gold_writer.start(gold_filename)
 
                     print('Evaluating test:')
                     test_stats, test_stats_nopunct, test_stats_root = eval(alg, data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam)
@@ -482,7 +482,7 @@ def train(args):
                     test_root_correct, test_total_root, test_total_inst = test_stats_root
 
                     pred_writer.close()
-                    gold_writer.close()
+                    #gold_writer.close()
                 else:
                     patient += 1
 
@@ -614,7 +614,7 @@ def parse(args):
     pred_filename = os.path.join(result_path, 'pred.txt')
     pred_writer.start(pred_filename)
     gold_filename = os.path.join(result_path, 'gold.txt')
-    gold_writer.start(gold_filename)
+    #gold_writer.start(gold_filename)
 
     with torch.no_grad():
         print('Parsing...')
@@ -623,7 +623,7 @@ def parse(args):
         print('Time: %.2fs' % (time.time() - start_time))
 
     pred_writer.close()
-    gold_writer.close()
+    #gold_writer.close()
 
 
 if __name__ == '__main__':

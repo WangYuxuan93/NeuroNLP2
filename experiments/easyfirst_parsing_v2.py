@@ -77,7 +77,7 @@ def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_
 
         words = words.cpu().numpy()
         postags = postags.cpu().numpy()
-        pred_writer.write(words, postags, heads_pred, types_pred, lengths, symbolic_root=True)
+        pred_writer.write(words, postags, heads_pred, types_pred, lengths, symbolic_root=True, src_words=data['SRC'])
         #gold_writer.write(words, postags, heads, types, lengths, symbolic_root=True)
 
         stats, stats_nopunc, stats_root, num_inst = parser.eval(words, postags, heads_pred, types_pred, heads, types,
@@ -594,11 +594,11 @@ def parse(args):
     word_dim = hyps['word_dim']
     char_dim = hyps['char_dim']
     mode = hyps['transformer_mode']
-    max_layers = hyps['max_layers']
-    max_steps = hyps['max_steps']
+    target_recomp_prob = hyps['target_recomp_prob']
     use_pos = hyps['pos']
     use_char = hyps['use_char']
     use_chosen_head = hyps['use_chosen_head']
+    use_whole_seq = hyps['use_whole_seq']
     pos_dim = hyps['pos_dim']
     hidden_size = hyps['hidden_size']
     arc_space = hyps['arc_space']
@@ -615,21 +615,37 @@ def parse(args):
         p_att = hyps['attention_probs_dropout_prob']
         p_graph_att = hyps['graph_attention_probs_dropout_prob']
         recomp_att_dim = hyps['recomp_att_dim']
-        network = EasyFirst(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
+        dep_prob_depend_on_head = hyps['dep_prob_depend_on_head']
+        use_top2_margin = hyps['use_top2_margin']
+        extra_self_attention_layer = hyps['extra_self_attention_layer']
+        input_self_attention_layer = hyps['input_self_attention_layer']
+        num_input_attention_layers = hyps['num_input_attention_layers']
+        num_attention_heads = hyps['num_attention_heads']
+        input_encoder = hyps['input_encoder']
+        num_layers = hyps['num_layers']
+        p_rnn = hyps['p_rnn']
+        network = EasyFirstV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                            hidden_size, num_types, arc_space, type_space,
-                           num_attention_heads, intermediate_size, recomp_att_dim,
+                           intermediate_size,
                            device=device, 
                            hidden_dropout_prob=p_hid,
                            attention_probs_dropout_prob=p_att,
                            graph_attention_probs_dropout_prob=p_graph_att,
-                           p_in=p_in, p_out=p_out, pos=use_pos, use_char=use_char, activation=activation)
+                           p_in=p_in, p_out=p_out, pos=use_pos, use_char=use_char, 
+                           activation=activation, dep_prob_depend_on_head=dep_prob_depend_on_head, 
+                           use_top2_margin=use_top2_margin, target_recomp_prob=target_recomp_prob,
+                           extra_self_attention_layer=extra_self_attention_layer,
+                           num_attention_heads=num_attention_heads,
+                           input_encoder=input_encoder, num_layers=num_layers, p_rnn=p_rnn,
+                           input_self_attention_layer=input_self_attention_layer,
+                           num_input_attention_layers=num_input_attention_layers)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
     network = network.to(device)
     network.load_state_dict(torch.load(model_name, map_location=device))
     model = "{}-{}".format(model_type, mode)
-    logger.info("Network: %s, max_layer=%s, hidden=%d, act=%s" % (model, max_layers, hidden_size, activation))
+    logger.info("Network: %s, hidden=%d, act=%s" % (model, hidden_size, activation))
     
     logger.info("Reading Data")
     data_test = conllx_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
@@ -641,7 +657,7 @@ def parse(args):
     pred_filename = os.path.join(result_path, 'pred.txt')
     pred_writer.start(pred_filename)
     gold_filename = os.path.join(result_path, 'gold.txt')
-    gold_writer.start(gold_filename)
+    #gold_writer.start(gold_filename)
 
     with torch.no_grad():
         print('Parsing...')
@@ -650,7 +666,7 @@ def parse(args):
         print('Time: %.2fs' % (time.time() - start_time))
 
     pred_writer.close()
-    gold_writer.close()
+    #gold_writer.close()
 
 
 if __name__ == '__main__':
