@@ -40,7 +40,7 @@ def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgra
 
 
 def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, 
-        device, beam=1, batch_size=256):
+        device, beam=1, batch_size=256, get_head_by_layer=False):
     network.eval()
     accum_ucorr = 0.0
     accum_lcorr = 0.0
@@ -69,15 +69,16 @@ def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_
         lengths = data['LENGTH'].numpy()
         masks = data['MASK'].to(device)
         #print (words)
-        heads_pred, types_pred, recomp_freq = network.decode(words, chars, postags, mask=masks, 
-                                                device=device)
-
+        heads_pred, types_pred, recomp_freq, heads_by_layer = network.decode(words, chars, postags, mask=masks, 
+                                                device=device, get_head_by_layer=get_head_by_layer)
+        #print (heads_by_layer)
         n_step += 1
         accum_recomp_freq += recomp_freq
 
         words = words.cpu().numpy()
         postags = postags.cpu().numpy()
-        pred_writer.write(words, postags, heads_pred, types_pred, lengths, symbolic_root=True, src_words=data['SRC'])
+        pred_writer.write(words, postags, heads_pred, types_pred, lengths, symbolic_root=True, src_words=data['SRC'], 
+                            heads_by_layer=heads_by_layer)
         #gold_writer.write(words, postags, heads, types, lengths, symbolic_root=True)
 
         stats, stats_nopunc, stats_root, num_inst = parser.eval(words, postags, heads_pred, types_pred, heads, types,
@@ -456,9 +457,9 @@ def train(args):
             sys.stdout.write(" " * num_back)
             sys.stdout.write("\b" * num_back)
         print('total: %d (%d), steps: %d, loss: %.4f (nans: %d), arc: %.4f, rel: %.4f, recomp: %.4f, time: %.2fs' % (num_insts, num_words, num_steps, train_loss / (num_steps+1e-9),
-                                                                                                       num_nans, train_arc_loss / num_steps,
-                                                                                                       train_rel_loss / num_steps,
-                                                                                                       train_recomp_loss / num_steps,
+                                                                                                       num_nans, train_arc_loss / (num_steps+1e-9),
+                                                                                                       train_rel_loss / (num_steps+1e-9),
+                                                                                                       train_recomp_loss / (num_steps+1e-9),
                                                                                                        time.time() - start_time))
         print('-' * 125)
 
@@ -471,7 +472,7 @@ def train(args):
                 #gold_writer.start(gold_filename)
 
                 print('Evaluating dev:')
-                dev_stats, dev_stats_nopunct, dev_stats_root = eval(data_dev, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam)
+                dev_stats, dev_stats_nopunct, dev_stats_root = eval(data_dev, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam, get_head_by_layer=args.get_head_by_layer)
 
                 pred_writer.close()
                 #gold_writer.close()
@@ -508,7 +509,7 @@ def train(args):
                     #gold_writer.start(gold_filename)
 
                     print('Evaluating test:')
-                    test_stats, test_stats_nopunct, test_stats_root = eval(data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam)
+                    test_stats, test_stats_nopunct, test_stats_root = eval(data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam, get_head_by_layer=args.get_head_by_layer)
 
                     test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total, test_recomp_freq = test_stats
                     test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
@@ -662,7 +663,8 @@ def parse(args):
     with torch.no_grad():
         print('Parsing...')
         start_time = time.time()
-        eval(data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam, batch_size=args.batch_size)
+        eval(data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, 
+                device, beam, batch_size=args.batch_size, get_head_by_layer=args.get_head_by_layer)
         print('Time: %.2fs' % (time.time() - start_time))
 
     pred_writer.close()
@@ -692,6 +694,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--weight_decay', type=float, default=0.0, help='weight for l2 norm decay')
     args_parser.add_argument('--unk_replace', type=float, default=0., help='The rate to replace a singleton word with UNK')
     args_parser.add_argument('--freeze', action='store_true', help='frozen the word embedding (disable fine-tuning).')
+    args_parser.add_argument('--get_head_by_layer', action='store_true', help='whether to print head by graph attention layer.')
     args_parser.add_argument('--sampler', choices=['random', 'confidence'], help='Sample strategy')
     args_parser.add_argument('--punctuation', nargs='+', type=str, help='List of punctuations')
     args_parser.add_argument('--beam', type=int, default=1, help='Beam size for decoding')

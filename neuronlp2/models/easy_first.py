@@ -642,7 +642,8 @@ class EasyFirstV2(nn.Module):
         return rc_probs_list, new_heads_onehot
 
 
-    def decode(self, input_word, input_char, input_pos, mask=None, debug=False, device=torch.device('cpu')):
+    def decode(self, input_word, input_char, input_pos, mask=None, debug=False, device=torch.device('cpu'),
+                get_head_by_layer=False):
         """
         Input:
             input_word: (batch, seq_len)
@@ -664,6 +665,7 @@ class EasyFirstV2(nn.Module):
         root_mask = torch.arange(seq_len, device=device).gt(0).float().unsqueeze(0) * mask
         # (batch, seq_len, seq_len)
         mask_3D = (root_mask.unsqueeze(-1) * mask.unsqueeze(1))
+        heads_by_layer = []
         while True:
             # ----- encoding -----
             # (batch, seq_len, hidden_size)
@@ -699,6 +701,8 @@ class EasyFirstV2(nn.Module):
             heads_mask = heads_mask + new_heads_mask
             heads_pred = heads_pred + new_heads_pred
             num_recomp = num_recomp + (new_heads_mask.sum(-1).ge(1)).int()
+            if get_head_by_layer:
+                heads_by_layer.append(new_heads_mask.unsqueeze(1))
             #print ("rc_probs_list:\n", rc_probs_list)
             if debug:
                 print ("rc_probs_list:\n", rc_probs_list)
@@ -743,8 +747,14 @@ class EasyFirstV2(nn.Module):
             print ("num_words:\n", num_words)
             print ("freq_recomp:\n", freq_recomp)
 
+        if get_head_by_layer:
+            heads_by_layer_ = torch.cat(heads_by_layer, dim=1)
+            heads_by_layer = heads_by_layer_.argmax(1).cpu().numpy()
+            #print (heads_by_layer)
+        else:
+            heads_by_layer = None
 
-        return heads_pred.cpu().numpy(), rels_pred.cpu().numpy(), freq_recomp.mean().cpu().numpy()
+        return heads_pred.cpu().numpy(), rels_pred.cpu().numpy(), freq_recomp.mean().cpu().numpy(), heads_by_layer
 
 
 class EasyFirst(nn.Module):
