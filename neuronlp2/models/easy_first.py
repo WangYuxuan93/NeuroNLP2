@@ -417,16 +417,42 @@ class EasyFirstV2(nn.Module):
         #"""
 
         # ----- encoding -----
-        # (batch, seq_len, hidden_size)
-        rc_encoder_output = self._get_encoder_output(input_word, input_char, input_pos, rc_gen_heads_onehot, mask=root_mask)
-        norc_encoder_output = self._get_encoder_output(input_word, input_char, input_pos, norc_gen_heads_onehot, mask=root_mask)
-        #print ("rc_encoder_output:\n",rc_encoder_output)
+        fast_mode = True
+        if fast_mode:
+            # (2*batch, seq_len)
+            input_word_ = torch.cat([input_word,input_word], dim=0)
+            input_char_ = torch.cat([input_char,input_char], dim=0)
+            input_pos_ = torch.cat([input_pos,input_pos], dim=0)
+            gen_heads_onehot = torch.cat([rc_gen_heads_onehot, norc_gen_heads_onehot], dim=0)
+            mask_ = torch.cat([root_mask,root_mask], dim=0)
+            # (2*batch, seq_len, hidden_size)
+            encoder_output = self._get_encoder_output(input_word_, input_char_, input_pos_, gen_heads_onehot, mask=mask_)
+            # (batch, seq_len, hidden_size)
+            rc_encoder_output, norc_encoder_output = encoder_output.split(batch_size, dim=0)
+            arc, rel = self._mlp(encoder_output)
+            # (2*batch, seq_len, arc_space)
+            arc_h, arc_c = arc
+            rc_arc_h, norc_arc_h = arc_h.split(batch_size, dim=0)
+            rc_arc_c, norc_arc_c = arc_c.split(batch_size, dim=0)
+            # (2*batch, seq_len, rel_space)
+            rel_h, rel_c = rel
+            rc_rel_h, norc_rel_h = rel_h.split(batch_size, dim=0)
+            rc_rel_c, norc_rel_c = rel_c.split(batch_size, dim=0)
+        else:
+            # (batch, seq_len, hidden_size)
+            rc_encoder_output = self._get_encoder_output(input_word, input_char, input_pos, rc_gen_heads_onehot, mask=root_mask)
+            norc_encoder_output = self._get_encoder_output(input_word, input_char, input_pos, norc_gen_heads_onehot, mask=root_mask)
+            #print ("rc_encoder_output:\n",rc_encoder_output)
+            norc_arc, norc_rel = self._mlp(norc_encoder_output)
+            norc_arc_h, norc_arc_c = norc_arc
+            rc_arc, rc_rel = self._mlp(rc_encoder_output)
+            rc_arc_h, rc_arc_c = rc_arc
+            # (batch, length, type_space), out_type shape 
+            rc_rel_h, rc_rel_c = rc_rel
 
         # ----- compute arc loss -----
         #"""
         # compute arc logp for no recompute generate mask
-        norc_arc, norc_type = self._mlp(norc_encoder_output)
-        norc_arc_h, norc_arc_c = norc_arc
         # (batch, seq_len, seq_len)
         norc_head_logp_given_norc = self._get_head_logp(norc_arc_c, norc_arc_h, norc_encoder_output)
         
@@ -442,8 +468,6 @@ class EasyFirstV2(nn.Module):
         norc_head_logp = norc_logp.unsqueeze(1).unsqueeze(2) + norc_head_logp_given_norc
         #"""
         # compute arc logp for recompute generate mask
-        rc_arc, rc_rel = self._mlp(rc_encoder_output)
-        rc_arc_h, rc_arc_c = rc_arc
         # (batch, seq_len, seq_len)
         rc_head_logp_given_rc = self._get_head_logp(rc_arc_c, rc_arc_h, rc_encoder_output)
         # (batch, seq_len, seq_len)
@@ -493,8 +517,6 @@ class EasyFirstV2(nn.Module):
             print ("rels_3D:\n",rels_3D)
             print ("mask_3D * heads_3D:\n", mask_3D * heads_3D)
             print ("num_total_heads:",num_total_heads)
-        # (batch, length, type_space), out_type shape 
-        rc_rel_h, rc_rel_c = rc_rel
         # (batch, n_rels, seq_len, seq_len)
         rc_rel_logits = self.rel_attn(rc_rel_c, rc_rel_h) #.permute(0, 2, 3, 1)
         # (batch, seq_len, seq_len)
