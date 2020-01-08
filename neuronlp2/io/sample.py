@@ -91,8 +91,6 @@ def random_sample(data, batch_size, step_batch_size=None, unk_replace=0., shuffl
             lengths = sampled_data['LENGTH'][excerpt]
             batch_length = lengths.max().item()
             # [batch_size, batch_len]
-            heads = sampled_data['HEAD'][excerpt, :batch_length]
-            types = sampled_data['TYPE'][excerpt, :batch_length]
             batch = {'WORD': words[excerpt, :batch_length], 'LENGTH': lengths}
             batch.update({key: field[excerpt, :batch_length] for key, field in sampled_data.items() if key in easyfirst_keys})
             
@@ -111,8 +109,8 @@ def sample_generate_order(batch, lengths, target_recomp_prob=0.25, recomp_in_pre
     #DO_EOS = 2
     batch_length = lengths.max().item()
 
-    easyfirst_keys = ['WORD', 'MASK', 'LENGTH', 'POS', 'CHAR', 'HEAD', 'TYPE', 'SINGLE']
-    all_keys = easyfirst_keys + ['RECOMP_GEN_MASK', 'NO_RECOMP_GEN_MASK', 'NEXT_HEAD_MASK']
+    basic_keys = ['WORD', 'MASK', 'LENGTH', 'POS', 'CHAR', 'HEAD', 'TYPE', 'SINGLE']
+    all_keys = basic_keys + ['RECOMP_GEN_MASK', 'NO_RECOMP_GEN_MASK', 'NEXT_HEAD_MASK']
     sampled_batch = {key: [] for key in all_keys}
 
     # for every sentence
@@ -169,7 +167,7 @@ def sample_generate_order(batch, lengths, target_recomp_prob=0.25, recomp_in_pre
             print ("next_list:\n", next_list)
         
         for n_step in range(len(next_list)):
-            for key in easyfirst_keys:
+            for key in basic_keys:
                 sampled_batch[key].append(batch[key][i])
             sampled_batch['RECOMP_GEN_MASK'].append(recomp_gen_list[n_step])
             sampled_batch['NO_RECOMP_GEN_MASK'].append(no_recomp_gen_list[n_step])
@@ -184,8 +182,7 @@ def sample_generate_order(batch, lengths, target_recomp_prob=0.25, recomp_in_pre
     return sampled_batch
 
 
-def sample_from_model(network, data, batch_size, step_batch_size=None, bucketed=False, 
-                      unk_replace=0., shuffle=False, max_layers=6, use_whole_seq=True, 
+def from_model_sample(network, data, batch_size, unk_replace=0., shuffle=False, 
                       device=torch.device('cpu'), debug=False):
     data_tensor, bucket_sizes = data
 
@@ -193,7 +190,10 @@ def sample_from_model(network, data, batch_size, step_batch_size=None, bucketed=
     if shuffle:
         np.random.shuffle((bucket_indices))
 
-    easyfirst_keys = ['WORD', 'MASK', 'POS', 'CHAR', 'HEAD', 'TYPE']
+    basic_keys = ['MASK', 'POS', 'CHAR', 'HEAD', 'TYPE']
+    all_keys =  basic_keys + ['WORD', 'LENGTH', 'RECOMP_GEN_MASK', 'NO_RECOMP_GEN_MASK', 'NEXT_HEAD_MASK']
+    easyfirst_keys = ['MASK', 'POS', 'CHAR', 'HEAD', 'TYPE','RECOMP_GEN_MASK', 'NO_RECOMP_GEN_MASK', 'NEXT_HEAD_MASK']
+
     for bucket_id in bucket_indices:
         data = data_tensor[bucket_id]
         bucket_size = bucket_sizes[bucket_id]
@@ -208,43 +208,71 @@ def sample_from_model(network, data, batch_size, step_batch_size=None, bucketed=
             noise = single.new_empty(bucket_size, bucket_length).bernoulli_(unk_replace).long()
             words = words * (ones - single * noise)
 
-        indices = None
-        if shuffle:
-            indices = torch.randperm(bucket_size).long()
-            indices = indices.to(words.device)
+        sampled_batches = {key: [] for key in all_keys}
+        #indices = None
+        #if shuffle:
+        #    indices = torch.randperm(bucket_size).long()
+        #    indices = indices.to(words.device)
+        batch_length = data['LENGTH'].max().item()
+        # sample data from model
         for start_idx in range(0, bucket_size, batch_size):
-            if shuffle:
-                excerpt = indices[start_idx:start_idx + batch_size]
-            else:
-                excerpt = slice(start_idx, start_idx + batch_size)
+            #if shuffle:
+            #    excerpt = indices[start_idx:start_idx + batch_size]
+            #else:
+            excerpt = slice(start_idx, start_idx + batch_size)
 
             lengths = data['LENGTH'][excerpt]
-            batch_length = lengths.max().item()
             # [batch_size, batch_len]
-            heads = data['HEAD'][excerpt, :batch_length]
-            types = data['TYPE'][excerpt, :batch_length]
             batch = {'WORD': words[excerpt, :batch_length], 'LENGTH': lengths}
-            batch.update({key: field[excerpt, :batch_length] for key, field in data.items() if key in easyfirst_keys})
+            batch.update({key: field[excerpt, :batch_length] for key, field in data.items() if key in basic_keys})
             # pre-process the input
             input_word = batch['WORD'].to(device)
             input_char = batch['CHAR'].to(device)
             input_pos = batch['POS'].to(device)
             gold_heads = batch['HEAD'].to(device)
             mask = batch['MASK'].to(device)
-            batch_by_layer = network.inference(input_word, input_char, input_pos, gold_heads, 
-                                batch, mask=mask, max_layers=max_layers, use_whole_seq=use_whole_seq,
-                                device=device)
+            sampled_batch = network.inference(input_word, input_char, input_pos, gold_heads, 
+                                batch, mask=mask, device=device)
+            for key in all_keys:
+                sampled_batches[key].append(sampled_batch[key])
 
             if debug:
-                for i in batch_by_layer.keys():
-                    print('-' * 50)
-                    print ("layer-%d"%i)
-                    for key in batch_by_layer[i].keys():
-                        print ("%s\n"%key, batch_by_layer[i][key])
-            if step_batch_size is not None:
-                yield split_batch_by_layer(batch_by_layer, step_batch_size, shuffle=False)
+                for key in sampled_batch.keys():
+                    print ("%s\n"%key, sampled_batch[key])
+            #yield sampled_batch
+
+        # Merging
+        sampled_data = {}
+        for key in all_keys:
+            sampled_data[key] = torch.from_numpy(np.concatenate(sampled_batches[key], axis=0))
+
+        if debug:
+            print ("Merged Batch")
+            for key in sampled_data.keys():
+                print ("%s\n"%key, sampled_data[key])
+
+        # batching
+        sample_size = sampled_data['WORD'].size(0)
+        indices = None
+        if shuffle:
+            indices = torch.randperm(sample_size).long()
+            indices = indices.to(words.device)
+        # sample data from model
+        for start_idx in range(0, sample_size, batch_size):
+            if shuffle:
+                excerpt = indices[start_idx:start_idx + batch_size]
             else:
-                yield batch_by_layer
+                excerpt = slice(start_idx, start_idx + batch_size)
+
+            lengths = sampled_data['LENGTH'][excerpt]
+            batch_length = lengths.max().item()
+            batch = {'WORD': words[excerpt, :batch_length], 'LENGTH': lengths}
+            batch.update({key: field[excerpt, :batch_length] for key, field in sampled_data.items() if key in easyfirst_keys})
+
+            if debug:
+                for key in sampled_batch.keys():
+                    print ("%s\n"%key, sampled_batch[key])
+            yield sampled_batch
 
 def split_batch_by_layer(batch_by_layer, step_batch_size, shuffle=False, debug=False):
 

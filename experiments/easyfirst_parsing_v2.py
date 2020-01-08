@@ -20,7 +20,8 @@ from torch.optim.adamw import AdamW
 from torch.optim import SGD
 from torch.nn.utils import clip_grad_norm_
 from neuronlp2.nn.utils import total_grad_norm
-from neuronlp2.io import get_logger, conllx_data, iterate_data, iterate_data_and_sample, sample_from_model, random_sample
+from neuronlp2.io import get_logger, conllx_data, iterate_data, iterate_data_and_sample, sample_from_model
+from neuronlp2.io import random_sample, from_model_sample
 from neuronlp2.models import EasyFirstV2
 from neuronlp2.optim import ExponentialScheduler
 from neuronlp2 import utils
@@ -384,6 +385,9 @@ def train(args):
             data_sampler = random_sample(data_train, batch_size, 
                             step_batch_size=step_batch_size, unk_replace=unk_replace, 
                             shuffle=True, target_recomp_prob=target_recomp_prob)
+        elif sampler == 'from_model':
+            data_sampler = from_model_sample(network, data_train, batch_size, 
+                              unk_replace=unk_replace, shuffle=False, device=device)
         for step, data in enumerate(data_sampler):
             #print ('number in batch:',len(sub_data['WORD']))
             optimizer.zero_grad()
@@ -695,7 +699,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--unk_replace', type=float, default=0., help='The rate to replace a singleton word with UNK')
     args_parser.add_argument('--freeze', action='store_true', help='frozen the word embedding (disable fine-tuning).')
     args_parser.add_argument('--get_head_by_layer', action='store_true', help='whether to print head by graph attention layer.')
-    args_parser.add_argument('--sampler', choices=['random', 'confidence'], help='Sample strategy')
+    args_parser.add_argument('--sampler', choices=['random', 'from_model'], help='Sample strategy')
     args_parser.add_argument('--punctuation', nargs='+', type=str, help='List of punctuations')
     args_parser.add_argument('--beam', type=int, default=1, help='Beam size for decoding')
     args_parser.add_argument('--word_embedding', choices=['glove', 'senna', 'sskip', 'polyglot'], help='Embedding for words')

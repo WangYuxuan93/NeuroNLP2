@@ -547,7 +547,7 @@ class EasyFirstV2(nn.Module):
 
 
     def _decode_one_step(self, head_logp, heads_mask, mask, device=torch.device('cpu'), 
-                            debug=False):
+                            debug=False, get_order=False):
         """
         Input:
             head_logp: (batch, seq_len, seq_len)
@@ -555,6 +555,7 @@ class EasyFirstV2(nn.Module):
             mask: (batch, seq_len)
         """
         batch_size, seq_len, _ = head_logp.size()
+        order_mask = []
         # (batch)
         num_words = mask.sum(-1)
         # (batch, 1)
@@ -624,10 +625,11 @@ class EasyFirstV2(nn.Module):
                 if continue_mask.sum() == 0:
                     break
                 # at least add one new arc
-                new_heads_onehot = new_heads_onehot + max_arc_onehot
+                #new_arc_onehot = max_arc_onehot
+                #new_heads_onehot = new_heads_onehot + new_arc_onehot
                 norc_mask = torch.ones_like(rc_probs)
-                keep_mask = (norc_mask).unsqueeze(1).expand_as(heads_mask)*(1-heads_mask)*mask
-                keep_mask_3D = keep_mask.unsqueeze(2).expand_as(new_heads_onehot)
+                #keep_mask = (norc_mask).unsqueeze(1).expand_as(heads_mask)*(1-heads_mask)*mask
+                #keep_mask_3D = keep_mask.unsqueeze(2).expand_as(new_heads_onehot)
             else:
                 # (batch), True if do recompute, otherwise False
                 norc_mask = torch.le(rc_probs, 0.5).int()
@@ -635,12 +637,12 @@ class EasyFirstV2(nn.Module):
                 # if all sent in the batch choose to recompute, return
                 if continue_mask.sum() == 0:
                     break
-                # (batch, seq_len), if 1, keep the arc
-                keep_mask = norc_mask.unsqueeze(1).expand_as(heads_mask)*(1-heads_mask)*mask
-                keep_mask_3D = keep_mask.unsqueeze(2).expand_as(new_heads_onehot)
-                new_arc_onehot = torch.where(keep_mask_3D==0,
-                                            null_arc_adder, max_arc_onehot)
-                new_heads_onehot = new_heads_onehot + new_arc_onehot
+            # (batch, seq_len), if 1, keep the arc
+            keep_mask = norc_mask.unsqueeze(1).expand_as(heads_mask)*(1-heads_mask)*mask
+            keep_mask_3D = keep_mask.unsqueeze(2).expand_as(new_heads_onehot)
+            new_arc_onehot = torch.where(keep_mask_3D==0,
+                                        null_arc_adder, max_arc_onehot)
+            new_heads_onehot = new_heads_onehot + new_arc_onehot
             
             if debug:
                 print ("norc_mask:\n",norc_mask)
@@ -652,6 +654,10 @@ class EasyFirstV2(nn.Module):
                 print ("new_heads_onehot:\n",new_heads_onehot)
                 print ("masked_head_logp:\n",masked_head_logp)
 
+            if get_order:
+                # n * (batch, seq_len), 1 for dep of new arc
+                order_mask.append(new_arc_onehot.sum(-1))
+
             # update logp
             #norc_mask_3D = (1-rc_mask.int()).unsqueeze(1).unsqueeze(2).expand_as(max_dep_mask)
             # (batch, seq_len, seq_len), mask out the whole row of newly generated heads
@@ -661,7 +667,7 @@ class EasyFirstV2(nn.Module):
             new_heads_mask = max_dep_mask[:,:,0]
             heads_mask = heads_mask + new_heads_mask*keep_mask
             
-        return rc_probs_list, new_heads_onehot
+        return rc_probs_list, new_heads_onehot, order_mask
 
 
     def decode(self, input_word, input_char, input_pos, mask=None, debug=False, device=torch.device('cpu'),
@@ -706,7 +712,7 @@ class EasyFirstV2(nn.Module):
             masked_head_logp = torch.where(logp_mask==1, head_logp.detach(), neg_inf_logp)
             # rc_probs_list: k* (batch), the probability of recompute after each arc generated
             # new_heads_onehot: (batch, seq_len, seq_len), newly generated arcs
-            rc_probs_list, new_heads_onehot = self._decode_one_step(masked_head_logp, heads_mask, root_mask, device=device)
+            rc_probs_list, new_heads_onehot, _ = self._decode_one_step(masked_head_logp, heads_mask, root_mask, device=device)
             
             # prevent generating new arcs for rows that have heads
             # (batch, seq_len)
@@ -777,6 +783,127 @@ class EasyFirstV2(nn.Module):
             heads_by_layer = None
 
         return heads_pred.cpu().numpy(), rels_pred.cpu().numpy(), freq_recomp.mean().cpu().numpy(), heads_by_layer
+
+
+    def inference(self, input_word, input_char, input_pos, gold_heads, batch, mask=None, 
+                  debug=False, device=torch.device('cpu')):
+        """
+        Input:
+            input_word: (batch, seq_len)
+            input_char: (batch, seq_len, char_len)
+            input_pos: (batch, seq_len)
+            gold_heads: (batch, seq_len), the gold heads
+            mask: (batch, seq_len)
+        """
+        batch_size, seq_len = input_word.size()
+
+        # for neural network
+        # (batch_size, seq_len)
+        heads_pred = torch.zeros((batch_size, seq_len), dtype=torch.int64, device=device)
+        heads_mask = torch.zeros_like(heads_pred, device=device)
+
+        # collect inference results
+        basic_keys = ['WORD', 'MASK', 'LENGTH', 'POS', 'CHAR', 'HEAD', 'TYPE']
+        all_keys =  basic_keys + ['RECOMP_GEN_MASK', 'NO_RECOMP_GEN_MASK', 'NEXT_HEAD_MASK']
+        sampled_batch = {key: [] for key in all_keys}
+
+        next_list = []
+        rc_gen_list = []
+        norc_gen_list = []
+
+        # (batch_size, seq_len)
+        heads_pred = torch.zeros((batch_size, seq_len), dtype=torch.int64, device=device)
+        heads_mask = torch.zeros_like(heads_pred, device=device)
+        # (batch, seq_len, seq_len)
+        gen_heads_onehot = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=device)
+        # (batch, seq_len), seq mask, where at position 0 is 0
+        root_mask = torch.arange(seq_len, device=device).gt(0).float().unsqueeze(0) * mask
+        # (batch, seq_len, seq_len)
+        mask_3D = (root_mask.unsqueeze(-1) * mask.unsqueeze(1))
+
+        # (batch, seq_len, seq_len)
+        gold_heads_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=device)
+        gold_heads_3D.scatter_(-1, gold_heads.unsqueeze(-1), 1)
+
+        while True:
+            # ----- encoding -----
+            # (batch, seq_len, hidden_size)
+            encoder_output = self._get_encoder_output(input_word, input_char, input_pos, gen_heads_onehot, mask=root_mask)
+            # ----- compute arc probs -----
+            # compute arc logp for no recompute generate mask
+            arc, type = self._mlp(encoder_output)
+            arc_h, arc_c = arc
+            # (batch, seq_len, seq_len)
+            head_logp = self._get_head_logp(arc_c, arc_h, encoder_output)
+            
+            # (batch, seq_len, seq_len)
+            neg_inf_logp = torch.Tensor(head_logp.size()).fill_(-1e9).to(device)
+            # only allow gold arcs
+            logp_mask = gold_heads_3D * (1-heads_mask).unsqueeze(-1).expand_as(head_logp) * mask_3D
+            # (batch, seq_len, seq_len), mask out generated heads
+            masked_head_logp = torch.where(logp_mask==1, head_logp.detach(), neg_inf_logp)
+            # rc_probs_list: k* (batch), the probability of recompute after each arc generated
+            # new_heads_onehot: (batch, seq_len, seq_len), newly generated arcs
+            rc_probs_list, new_heads_onehot, order_mask = self._decode_one_step(masked_head_logp, 
+                                        heads_mask, root_mask, device=device, get_order=True)
+            tmp_rc_mask = heads_mask
+            heads_mask_ = heads_mask.cpu().numpy()
+            # (batch, seq_len)
+            for i, next_head_mask in enumerate(order_mask):
+                # (batch)
+                has_head = next_head_mask.sum(-1).cpu().numpy()
+                next_head_mask_ = next_head_mask.cpu().numpy()
+                tmp_rc_mask_ = tmp_rc_mask.cpu().numpy()
+                for j in range(batch_size):
+                    if has_head[j] == 1:
+                        for key in basic_keys:
+                            sampled_batch[key].append(batch[key][j])
+                        sampled_batch['RECOMP_GEN_MASK'].append(tmp_rc_mask_[j])
+                        sampled_batch['NO_RECOMP_GEN_MASK'].append(heads_mask_[j])
+                        sampled_batch['NEXT_HEAD_MASK'].append(next_head_mask_[j])
+                        #next_list.append(next_head_mask_[j])
+                        #rc_gen_list.append(tmp_rc_mask_[j])
+                        #norc_gen_list.append(heads_mask_[j])
+                tmp_rc_mask = tmp_rc_mask + next_head_mask
+
+            # prevent generating new arcs for rows that have heads
+            # (batch, seq_len)
+            #allow_mask = (1 - heads_mask) * root_mask
+            #new_heads_onehot = (new_heads_onehot * allow_mask.unsqueeze(-1)).int()
+            # update the generated head tensor
+            gen_heads_onehot = gen_heads_onehot + new_heads_onehot
+            # should convert this to 2D (heads_pred & heads_mask)
+            # (batch, seq_len)
+            new_heads_mask = new_heads_onehot.sum(-1)
+            # (batch, seq_len)
+            _, new_heads_pred = torch.max(new_heads_onehot, -1)
+            new_heads_pred = new_heads_pred * new_heads_mask
+            heads_mask = heads_mask + new_heads_mask
+            heads_pred = heads_pred + new_heads_pred
+            #print ("rc_probs_list:\n", rc_probs_list)
+            if debug:
+                print ("rc_probs_list:\n", rc_probs_list)
+                print ("logp_mask:\n",logp_mask)
+                print ("rc_probs_list:\n", rc_probs_list)
+                print ("new_heads_mask:\n", new_heads_mask)
+                print ("new_heads_pred:\n", new_heads_pred)
+                print ("heads_pred:\n", heads_pred)
+                print ("heads_mask:\n", heads_mask)
+                print ("root_mask:\n", root_mask)
+                print ("order_mask:\n", order_mask)
+            # if every token has a head
+            if torch.equal(heads_mask, root_mask.long()):
+                break
+
+        for key in sampled_batch.keys():
+            sampled_batch[key] = torch.from_numpy(np.stack(sampled_batch[key]))
+
+        if debug:
+            for key in sampled_batch.keys():
+                print ("%s\n"%key, sampled_batch[key])
+
+
+        return sampled_batch
 
 
 class EasyFirst(nn.Module):
