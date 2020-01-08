@@ -226,9 +226,9 @@ def from_model_sample(network, data, batch_size, unk_replace=0., shuffle=False,
             batch = {'WORD': words[excerpt, :batch_length], 'LENGTH': lengths}
             batch.update({key: field[excerpt, :batch_length] for key, field in data.items() if key in basic_keys})
             # pre-process the input
-            input_word = batch['WORD'].to(device)
-            input_char = batch['CHAR'].to(device)
-            input_pos = batch['POS'].to(device)
+            input_word = batch['WORD']#.to(device)
+            input_char = batch['CHAR']#.to(device)
+            input_pos = batch['POS']#.to(device)
             gold_heads = batch['HEAD'].to(device)
             mask = batch['MASK'].to(device)
             sampled_batch = network.inference(input_word, input_char, input_pos, gold_heads, 
