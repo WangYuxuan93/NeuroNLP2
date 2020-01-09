@@ -142,6 +142,7 @@ def train(args):
     grad_clip = args.grad_clip
     eval_every = args.eval_every
     noscreen = args.noscreen
+    fine_tune = args.fine_tune
 
     loss_ty_token = args.loss_type == 'token'
     unk_replace = args.unk_replace
@@ -227,8 +228,12 @@ def train(args):
         print('character OOV: %d' % oov)
         return torch.from_numpy(table)
 
-    word_table = construct_word_embedding_table()
-    char_table = construct_char_embedding_table()
+    if fine_tune:
+        word_table = None
+        char_table = None
+    else:
+        word_table = construct_word_embedding_table()
+        char_table = construct_char_embedding_table()
 
     logger.info("constructing network...")
 
@@ -289,6 +294,9 @@ def train(args):
                            input_encoder=input_encoder, num_layers=num_layers, p_rnn=p_rnn,
                            input_self_attention_layer=input_self_attention_layer,
                            num_input_attention_layers=num_input_attention_layers)
+        if fine_tune:
+            logger.info("Fine-tuning: Loading model from %s" % model_name)
+            network.load_state_dict(torch.load(model_name))
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -678,6 +686,7 @@ def parse(args):
 if __name__ == '__main__':
     args_parser = argparse.ArgumentParser(description='Tuning with graph-based parsing')
     args_parser.add_argument('--mode', choices=['train', 'parse'], required=True, help='processing mode')
+    args_parser.add_argument('--fine_tune', action='store_true', default=False, help='Whether to fine_tune?')
     args_parser.add_argument('--config', type=str, help='config file')
     args_parser.add_argument('--num_epochs', type=int, default=200, help='Number of training epochs')
     args_parser.add_argument('--batch_size', type=int, default=16, help='Number of sentences in each batch')
