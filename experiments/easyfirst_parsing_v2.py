@@ -261,6 +261,8 @@ def train(args):
     activation = hyps['activation']
     loss_interpolation = hyps['loss_interpolation']
 
+    num_gpu = torch.cuda.device_count()
+
     if model_type == 'EasyFirst':
         num_attention_heads = hyps['num_attention_heads']
         intermediate_size = hyps['intermediate_size']
@@ -294,6 +296,11 @@ def train(args):
                            input_encoder=input_encoder, num_layers=num_layers, p_rnn=p_rnn,
                            input_self_attention_layer=input_self_attention_layer,
                            num_input_attention_layers=num_input_attention_layers)
+
+        logger.info("GPU Number: %d" % num_gpu)
+        if num_gpu > 1:
+            logger.info("Using Data Parallel")
+            network = torch.nn.DataParallel(network)
         if fine_tune:
             logger.info("Fine-tuning: Loading model from %s" % model_name)
             network.load_state_dict(torch.load(model_name))
@@ -513,7 +520,10 @@ def train(args):
 
                     best_epoch = epoch
                     patient = 0
-                    torch.save(network.state_dict(), model_name)
+                    if num_gpu > 1:
+                        torch.save(network.module.state_dict(), model_name)
+                    else:
+                        torch.save(network.state_dict(), model_name)
 
                     pred_filename = os.path.join(result_path, 'pred_test%d' % epoch)
                     pred_writer.start(pred_filename)
