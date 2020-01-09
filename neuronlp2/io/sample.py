@@ -242,8 +242,8 @@ def from_model_sample(network, data, batch_size, unk_replace=0., shuffle=False,
             #yield sampled_batch
 
         # Merging
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        #if torch.cuda.is_available():
+        #    torch.cuda.empty_cache()
         sampled_data = {}
         for key in all_keys:
             sampled_data[key] = torch.from_numpy(np.concatenate(sampled_batches[key], axis=0))
