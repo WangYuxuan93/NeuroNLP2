@@ -896,7 +896,7 @@ class EasyFirstV2(nn.Module):
                 break
 
         for key in sampled_batch.keys():
-            sampled_batch[key] = torch.from_numpy(np.stack(sampled_batch[key]))
+            sampled_batch[key] = np.stack(sampled_batch[key])
 
         if debug:
             for key in sampled_batch.keys():

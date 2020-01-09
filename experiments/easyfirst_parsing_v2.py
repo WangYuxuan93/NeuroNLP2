@@ -378,8 +378,8 @@ def train(args):
         network.train()
         lr = scheduler.get_lr()[0]
         print('Epoch %d (%s, lr=%.6f, lr decay=%.6f, grad clip=%.1f, l2=%.1e): ' % (epoch, opt_info, lr, lr_decay, grad_clip, weight_decay))
-        if args.cuda:
-            torch.cuda.empty_cache()
+        #if args.cuda:
+        #    torch.cuda.empty_cache()
         gc.collect()
         if sampler == 'random':
             data_sampler = random_sample(data_train, batch_size, 
@@ -439,7 +439,7 @@ def train(args):
                     train_arc_loss += loss_arc.item()
                     train_rel_loss += loss_rel.item()
                     train_recomp_loss += loss_recomp.item()
-            torch.cuda.empty_cache()
+            #torch.cuda.empty_cache()
             # update log
             if step % 100 == 0:
                 if not noscreen: 

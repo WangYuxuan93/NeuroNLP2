@@ -242,6 +242,8 @@ def from_model_sample(network, data, batch_size, unk_replace=0., shuffle=False,
             #yield sampled_batch
 
         # Merging
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         sampled_data = {}
         for key in all_keys:
             sampled_data[key] = torch.from_numpy(np.concatenate(sampled_batches[key], axis=0))
@@ -266,13 +268,13 @@ def from_model_sample(network, data, batch_size, unk_replace=0., shuffle=False,
 
             lengths = sampled_data['LENGTH'][excerpt]
             batch_length = lengths.max().item()
-            batch = {'WORD': words[excerpt, :batch_length], 'LENGTH': lengths}
+            batch = {'WORD': sampled_data['WORD'][excerpt, :batch_length], 'LENGTH': lengths}
             batch.update({key: field[excerpt, :batch_length] for key, field in sampled_data.items() if key in easyfirst_keys})
 
             if debug:
-                for key in sampled_batch.keys():
-                    print ("%s\n"%key, sampled_batch[key])
-            yield sampled_batch
+                for key in batch.keys():
+                    print ("%s\n"%key, batch[key])
+            yield batch
 
 def split_batch_by_layer(batch_by_layer, step_batch_size, shuffle=False, debug=False):
 
