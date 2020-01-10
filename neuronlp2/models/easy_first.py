@@ -24,11 +24,13 @@ class EasyFirstV2(nn.Module):
                  dep_prob_depend_on_head=False, use_top2_margin=False, target_recomp_prob=0.25,
                  extra_self_attention_layer=False, num_attention_heads=4,
                  input_encoder='Linear', num_layers=3, p_rnn=(0.33, 0.33),
-                 input_self_attention_layer=False, num_input_attention_layers=3):
+                 input_self_attention_layer=False, num_input_attention_layers=3,
+                 maximize_unencoded_arcs_for_norc=False):
         super(EasyFirstV2, self).__init__()
         self.device = device
         self.dep_prob_depend_on_head = dep_prob_depend_on_head
         self.use_top2_margin = use_top2_margin
+        self.maximize_unencoded_arcs_for_norc = maximize_unencoded_arcs_for_norc
         self.target_recomp_prob = target_recomp_prob
 
         self.word_embed = nn.Embedding(num_words, word_dim, _weight=embedd_word, padding_idx=1)
@@ -387,13 +389,21 @@ class EasyFirstV2(nn.Module):
         generated_head_mask = rc_gen_mask
         if next_head_mask is None:
             # (batch, seq_len), mask of heads t.cuda()o be generated
-            ref_heads_mask = (1 - generated_head_mask) * root_mask
+            rc_ref_heads_mask = (1 - generated_head_mask) * root_mask
         else:
-            ref_heads_mask = next_head_mask
+            rc_ref_heads_mask = next_head_mask
         # (batch, seq_len, seq_len)
-        ref_heads_onehot = torch.zeros(batch_size, seq_len, seq_len, dtype=torch.int32, device=device)
-        ref_heads_onehot.scatter_(-1, (ref_heads_mask*heads).unsqueeze(-1).long(), 1)
-        ref_heads_onehot = ref_heads_onehot * ref_heads_mask.unsqueeze(2)
+        rc_ref_heads_onehot = torch.zeros(batch_size, seq_len, seq_len, dtype=torch.int32, device=device)
+        rc_ref_heads_onehot.scatter_(-1, (rc_ref_heads_mask*heads).unsqueeze(-1).long(), 1)
+        rc_ref_heads_onehot = rc_ref_heads_onehot * rc_ref_heads_mask.unsqueeze(2)
+        if self.maximize_unencoded_arcs_for_norc:
+            norc_ref_heads_mask = (1 - norc_gen_mask) * root_mask
+            norc_ref_heads_onehot = torch.zeros(batch_size, seq_len, seq_len, dtype=torch.int32, device=device)
+            norc_ref_heads_onehot.scatter_(-1, (norc_ref_heads_mask*heads).unsqueeze(-1).long(), 1)
+            norc_ref_heads_onehot = norc_ref_heads_onehot * norc_ref_heads_mask.unsqueeze(2)
+        else:
+            norc_ref_heads_mask = None
+            norc_ref_heads_onehot = rc_ref_heads_onehot
         
         # (batch, seq_len, seq_len)
         rels_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.long, device=device)
@@ -407,8 +417,11 @@ class EasyFirstV2(nn.Module):
         #print ("root_mask:\n",root_mask)
         if debug:
             print ("mask_3D:\n",mask_3D)
-            print ('ref_heads_mask:\n',ref_heads_mask)
-            print ('ref_heads_onehot:\n',ref_heads_onehot)
+            print ('rc_ref_heads_mask:\n',rc_ref_heads_mask)
+            if norc_ref_heads_mask is not None:
+                print ('norc_ref_heads_mask:\n',norc_ref_heads_mask)
+            print ('rc_ref_heads_onehot:\n',rc_ref_heads_onehot)
+            print ('norc_ref_heads_onehot:\n',norc_ref_heads_onehot)
             print ('rc_gen_mask:\n', rc_gen_mask)
             print ('rc_gen_mask*heads:\n', rc_gen_mask*heads)
         
@@ -494,21 +507,22 @@ class EasyFirstV2(nn.Module):
         rc_head_logp = rc_logp.unsqueeze(1).unsqueeze(2) + rc_head_logp_given_rc
 
         # (batch), number of ref heads in total
-        num_heads = ref_heads_onehot.sum() + 1e-5
+        rc_num_heads = rc_ref_heads_onehot.sum() + 1e-5
+        norc_num_heads = norc_ref_heads_onehot.sum() + 1e-5
         # (batch), reference loss for no recompute
-        norc_ref_heads_logp = (norc_head_logp * ref_heads_onehot).sum(dim=(1,2))
+        norc_ref_heads_logp = (norc_head_logp * norc_ref_heads_onehot).sum(dim=(1,2))
         # (batch), reference loss for recompute
-        rc_ref_heads_logp = (rc_head_logp * ref_heads_onehot).sum(dim=(1,2))
+        rc_ref_heads_logp = (rc_head_logp * rc_ref_heads_onehot).sum(dim=(1,2))
         
-        loss_arc = -(0.5*norc_ref_heads_logp.sum()+0.5*rc_ref_heads_logp.sum()) / num_heads
+        loss_arc = -0.5*(norc_ref_heads_logp.sum()/norc_num_heads+rc_ref_heads_logp.sum()/rc_num_heads) 
         #loss_arc = - rc_ref_heads_logp.sum() / num_heads
         # regularizer of recompute prob, prevent always predicting recompute
         loss_recomp = self.l2_loss(rc_probs.mean(dim=-1,keepdim=True), torch.Tensor([self.target_recomp_prob]).to(device))
         #print ("rc_probs: ({})\n {}".format(self.target_recomp_prob, rc_probs))
         if debug:
-            print ('ref_heads_onehot:\n',ref_heads_onehot)
+            print ('rc_ref_heads_onehot:\n',rc_ref_heads_onehot)
             print ('rc_head_logp:\n', rc_head_logp)
-            print ('rc_head_logp * ref_heads_onehot:\n', rc_head_logp * ref_heads_onehot)
+            print ('rc_head_logp * rc_ref_heads_onehot:\n', rc_head_logp * rc_ref_heads_onehot)
         """
         if debug:
             print ('ref_heads_onehot:\n',ref_heads_onehot)

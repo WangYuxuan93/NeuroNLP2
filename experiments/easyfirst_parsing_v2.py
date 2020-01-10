@@ -281,6 +281,7 @@ def train(args):
         input_encoder = hyps['input_encoder']
         num_layers = hyps['num_layers']
         p_rnn = hyps['p_rnn']
+        maximize_unencoded_arcs_for_norc = hyps['maximize_unencoded_arcs_for_norc']
         
         network = EasyFirstV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                            hidden_size, num_types, arc_space, type_space,
@@ -297,7 +298,8 @@ def train(args):
                            num_attention_heads=num_attention_heads,
                            input_encoder=input_encoder, num_layers=num_layers, p_rnn=p_rnn,
                            input_self_attention_layer=input_self_attention_layer,
-                           num_input_attention_layers=num_input_attention_layers)
+                           num_input_attention_layers=num_input_attention_layers,
+                           maximize_unencoded_arcs_for_norc=maximize_unencoded_arcs_for_norc)
         if fine_tune:
             logger.info("Fine-tuning: Loading model from %s" % model_name)
             network.load_state_dict(torch.load(model_name))
@@ -321,6 +323,7 @@ def train(args):
     logger.info("Input Encoder Type: %s" % input_encoder)
     logger.info("Use Input Self Attention Layer: %s (layer: %d)" % (input_self_attention_layer, num_input_attention_layers))
     logger.info("Use Top Self Attention Layer: %s" % extra_self_attention_layer)
+    logger.info("Maximize All Unencoded Arcs for No Recompute: %s" % maximize_unencoded_arcs_for_norc)
     logger.info("Input Encoder Type: %s" % input_encoder)
     logger.info('# of Parameters: %d' % (sum([param.numel() for param in network.parameters()])))
 
@@ -403,7 +406,7 @@ def train(args):
         if sampler == 'random':
             data_sampler = random_sample(data_train, batch_size, 
                             step_batch_size=step_batch_size, unk_replace=unk_replace, 
-                            shuffle=True, target_recomp_prob=target_recomp_prob)
+                            shuffle=False, target_recomp_prob=target_recomp_prob)
         elif sampler == 'from_model':
             data_sampler = from_model_sample(single_network, data_train, batch_size, 
                               unk_replace=unk_replace, shuffle=False, device=device)
