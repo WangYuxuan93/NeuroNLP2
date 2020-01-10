@@ -465,7 +465,6 @@ class GraphAttentionEmbeddings(nn.Module):
         """
         seq_length = input_tensor.size(1)
         batch_size = input_tensor.size(0)
-
         input_tensor = self.input_layer(input_tensor)
         position_ids = torch.arange(seq_length, dtype=torch.long, device=input_tensor.device)
         position_ids = position_ids.unsqueeze(0).expand(batch_size,-1)

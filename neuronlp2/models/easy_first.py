@@ -35,13 +35,13 @@ class EasyFirstV2(nn.Module):
         self.pos_embed = nn.Embedding(num_pos, pos_dim, _weight=embedd_pos, padding_idx=1) if pos else None
         if use_char:
             self.char_embed = nn.Embedding(num_chars, char_dim, _weight=embedd_char, padding_idx=1)
-            self.char_cnn = CharCNN(2, char_dim, char_dim, hidden_channels=char_dim * 4, activation=activation).to(device)
+            self.char_cnn = CharCNN(2, char_dim, char_dim, hidden_channels=char_dim * 4, activation=activation)
         else:
             self.char_embed = None
             self.char_cnn = None
 
-        self.dropout_in = nn.Dropout2d(p=p_in).to(device)
-        self.dropout_out = nn.Dropout2d(p=p_out).to(device)
+        self.dropout_in = nn.Dropout2d(p=p_in)
+        self.dropout_out = nn.Dropout2d(p=p_out)
         self.num_labels = num_labels
 
         dim_enc = word_dim
@@ -52,10 +52,10 @@ class EasyFirstV2(nn.Module):
 
         self.input_encoder_type = input_encoder
         if input_encoder == 'Linear':
-            self.input_encoder = nn.Linear(dim_enc, hidden_size).to(device)
+            self.input_encoder = nn.Linear(dim_enc, hidden_size)
             out_dim = hidden_size
         elif input_encoder == 'FastLSTM':
-            self.input_encoder = VarFastLSTM(dim_enc, hidden_size, num_layers=num_layers, batch_first=True, bidirectional=True, dropout=p_rnn).to(device)
+            self.input_encoder = VarFastLSTM(dim_enc, hidden_size, num_layers=num_layers, batch_first=True, bidirectional=True, dropout=p_rnn)
             out_dim = hidden_size * 2
         elif input_encoder == 'None':
             self.input_encoder = None
@@ -79,28 +79,48 @@ class EasyFirstV2(nn.Module):
                                             input_self_attention_layer=input_self_attention_layer,
                                             num_input_attention_layers=num_input_attention_layers)
 
-        self.graph_attention = GraphAttentionModelV2(self.config).to(device)
+        self.graph_attention = GraphAttentionModelV2(self.config)
 
         out_dim = hidden_size
-        self.arc_h = nn.Linear(out_dim, arc_space).to(device)
-        self.arc_c = nn.Linear(out_dim, arc_space).to(device)
-        self.arc_attn = BiAffine_v2(arc_space, bias_x=True, bias_y=False).to(device)
+        self.arc_h = nn.Linear(out_dim, arc_space)
+        self.arc_c = nn.Linear(out_dim, arc_space)
+        self.arc_attn = BiAffine_v2(arc_space, bias_x=True, bias_y=False)
 
-        self.rel_h = nn.Linear(out_dim, type_space).to(device)
-        self.rel_c = nn.Linear(out_dim, type_space).to(device)
-        self.rel_attn = BiAffine_v2(type_space, n_out=self.num_labels, bias_x=True, bias_y=True).to(device)
+        self.rel_h = nn.Linear(out_dim, type_space)
+        self.rel_c = nn.Linear(out_dim, type_space)
+        self.rel_attn = BiAffine_v2(type_space, n_out=self.num_labels, bias_x=True, bias_y=True)
 
-        self.dep_dense = nn.Linear(out_dim, 1).to(device)
+        self.dep_dense = nn.Linear(out_dim, 1)
         feature_dim = 3 + self.use_top2_margin
-        self.recomp_dense = nn.Linear(feature_dim, 1).to(device)
+        self.recomp_dense = nn.Linear(feature_dim, 1)
 
         assert activation in ['elu', 'tanh']
         if activation == 'elu':
-            self.activation = nn.ELU(inplace=True).to(device)
+            self.activation = nn.ELU(inplace=True)
         else:
-            self.activation = nn.Tanh().to(device)
-        self.l2_loss = nn.MSELoss(reduction='mean').to(device)
-        self.criterion = nn.CrossEntropyLoss(reduction='none').to(device)
+            self.activation = nn.Tanh()
+        self.l2_loss = nn.MSELoss(reduction='mean')
+        self.criterion = nn.CrossEntropyLoss(reduction='none')
+
+        if torch.cuda.device_count() <= 1:
+            if use_char:
+                self.char_cnn.to(device)
+            self.dropout_in.to(device)
+            self.dropout_out.to(device)
+            if self.input_encoder is not None:
+                self.input_encoder.to(device)
+            self.graph_attention.to(device)
+            self.arc_h.to(device)
+            self.arc_c.to(device)
+            self.arc_attn.to(device)
+            self.rel_h.to(device)
+            self.rel_c.to(device)
+            self.rel_attn.to(device)
+            self.dep_dense.to(device)
+            self.recomp_dense.to(device)
+            self.activation.to(device)
+            self.l2_loss.to(device)
+            self.criterion.to(device)
         self.reset_parameters(embedd_word, embedd_char, embedd_pos)
 
     def reset_parameters(self, embedd_word, embedd_char, embedd_pos):
@@ -137,16 +157,16 @@ class EasyFirstV2(nn.Module):
             nn.init.xavier_uniform_(self.input_encoder.weight)
             nn.init.constant_(self.input_encoder.bias, 0.)
 
-    def _get_encoder_output(self, input_word, input_char, input_pos, graph_matrix, mask=None):
+    def _get_encoder_output(self, input_word, input_char, input_pos, graph_matrix, mask=None, device=torch.device('cpu')):
         # [batch, length, word_dim]
         word = self.word_embed(input_word)
         # apply dropout word on input
-        word = self.dropout_in(word).to(self.device)
+        word = self.dropout_in(word).to(device)
         enc = word
 
         if self.char_embed is not None:
             # [batch, length, char_length, char_dim]
-            char = self.char_cnn(self.char_embed(input_char).to(self.device))
+            char = self.char_cnn(self.char_embed(input_char).to(device))
             char = self.dropout_in(char)
             # concatenate word and char [batch, length, word_dim+char_filter]
             enc = torch.cat([enc, char], dim=2)
@@ -155,7 +175,7 @@ class EasyFirstV2(nn.Module):
             # [batch, length, pos_dim]
             pos = self.pos_embed(input_pos)
             # apply dropout on input
-            pos = self.dropout_in(pos).to(self.device)
+            pos = self.dropout_in(pos).to(device)
             enc = torch.cat([enc, pos], dim=2)
 
         # output from rnn [batch, length, hidden_size]
@@ -166,7 +186,6 @@ class EasyFirstV2(nn.Module):
                 output, _ = self.input_encoder(enc, mask)
         else:
             output = enc
-
         all_encoder_layers = self.graph_attention(output, graph_matrix, mask)
         # [batch, length, hidden_size]
         output = all_encoder_layers[-1]
@@ -205,8 +224,8 @@ class EasyFirstV2(nn.Module):
         return (arc_h, arc_c), (rel_h, rel_c)
 
 
-    def forward(self, input_word, input_char, input_pos, mask=None):
-        raise RuntimeError('EasyFirst does not implement forward')
+    #def forward(self, input_word, input_char, input_pos, mask=None):
+    #    raise RuntimeError('EasyFirst does not implement forward')
 
     def _get_top_arc_hidden_states(self, dep_hidden_states, head_hidden_states, arc_logp):
         """
@@ -340,7 +359,7 @@ class EasyFirstV2(nn.Module):
         return head_logp
 
 
-    def loss(self, input_word, input_char, input_pos, heads, rels, rc_gen_mask, 
+    def forward(self, input_word, input_char, input_pos, heads, rels, rc_gen_mask, 
              norc_gen_mask, mask=None, next_head_mask=None, device=torch.device('cpu'),
              debug=False):
         """
@@ -357,6 +376,7 @@ class EasyFirstV2(nn.Module):
         """
         # ----- preprocessing -----
         batch_size, seq_len = input_word.size()
+        device = heads.device
 
         # (batch, seq_len), seq mask, where at position 0 is 0
         root_mask = torch.arange(seq_len, device=device).gt(0).float().unsqueeze(0) * mask
@@ -366,7 +386,7 @@ class EasyFirstV2(nn.Module):
         # (batch, seq_len), the mask of generated heads
         generated_head_mask = rc_gen_mask
         if next_head_mask is None:
-            # (batch, seq_len), mask of heads to be generated
+            # (batch, seq_len), mask of heads t.cuda()o be generated
             ref_heads_mask = (1 - generated_head_mask) * root_mask
         else:
             ref_heads_mask = next_head_mask
@@ -426,7 +446,7 @@ class EasyFirstV2(nn.Module):
             gen_heads_onehot = torch.cat([rc_gen_heads_onehot, norc_gen_heads_onehot], dim=0)
             mask_ = torch.cat([root_mask,root_mask], dim=0)
             # (2*batch, seq_len, hidden_size)
-            encoder_output = self._get_encoder_output(input_word_, input_char_, input_pos_, gen_heads_onehot, mask=mask_)
+            encoder_output = self._get_encoder_output(input_word_, input_char_, input_pos_, gen_heads_onehot, mask=mask_, device=device)
             # (batch, seq_len, hidden_size)
             rc_encoder_output, norc_encoder_output = encoder_output.split(batch_size, dim=0)
             arc, rel = self._mlp(encoder_output)
@@ -440,8 +460,8 @@ class EasyFirstV2(nn.Module):
             rc_rel_c, norc_rel_c = rel_c.split(batch_size, dim=0)
         else:
             # (batch, seq_len, hidden_size)
-            rc_encoder_output = self._get_encoder_output(input_word, input_char, input_pos, rc_gen_heads_onehot, mask=root_mask)
-            norc_encoder_output = self._get_encoder_output(input_word, input_char, input_pos, norc_gen_heads_onehot, mask=root_mask)
+            rc_encoder_output = self._get_encoder_output(input_word, input_char, input_pos, rc_gen_heads_onehot, mask=root_mask, device=device)
+            norc_encoder_output = self._get_encoder_output(input_word, input_char, input_pos, norc_gen_heads_onehot, mask=root_mask, device=device)
             #print ("rc_encoder_output:\n",rc_encoder_output)
             norc_arc, norc_rel = self._mlp(norc_encoder_output)
             norc_arc_h, norc_arc_c = norc_arc
@@ -529,7 +549,7 @@ class EasyFirstV2(nn.Module):
         #loss_rel = 0.5*norc_rel_loss + 0.5*rc_rel_loss
         loss_rel = rc_rel_loss
 
-        return loss_arc, loss_rel, loss_recomp
+        return loss_arc.unsqueeze(0), loss_rel.unsqueeze(0), loss_recomp.unsqueeze(0)
 
 
     def _decode_rels(self, out_type, heads, leading_symbolic):
@@ -697,7 +717,7 @@ class EasyFirstV2(nn.Module):
         while True:
             # ----- encoding -----
             # (batch, seq_len, hidden_size)
-            encoder_output = self._get_encoder_output(input_word, input_char, input_pos, gen_heads_onehot, mask=root_mask)
+            encoder_output = self._get_encoder_output(input_word, input_char, input_pos, gen_heads_onehot, mask=root_mask, device=device)
             # ----- compute arc probs -----
             # compute arc logp for no recompute generate mask
             arc, type = self._mlp(encoder_output)
@@ -1144,7 +1164,7 @@ class EasyFirst(nn.Module):
         return arc_logp, recomp_logp
 
 
-    def loss(self, input_word, input_char, input_pos, heads, rels, recomps, gen_heads,  
+    def forward(self, input_word, input_char, input_pos, heads, rels, recomps, gen_heads,  
              mask=None, next_head=None, device=torch.device('cpu')):
         """
         Input:

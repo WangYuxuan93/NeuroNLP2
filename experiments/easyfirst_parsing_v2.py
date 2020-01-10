@@ -59,12 +59,14 @@ def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_
     accum_recomp_freq = 0.0
     n_step = 0
     for data in iterate_data(data, batch_size):
-        #words = data['WORD'].to(device)
-        #chars = data['CHAR'].to(device)
-        #postags = data['POS'].to(device)
-        words = data['WORD']
-        chars = data['CHAR']
-        postags = data['POS']
+        if torch.cuda.device_count() > 1:
+            words = data['WORD'].to(device)
+            chars = data['CHAR'].to(device)
+            postags = data['POS'].to(device)
+        else:
+            words = data['WORD']
+            chars = data['CHAR']
+            postags = data['POS']
         heads = data['HEAD'].numpy()
         types = data['TYPE'].numpy()
         lengths = data['LENGTH'].numpy()
@@ -296,14 +298,16 @@ def train(args):
                            input_encoder=input_encoder, num_layers=num_layers, p_rnn=p_rnn,
                            input_self_attention_layer=input_self_attention_layer,
                            num_input_attention_layers=num_input_attention_layers)
+        if fine_tune:
+            logger.info("Fine-tuning: Loading model from %s" % model_name)
+            network.load_state_dict(torch.load(model_name))
 
         logger.info("GPU Number: %d" % num_gpu)
         if num_gpu > 1:
             logger.info("Using Data Parallel")
             network = torch.nn.DataParallel(network)
-        if fine_tune:
-            logger.info("Fine-tuning: Loading model from %s" % model_name)
-            network.load_state_dict(torch.load(model_name))
+            network.to(device)
+        single_network = network if num_gpu <= 1 else network.module
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -401,17 +405,19 @@ def train(args):
                             step_batch_size=step_batch_size, unk_replace=unk_replace, 
                             shuffle=True, target_recomp_prob=target_recomp_prob)
         elif sampler == 'from_model':
-            data_sampler = from_model_sample(network, data_train, batch_size, 
+            data_sampler = from_model_sample(single_network, data_train, batch_size, 
                               unk_replace=unk_replace, shuffle=False, device=device)
         for step, data in enumerate(data_sampler):
             #print ('number in batch:',len(sub_data['WORD']))
             optimizer.zero_grad()
-            #words = sub_data['WORD'].to(device)
-            #chars = sub_data['CHAR'].to(device)
-            #postags = sub_data['POS'].to(device)
-            words = data['WORD']
-            chars = data['CHAR']
-            postags = data['POS']
+            if num_gpu > 1:
+                words = data['WORD'].to(device)
+                chars = data['CHAR'].to(device)
+                postags = data['POS'].to(device)
+            else:
+                words = data['WORD']
+                chars = data['CHAR']
+                postags = data['POS']
             heads = data['HEAD'].to(device)
             nbatch = words.size(0)
 
@@ -426,9 +432,12 @@ def train(args):
             else:
                 next_head_mask = None
             nwords = masks.sum() - nbatch
-            loss_arc, loss_rel, loss_recomp = network.loss(words, chars, postags, heads, types, 
+            loss_arc, loss_rel, loss_recomp = network(words, chars, postags, heads, types, 
                                                 recomp_gen_mask, no_recmp_gen_mask, 
                                                 mask=masks, next_head_mask=next_head_mask, device=device)
+            loss_arc = loss_arc.mean()
+            loss_rel = loss_rel.mean()
+            loss_recomp = loss_recomp.mean()
             loss = 0.5 *((1.0 - loss_interpolation) * loss_arc + loss_interpolation * loss_rel) + loss_recomp
             #if loss_ty_token:
             #    loss = loss_total.div(nwords)
@@ -490,8 +499,8 @@ def train(args):
                 gold_filename = os.path.join(result_path, 'gold_dev%d' % epoch)
                 #gold_writer.start(gold_filename)
 
-                print('Evaluating dev:')
-                dev_stats, dev_stats_nopunct, dev_stats_root = eval(data_dev, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam, get_head_by_layer=args.get_head_by_layer)
+                print('Evaluating dev:') 
+                dev_stats, dev_stats_nopunct, dev_stats_root = eval(data_dev, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam, get_head_by_layer=args.get_head_by_layer)
 
                 pred_writer.close()
                 #gold_writer.close()
@@ -531,7 +540,7 @@ def train(args):
                     #gold_writer.start(gold_filename)
 
                     print('Evaluating test:')
-                    test_stats, test_stats_nopunct, test_stats_root = eval(data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam, get_head_by_layer=args.get_head_by_layer)
+                    test_stats, test_stats_nopunct, test_stats_root = eval(data_test, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam, get_head_by_layer=args.get_head_by_layer)
 
                     test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total, test_recomp_freq = test_stats
                     test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
@@ -570,7 +579,7 @@ def train(args):
 
                 if patient >= reset:
                     logger.info('reset optimizer momentums')
-                    network.load_state_dict(torch.load(model_name, map_location=device))
+                    single_network.load_state_dict(torch.load(model_name, map_location=device))
                     scheduler.reset_state()
                     patient = 0
 
