@@ -10,6 +10,7 @@ from neuronlp2.nn import TreeCRF, VarGRU, VarRNN, VarLSTM, VarFastLSTM
 from neuronlp2.nn import BiAffine, BiAffine_v2, BiLinear, CharCNN
 from neuronlp2.tasks import parser
 from neuronlp2.nn.transformer import GraphAttentionConfig, GraphAttentionModel, GraphAttentionModelV2
+from neuronlp2.nn.transformer import SelfAttentionConfig, SelfAttentionModel
 
 
 
@@ -59,6 +60,19 @@ class EasyFirstV2(nn.Module):
         elif input_encoder == 'FastLSTM':
             self.input_encoder = VarFastLSTM(dim_enc, hidden_size, num_layers=num_layers, batch_first=True, bidirectional=True, dropout=p_rnn)
             out_dim = hidden_size * 2
+        elif input_encoder == 'Transformer':
+            self.config = SelfAttentionConfig(input_size=dim_enc,
+                                        hidden_size=hidden_size,
+                                        num_hidden_layers=num_layers,
+                                        num_attention_heads=num_attention_heads,
+                                        intermediate_size=intermediate_size,
+                                        hidden_act="gelu",
+                                        hidden_dropout_prob=hidden_dropout_prob,
+                                        attention_probs_dropout_prob=attention_probs_dropout_prob,
+                                        max_position_embeddings=256,
+                                        initializer_range=0.02)
+            self.input_encoder = SelfAttentionModel(self.config)
+            out_dim = hidden_size
         elif input_encoder == 'None':
             self.input_encoder = None
             out_dim = dim_enc
@@ -186,6 +200,10 @@ class EasyFirstV2(nn.Module):
                 output = self.input_encoder(enc)
             elif self.input_encoder_type == 'FastLSTM':
                 output, _ = self.input_encoder(enc, mask)
+            elif self.input_encoder_type == 'Transformer':
+                all_encoder_layers = self.input_encoder(enc, mask)
+                # [batch, length, hidden_size]
+                output = all_encoder_layers[-1]
         else:
             output = enc
         all_encoder_layers = self.graph_attention(output, graph_matrix, mask)

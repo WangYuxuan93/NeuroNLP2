@@ -320,7 +320,7 @@ def train(args):
     model = "{}-{}".format(model_type, mode)
     logger.info("Network: %s, hidden=%d, act=%s" % (model, hidden_size, activation))
     logger.info("dropout(in, out, hidden, att, graph_att): %s(%.2f, %.2f, %.2f, %.2f, %.2f)" % ('variational', p_in, p_out, p_hid, p_att, p_graph_att))
-    logger.info("Input Encoder Type: %s" % input_encoder)
+    logger.info("Input Encoder Type: %s (layer: %d)" % (input_encoder, num_layers))
     logger.info("Use Input Self Attention Layer: %s (layer: %d)" % (input_self_attention_layer, num_input_attention_layers))
     logger.info("Use Top Self Attention Layer: %s" % extra_self_attention_layer)
     logger.info("Maximize All Unencoded Arcs for No Recompute: %s" % maximize_unencoded_arcs_for_norc)
