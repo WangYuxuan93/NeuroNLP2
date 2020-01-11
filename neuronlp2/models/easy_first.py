@@ -435,7 +435,7 @@ class EasyFirstV2(nn.Module):
         # (batch, seq_len, seq_len)
         heads_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=device)
         heads_3D.scatter_(-1, heads.unsqueeze(-1), 1)
-        heads_3D = (heads_3D * mask_3D).int()
+        heads_3D = (heads_3D * mask_3D).long()
 
         #print ('mask:\n',mask)
         #print ("root_mask:\n",root_mask)
