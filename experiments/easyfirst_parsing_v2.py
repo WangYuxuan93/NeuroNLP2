@@ -438,6 +438,7 @@ def train(args):
             else:
                 next_head_mask = None
             nwords = masks.sum() - nbatch
+            network.train()
             loss_arc, loss_rel, loss_recomp = network(words, chars, postags, heads, types, 
                                                 recomp_gen_mask, no_recmp_gen_mask, 
                                                 mask=masks, next_head_mask=next_head_mask, device=device)

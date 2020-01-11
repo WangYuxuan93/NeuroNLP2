@@ -185,6 +185,7 @@ def sample_generate_order(batch, lengths, target_recomp_prob=0.25, recomp_in_pre
 def from_model_sample(network, data, batch_size, unk_replace=0., shuffle=False, 
                       device=torch.device('cpu'), debug=False):
     data_tensor, bucket_sizes = data
+    network.eval()
 
     bucket_indices = np.arange(len(bucket_sizes))
     if shuffle:
@@ -226,9 +227,14 @@ def from_model_sample(network, data, batch_size, unk_replace=0., shuffle=False,
             batch = {'WORD': words[excerpt, :batch_length], 'LENGTH': lengths}
             batch.update({key: field[excerpt, :batch_length] for key, field in data.items() if key in basic_keys})
             # pre-process the input
-            input_word = batch['WORD']#.to(device)
-            input_char = batch['CHAR']#.to(device)
-            input_pos = batch['POS']#.to(device)
+            if torch.cuda.device_count() > 1:
+                input_word = batch['WORD'].to(device)
+                input_char = batch['CHAR'].to(device)
+                input_pos = batch['POS'].to(device)
+            else:
+                input_word = batch['WORD']#.to(device)
+                input_char = batch['CHAR']#.to(device)
+                input_pos = batch['POS']#.to(device)
             gold_heads = batch['HEAD'].to(device)
             mask = batch['MASK'].to(device)
             sampled_batch = network.inference(input_word, input_char, input_pos, gold_heads, 
