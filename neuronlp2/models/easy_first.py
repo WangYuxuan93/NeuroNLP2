@@ -899,7 +899,7 @@ class EasyFirstV2(nn.Module):
             mask: (batch, seq_len)
         """
         batch_size, seq_len = input_word.size()
-        device = input_word.device
+        device = gold_heads.device
 
         # for neural network
         # (batch_size, seq_len)
