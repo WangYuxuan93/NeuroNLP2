@@ -4,6 +4,7 @@
   "char_dim": 100,
   "pos": true,
   "use_char": false,
+  "minimize_logp": true,
   "pos_dim": 100,
   "rnn_mode": "Transformer",
   "num_layers": 3,

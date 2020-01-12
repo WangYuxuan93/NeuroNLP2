@@ -247,12 +247,13 @@ def train(args):
         use_char = hyps['use_char']
         num_attention_heads = hyps['num_attention_heads']
         intermediate_size = hyps['intermediate_size']
+        minimize_logp = hyps['minimize_logp']
         network = DeepBiAffine(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                                mode, hidden_size, num_layers, num_types, arc_space, type_space,
                                embedd_word=word_table, embedd_char=char_table,
                                p_in=p_in, p_out=p_out, p_rnn=p_rnn, pos=use_pos, use_char=use_char,
                                activation=activation, num_attention_heads=num_attention_heads,
-                               intermediate_size=intermediate_size)
+                               intermediate_size=intermediate_size, minimize_logp=minimize_logp)
     elif model_type == 'NeuroMST':
         num_layers = hyps['num_layers']
         network = NeuroMST(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
@@ -282,6 +283,8 @@ def train(args):
     model = "{}-{}".format(model_type, mode)
     logger.info("Network: %s, num_layer=%s, hidden=%d, act=%s" % (model, num_layers, hidden_size, activation))
     logger.info("dropout(in, out, rnn): %s(%.2f, %.2f, %s)" % ('variational', p_in, p_out, p_rnn))
+    if model_type == 'DeepBiAffine':
+        logger.info("Minimize logp: %s" % minimize_logp)
     logger.info('# of Parameters: %d' % (sum([param.numel() for param in network.parameters()])))
 
     logger.info("Reading Data")

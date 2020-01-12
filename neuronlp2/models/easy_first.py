@@ -199,6 +199,7 @@ class EasyFirstV2(nn.Module):
             # apply dropout on input
             pos = self.dropout_in(pos).to(device)
             enc = torch.cat([enc, pos], dim=2)
+
         # output from rnn [batch, length, hidden_size]
         if self.input_encoder is not None:
             if self.input_encoder_type == 'Linear':
@@ -356,9 +357,9 @@ class EasyFirstV2(nn.Module):
             print ("head_logits:\n", head_logits)
 
         # mask invalid position to -inf for log_softmax
-        if mask is not None:
-            minus_mask = mask.eq(0).unsqueeze(2)
-            head_logits = head_logits.masked_fill(minus_mask, float('-inf'))
+        #if mask is not None:
+        #    minus_mask = mask.eq(0).unsqueeze(2)
+        #    head_logits = head_logits.masked_fill(minus_mask, float('-inf'))
   
         # (batch, seq_len, seq_len), log softmax over all possible arcs
         head_logp_given_dep = F.log_softmax(head_logits, dim=-1)
@@ -375,6 +376,7 @@ class EasyFirstV2(nn.Module):
         # (batch, seq_len)
         dep_logp = F.log_softmax(self.dep_dense(context_layer).squeeze(-1), dim=-1)
         if debug:
+            print ("head_logits:\n", head_logits)
             print ("head_logp_given_dep:\n", head_logp_given_dep)
             print ("dep_logits:\n",self.dep_dense(context_layer).squeeze(-1))
             print ("dep_logp:\n", dep_logp)
@@ -435,7 +437,7 @@ class EasyFirstV2(nn.Module):
         # (batch, seq_len, seq_len)
         heads_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=device)
         heads_3D.scatter_(-1, heads.unsqueeze(-1), 1)
-        heads_3D = (heads_3D * mask_3D).long()
+        heads_3D = (heads_3D * mask_3D).int()
 
         #print ('mask:\n',mask)
         #print ("root_mask:\n",root_mask)
@@ -899,7 +901,6 @@ class EasyFirstV2(nn.Module):
             mask: (batch, seq_len)
         """
         batch_size, seq_len = input_word.size()
-        device = gold_heads.device
 
         # for neural network
         # (batch_size, seq_len)
@@ -932,7 +933,7 @@ class EasyFirstV2(nn.Module):
         while True:
             # ----- encoding -----
             # (batch, seq_len, hidden_size)
-            _, encoder_output = self._get_encoder_output(input_word, input_char, input_pos, gen_heads_onehot, mask=root_mask, device=device)
+            _, encoder_output = self._get_encoder_output(input_word, input_char, input_pos, gen_heads_onehot, mask=root_mask)
             # ----- compute arc probs -----
             # compute arc logp for no recompute generate mask
             arc, type = self._mlp(encoder_output)

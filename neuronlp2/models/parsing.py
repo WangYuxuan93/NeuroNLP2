@@ -24,9 +24,10 @@ class DeepBiAffine(nn.Module):
                  hidden_size, num_layers, num_labels, arc_space, type_space,
                  embedd_word=None, embedd_char=None, embedd_pos=None, p_in=0.33, p_out=0.33, 
                  p_rnn=(0.33, 0.33), pos=True, use_char=False, activation='elu',
-                 num_attention_heads=8, intermediate_size=1024):
+                 num_attention_heads=8, intermediate_size=1024, minimize_logp=False):
         super(DeepBiAffine, self).__init__()
 
+        self.minimize_logp = minimize_logp
         self.word_embed = nn.Embedding(num_words, word_dim, _weight=embedd_word, padding_idx=1)
         self.pos_embed = nn.Embedding(num_pos, pos_dim, _weight=embedd_pos, padding_idx=1) if pos else None
         if use_char:
@@ -95,6 +96,8 @@ class DeepBiAffine(nn.Module):
         #self.bilinear = BiLinear(type_space, type_space, self.num_labels)
         self.bilinear = BiAffine_v2(type_space, n_out=self.num_labels, bias_x=True, bias_y=True)
 
+        self.dep_dense = nn.Linear(out_dim, 1)
+
         assert activation in ['elu', 'tanh']
         if activation == 'elu':
             self.activation = nn.ELU(inplace=True)
@@ -127,6 +130,9 @@ class DeepBiAffine(nn.Module):
         nn.init.constant_(self.type_h.bias, 0.)
         nn.init.xavier_uniform_(self.type_c.weight)
         nn.init.constant_(self.type_c.bias, 0.)
+
+        nn.init.xavier_uniform_(self.dep_dense.weight)
+        nn.init.constant_(self.dep_dense.bias, 0.)
 
         if self.input_encoder_type == 'Linear':
             nn.init.xavier_uniform_(self.input_encoder.weight)
@@ -166,6 +172,7 @@ class DeepBiAffine(nn.Module):
         # apply dropout for output
         # [batch, length, hidden_size] --> [batch, hidden_size, length] --> [batch, length, hidden_size]
         output = self.dropout_out(output.transpose(1, 2)).transpose(1, 2)
+        self.encoder_output = output
 
         # output size [batch, length, arc_space]
         arc_h = self.activation(self.arc_h(output))
@@ -199,6 +206,44 @@ class DeepBiAffine(nn.Module):
         out_arc = self.biaffine(arc[1], arc[0])
         return out_arc, type
 
+    def _get_arc_loss(self, logits, heads_3D, debug=False):
+        # in the original code, the i,j = 1 means i is head of j
+        # but in heads_3D, it means j is head of i
+        logits = logits.permute(0,2,1)
+        # (batch, seq_len, seq_len), log softmax over all possible arcs
+        head_logp_given_dep = F.log_softmax(logits, dim=-1)
+        
+        # compute dep logp
+        #if self.dep_prob_depend_on_head:
+            # (batch, seq_len, seq_len) * (batch, seq_len, hidden_size) 
+            # => (batch, seq_len, hidden_size)
+            # stop grads, prevent it from messing up head probs
+        #    context_layer = torch.matmul(logits.detach(), encoder_output.detach())
+        #else:
+        # (batch, seq_len, hidden_size)
+        context_layer = self.encoder_output.detach()
+        # (batch, seq_len)
+        dep_logp = F.log_softmax(self.dep_dense(context_layer).squeeze(-1), dim=-1)
+        # (batch, seq_len, seq_len)
+        head_logp = head_logp_given_dep + dep_logp.unsqueeze(2)
+        # (batch, seq_len)
+        ref_heads_logp = (head_logp * heads_3D).sum(dim=-1)
+        # (batch, seq_len)
+        loss_arc = - ref_heads_logp
+
+        if debug:
+            print ("logits:\n",logits)
+            print ("softmax:\n", torch.softmax(logits, dim=-1))
+            print ("heads_3D:\n", heads_3D)
+            print ("head_logp_given_dep:\n", head_logp_given_dep)
+            #print ("dep_logits:\n",self.dep_dense(context_layer).squeeze(-1))
+            print ("dep_logp:\n", dep_logp)
+            print ("head_logp:\n", head_logp)
+            print ("heads_logp*heads_3D:\n", head_logp * heads_3D)
+            print ("loss_arc:\n", loss_arc)
+
+        return loss_arc
+
     def loss(self, input_word, input_char, input_pos, heads, types, mask=None):
         # out_arc shape [batch, length_head, length_child]
         out_arc, out_type  = self(input_word, input_char, input_pos, mask=mask)
@@ -210,22 +255,30 @@ class DeepBiAffine(nn.Module):
         # compute output for type [batch, length, num_labels]
         #out_type = self.bilinear(type_h, type_c)
         batch_size, seq_len = input_word.size()
+        # (batch, seq_len), seq mask, where at position 0 is 0
+        root_mask = torch.arange(seq_len, device=heads.device).gt(0).float().unsqueeze(0) * mask
+        # (batch, seq_len, seq_len)
+        mask_3D = (root_mask.unsqueeze(-1) * mask.unsqueeze(1))
         # (batch, seq_len, seq_len)
         heads_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
         heads_3D.scatter_(-1, heads.unsqueeze(-1), 1)
+        heads_3D = heads_3D * mask_3D
         # (batch, seq_len, seq_len)
         types_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.long, device=heads.device)
         types_3D.scatter_(-1, heads.unsqueeze(-1), types.unsqueeze(-1))
         # (batch, n_rels, seq_len, seq_len)
         out_type = self.bilinear(type_c, type_h)
 
-        # mask invalid position to -inf for log_softmax
-        if mask is not None:
-            minus_mask = mask.eq(0).unsqueeze(2)
-            out_arc = out_arc.masked_fill(minus_mask, float('-inf'))
-
-        # loss_arc shape [batch, length_c]
-        loss_arc = self.criterion(out_arc, heads)
+        if self.minimize_logp:
+            # (batch, seq_len)
+            loss_arc = self._get_arc_loss(out_arc, heads_3D)
+        else:
+            # mask invalid position to -inf for log_softmax
+            if mask is not None:
+                minus_mask = mask.eq(0).unsqueeze(2)
+                out_arc = out_arc.masked_fill(minus_mask, float('-inf'))
+            # loss_arc shape [batch, length_c]
+            loss_arc = self.criterion(out_arc, heads)
         #loss_type = self.criterion(out_type.transpose(1, 2), types)
         loss_type = (self.criterion(out_type, types_3D) * heads_3D).sum(-1)
 
