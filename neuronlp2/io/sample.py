@@ -116,22 +116,25 @@ def sample_generate_order(batch, lengths, target_recomp_prob=0.25, recomp_in_pre
     # for every sentence
     for i in range(len(lengths)):
         seq_len = lengths[i]
-        n_recomp = int(seq_len * target_recomp_prob)
+        #n_recomp = int(seq_len * target_recomp_prob)
         arc_order = np.arange(1,seq_len)
         np.random.shuffle(arc_order)
-        recomp_pos = np.arange(1,seq_len-1)
-        np.random.shuffle(recomp_pos)
-        assert len(recomp_pos) >= n_recomp
+        #recomp_pos = np.arange(1,seq_len-1)
+        #np.random.shuffle(recomp_pos)
+        #if len(recomp_pos) < n_recomp:
+        #    print (seq_len, len(recomp_pos), n_recomp)
+        #assert len(recomp_pos) >= n_recomp
         sample_order = []
         for j, dep_id in enumerate(arc_order):
-            if j in recomp_pos[:n_recomp]:
+            #if j in recomp_pos[:n_recomp]:
+            if np.random.rand() < target_recomp_prob:
                 sample_order.append(RECOMP)
                 sample_order.append(dep_id)
             else:
                 sample_order.append(dep_id)
         if debug:
             print ("new_order:", arc_order)
-            print ("recomp_pos:",recomp_pos)
+            #print ("recomp_pos:",recomp_pos)
             print ("sample_order:",sample_order)
         n_step = 0
         zero_mask = np.zeros([batch_length], dtype=np.int32)
