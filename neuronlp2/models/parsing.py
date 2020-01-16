@@ -67,6 +67,12 @@ class DeepBiAffine(nn.Module):
         self.dropout_out = nn.Dropout2d(p=p_out)
         self.num_labels = num_labels
 
+        dim_enc = word_dim
+        if use_char:
+            dim_enc += char_dim
+        if pos:
+            dim_enc += pos_dim
+
         self.input_encoder_type = rnn_mode
         if rnn_mode == 'RNN':
             RNN = VarRNN
@@ -77,7 +83,7 @@ class DeepBiAffine(nn.Module):
         elif rnn_mode == 'GRU':
             RNN = VarGRU
         elif rnn_mode == 'Linear':
-            self.position_embedding_layer = PositionEmbeddingLayer(word_dim, dropout_prob=0, 
+            self.position_embedding_layer = PositionEmbeddingLayer(dim_enc, dropout_prob=0, 
                                                                 max_position_embeddings=256)
             print ("Using Linear Encoder!")
             #self.linear_encoder = True
@@ -85,14 +91,9 @@ class DeepBiAffine(nn.Module):
             print ("Using Transformer Encoder!")
         else:
             raise ValueError('Unknown RNN mode: %s' % rnn_mode)
+        print ("Use POS tag: %s" % pos)
         print ("Use Char: %s" % use_char)
         print ("Input Encoder Type: %s" % self.input_encoder_type)
-
-        dim_enc = word_dim
-        if use_char:
-            dim_enc += char_dim
-        if pos:
-            dim_enc += pos_dim
 
         if self.input_encoder_type == 'Linear':
             self.input_encoder = nn.Linear(dim_enc, hidden_size)

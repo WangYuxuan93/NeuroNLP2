@@ -327,9 +327,10 @@ def train(args):
     logger.info("Use Top Self Attention Layer: %s" % extra_self_attention_layer)
     logger.info("Maximize All Unencoded Arcs for No Recompute: %s" % maximize_unencoded_arcs_for_norc)
     logger.info("Encode All Arcs for Relation Prediction: %s" % encode_all_arc_for_rel)
+    logger.info("Use POS tag: %s" % use_pos)
+    logger.info("Use Char: %s" % use_char)
     logger.info("Input Encoder Type: %s" % input_encoder)
     logger.info('# of Parameters: %d' % (sum([param.numel() for param in network.parameters()])))
-
     logger.info("Reading Data")
 
     data_train = conllx_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,

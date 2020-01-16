@@ -58,7 +58,7 @@ class EasyFirstV2(nn.Module):
         self.input_encoder_type = input_encoder
         if input_encoder == 'Linear':
             self.input_encoder = nn.Linear(dim_enc, hidden_size)
-            self.position_embedding_layer = PositionEmbeddingLayer(word_dim, dropout_prob=0, 
+            self.position_embedding_layer = PositionEmbeddingLayer(dim_enc, dropout_prob=0, 
                                                                 max_position_embeddings=256)
             out_dim = hidden_size
         elif input_encoder == 'FastLSTM':
