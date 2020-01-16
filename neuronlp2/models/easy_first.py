@@ -904,6 +904,7 @@ class EasyFirstV2(nn.Module):
             mask: (batch, seq_len)
         """
         batch_size, seq_len = input_word.size()
+        device = gold_heads.device
 
         # for neural network
         # (batch_size, seq_len)
@@ -936,7 +937,7 @@ class EasyFirstV2(nn.Module):
         while True:
             # ----- encoding -----
             # (batch, seq_len, hidden_size)
-            _, encoder_output = self._get_encoder_output(input_word, input_char, input_pos, gen_heads_onehot, mask=root_mask)
+            _, encoder_output = self._get_encoder_output(input_word, input_char, input_pos, gen_heads_onehot, mask=root_mask, device=device)
             # ----- compute arc probs -----
             # compute arc logp for no recompute generate mask
             arc, type = self._mlp(encoder_output)
