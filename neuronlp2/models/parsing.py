@@ -19,6 +19,32 @@ class PriorOrder(Enum):
     LEFT2RIGTH = 2
 
 
+class PositionEmbeddingLayer(nn.Module):
+    def __init__(self, embedding_size, dropout_prob=0, max_position_embeddings=256):
+        super(PositionEmbeddingLayer, self).__init__()
+        """Adding position embeddings to input layer
+        """
+        self.position_embeddings = nn.Embedding(max_position_embeddings, embedding_size)
+        self.dropout = nn.Dropout(dropout_prob)
+
+    def forward(self, input_tensor, debug=False):
+        """
+        input_tensor: (batch, seq_len, input_size)
+        """
+        seq_length = input_tensor.size(1)
+        batch_size = input_tensor.size(0)
+        position_ids = torch.arange(seq_length, dtype=torch.long, device=input_tensor.device)
+        position_ids = position_ids.unsqueeze(0).expand(batch_size,-1)
+        position_embeddings = self.position_embeddings(position_ids)
+        embeddings = input_tensor + position_embeddings
+        embeddings = self.dropout(embeddings)
+        if debug:
+            print ("input_tensor:",input_tensor)
+            print ("position_embeddings:",position_embeddings)
+            print ("embeddings:",embeddings)
+        return embeddings
+
+
 class DeepBiAffine(nn.Module):
     def __init__(self, word_dim, num_words, char_dim, num_chars, pos_dim, num_pos, rnn_mode, 
                  hidden_size, num_layers, num_labels, arc_space, type_space,
@@ -51,6 +77,8 @@ class DeepBiAffine(nn.Module):
         elif rnn_mode == 'GRU':
             RNN = VarGRU
         elif rnn_mode == 'Linear':
+            self.position_embedding_layer = PositionEmbeddingLayer(word_dim, dropout_prob=0, 
+                                                                max_position_embeddings=256)
             print ("Using Linear Encoder!")
             #self.linear_encoder = True
         elif rnn_mode == 'Transformer':
@@ -161,6 +189,7 @@ class DeepBiAffine(nn.Module):
 
         # output from rnn [batch, length, hidden_size]
         if self.input_encoder_type == 'Linear':
+            enc = self.position_embedding_layer(enc)
             output = self.input_encoder(enc)
         elif self.input_encoder_type == 'Transformer':
             all_encoder_layers = self.input_encoder(enc, mask)

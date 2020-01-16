@@ -11,7 +11,7 @@ from neuronlp2.nn import BiAffine, BiAffine_v2, BiLinear, CharCNN
 from neuronlp2.tasks import parser
 from neuronlp2.nn.transformer import GraphAttentionConfig, GraphAttentionModel, GraphAttentionModelV2
 from neuronlp2.nn.transformer import SelfAttentionConfig, SelfAttentionModel
-
+from neuronlp2.models.parsing import PositionEmbeddingLayer
 
 
 class EasyFirstV2(nn.Module):
@@ -58,6 +58,8 @@ class EasyFirstV2(nn.Module):
         self.input_encoder_type = input_encoder
         if input_encoder == 'Linear':
             self.input_encoder = nn.Linear(dim_enc, hidden_size)
+            self.position_embedding_layer = PositionEmbeddingLayer(word_dim, dropout_prob=0, 
+                                                                max_position_embeddings=256)
             out_dim = hidden_size
         elif input_encoder == 'FastLSTM':
             self.input_encoder = VarFastLSTM(dim_enc, hidden_size, num_layers=num_layers, batch_first=True, bidirectional=True, dropout=p_rnn)
@@ -203,6 +205,7 @@ class EasyFirstV2(nn.Module):
         # output from rnn [batch, length, hidden_size]
         if self.input_encoder is not None:
             if self.input_encoder_type == 'Linear':
+                enc = self.position_embedding_layer(enc)
                 input_encoder_output = self.input_encoder(enc)
             elif self.input_encoder_type == 'FastLSTM':
                 input_encoder_output, _ = self.input_encoder(enc, mask)
