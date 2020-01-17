@@ -676,6 +676,8 @@ class EasyFirstV2(nn.Module):
         new_heads_onehot = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=device)
         null_arc_adder = torch.zeros_like(new_heads_onehot)
         rc_probs_list = []
+        if random_recomp:
+            prev_rc_probs = torch.zeros(batch_size, dtype=torch.float, device=device)
         for i in range(seq_len):
             # (batch, seq_len*seq_len)
             flatten_logp = masked_head_logp.view([batch_size, -1])
@@ -688,6 +690,10 @@ class EasyFirstV2(nn.Module):
                 rand_vec = torch.rand(batch_size).to(device)
                 rc_probs = torch.where(rand_vec < recomp_prob, torch.ones_like(rand_vec), 
                                         torch.zeros_like(rand_vec))
+                # once a sentence decide to recompute, 
+                # make sure it will not generate anymore arc
+                rc_probs = torch.where(prev_rc_probs.eq(1), prev_rc_probs, rc_probs)
+                prev_rc_probs = rc_probs
             else:
                 # ----- compute recompute prob -----
                 features = []
