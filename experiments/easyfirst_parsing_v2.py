@@ -41,7 +41,8 @@ def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgra
 
 
 def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, 
-        device, beam=1, batch_size=256, get_head_by_layer=False):
+        device, beam=1, batch_size=256, get_head_by_layer=False, random_recomp=False, 
+        recomp_prob=0.25):
     network.eval()
     accum_ucorr = 0.0
     accum_lcorr = 0.0
@@ -73,7 +74,8 @@ def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_
         masks = data['MASK'].to(device)
         #print (words)
         heads_pred, types_pred, recomp_freq, heads_by_layer = network.decode(words, chars, postags, mask=masks, 
-                                                device=device, get_head_by_layer=get_head_by_layer)
+                                                device=device, get_head_by_layer=get_head_by_layer, 
+                                                random_recomp=random_recomp, recomp_prob=recomp_prob)
         #print (heads_by_layer)
         n_step += 1
         accum_recomp_freq += recomp_freq
@@ -262,6 +264,7 @@ def train(args):
     p_out = hyps['p_out']
     activation = hyps['activation']
     loss_interpolation = hyps['loss_interpolation']
+    recomp_ratio = hyps['recomp_ratio']
 
     num_gpu = torch.cuda.device_count()
 
@@ -343,6 +346,8 @@ def train(args):
 
     num_data = sum(data_train[1])
     logger.info("training: #training data: %d, batch: %d, unk replace: %.2f" % (num_data, batch_size, unk_replace))
+    if args.random_recomp:
+        logger.info("Randomly sample recomputation with prob (for eval): %s" % args.recomp_prob)
 
     pred_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, type_alphabet)
     gold_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, type_alphabet)
@@ -446,7 +451,7 @@ def train(args):
             loss_arc = loss_arc.mean()
             loss_rel = loss_rel.mean()
             loss_recomp = loss_recomp.mean()
-            loss = 0.5 *((1.0 - loss_interpolation) * loss_arc + loss_interpolation * loss_rel) + loss_recomp
+            loss = 0.5 *((1.0 - loss_interpolation) * loss_arc + loss_interpolation * loss_rel) + recomp_ratio * loss_recomp
             #if loss_ty_token:
             #    loss = loss_total.div(nwords)
             #else:
@@ -508,7 +513,9 @@ def train(args):
                 #gold_writer.start(gold_filename)
 
                 print('Evaluating dev:') 
-                dev_stats, dev_stats_nopunct, dev_stats_root = eval(data_dev, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam, get_head_by_layer=args.get_head_by_layer)
+                dev_stats, dev_stats_nopunct, dev_stats_root = eval(data_dev, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, 
+                                                                    beam=beam, get_head_by_layer=args.get_head_by_layer,
+                                                                    random_recomp=args.random_recomp, recomp_prob=args.recomp_prob)
 
                 pred_writer.close()
                 #gold_writer.close()
@@ -548,7 +555,9 @@ def train(args):
                     #gold_writer.start(gold_filename)
 
                     print('Evaluating test:')
-                    test_stats, test_stats_nopunct, test_stats_root = eval(data_test, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam, get_head_by_layer=args.get_head_by_layer)
+                    test_stats, test_stats_nopunct, test_stats_root = eval(data_test, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, 
+                                                                        beam=beam, get_head_by_layer=args.get_head_by_layer,
+                                                                        random_recomp=args.random_recomp, recomp_prob=args.recomp_prob)
 
                     test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total, test_recomp_freq = test_stats
                     test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
@@ -699,11 +708,14 @@ def parse(args):
     gold_filename = os.path.join(result_path, 'gold.txt')
     #gold_writer.start(gold_filename)
 
+    if args.random_recomp:
+        logger.info("Randomly sample recomputation with prob: %s" % args.recomp_prob)
     with torch.no_grad():
         print('Parsing...')
         start_time = time.time()
         eval(data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, 
-                device, beam, batch_size=args.batch_size, get_head_by_layer=args.get_head_by_layer)
+                device, beam, batch_size=args.batch_size, get_head_by_layer=args.get_head_by_layer,
+                random_recomp=args.random_recomp, recomp_prob=args.recomp_prob)
         print('Time: %.2fs' % (time.time() - start_time))
 
     pred_writer.close()
@@ -735,6 +747,8 @@ if __name__ == '__main__':
     args_parser.add_argument('--unk_replace', type=float, default=0., help='The rate to replace a singleton word with UNK')
     args_parser.add_argument('--freeze', action='store_true', help='frozen the word embedding (disable fine-tuning).')
     args_parser.add_argument('--get_head_by_layer', action='store_true', help='whether to print head by graph attention layer.')
+    args_parser.add_argument('--random_recomp', action='store_true', default=False, help='Whether to randomly sample recompute at test time.')
+    args_parser.add_argument('--recomp_prob', type=float, default=0.25, help='Probability for random sampling of recompute at test time.')
     args_parser.add_argument('--sampler', choices=['random', 'from_model'], help='Sample strategy')
     args_parser.add_argument('--punctuation', nargs='+', type=str, help='List of punctuations')
     args_parser.add_argument('--beam', type=int, default=1, help='Beam size for decoding')

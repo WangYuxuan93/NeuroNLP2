@@ -655,7 +655,7 @@ class EasyFirstV2(nn.Module):
 
 
     def _decode_one_step(self, head_logp, heads_mask, mask, device=torch.device('cpu'), 
-                            debug=False, get_order=False):
+                            debug=False, get_order=False, random_recomp=False, recomp_prob=0.25):
         """
         Input:
             head_logp: (batch, seq_len, seq_len)
@@ -677,36 +677,44 @@ class EasyFirstV2(nn.Module):
         null_arc_adder = torch.zeros_like(new_heads_onehot)
         rc_probs_list = []
         for i in range(seq_len):
-            # ----- compute recompute prob -----
-            features = []
             # (batch, seq_len*seq_len)
             flatten_logp = masked_head_logp.view([batch_size, -1])
             # (batch, 2), get top 2 logp
             top2_values, top2_indices = torch.topk(flatten_logp, k=2, dim=-1)
-            # (batch)
-            max_head_logp = top2_values[:,0]
-            # (batch)
-            second_head_logp = top2_values[:,1]
-            # feature: max head logp
-            features.append(max_head_logp.unsqueeze(-1))
-            # feature: sentence length
-            # (batch)
-            features.append(sent_lens)
-            # feature: number of new arcs after last recompute
-            num_new_arcs = new_heads_onehot.sum(dim=(1,2)).float()
-            # (batch)
-            features.append(num_new_arcs.unsqueeze(-1))
-
-            if self.use_top2_margin:
-                # feature: margin between top 2 head logp
+            
+            if random_recomp:
+                # ----- randomly generate recompute -----
                 # (batch)
-                top2_margin = max_head_logp - second_head_logp
-                features.append(top2_margin.unsqueeze(-1))
+                rand_vec = torch.rand(batch_size).to(device)
+                rc_probs = torch.where(rand_vec < recomp_prob, torch.ones_like(rand_vec), 
+                                        torch.zeros_like(rand_vec))
+            else:
+                # ----- compute recompute prob -----
+                features = []
+                # (batch)
+                max_head_logp = top2_values[:,0]
+                # (batch)
+                second_head_logp = top2_values[:,1]
+                # feature: max head logp
+                features.append(max_head_logp.unsqueeze(-1))
+                # feature: sentence length
+                # (batch)
+                features.append(sent_lens)
+                # feature: number of new arcs after last recompute
+                num_new_arcs = new_heads_onehot.sum(dim=(1,2)).float()
+                # (batch)
+                features.append(num_new_arcs.unsqueeze(-1))
 
-            # (batch, n_feature)
-            features = torch.cat(features, -1)
-            # (batch)
-            rc_probs = torch.sigmoid(self.recomp_dense(features)).squeeze(-1)
+                if self.use_top2_margin:
+                    # feature: margin between top 2 head logp
+                    # (batch)
+                    top2_margin = max_head_logp - second_head_logp
+                    features.append(top2_margin.unsqueeze(-1))
+
+                # (batch, n_feature)
+                features = torch.cat(features, -1)
+                # (batch)
+                rc_probs = torch.sigmoid(self.recomp_dense(features)).squeeze(-1)
             rc_probs_list.append(rc_probs)
 
             # ----- get top arc & update state -----
@@ -779,7 +787,7 @@ class EasyFirstV2(nn.Module):
 
 
     def decode(self, input_word, input_char, input_pos, mask=None, debug=False, device=torch.device('cpu'),
-                get_head_by_layer=False):
+                get_head_by_layer=False, random_recomp=False, recomp_prob=0.25):
         """
         Input:
             input_word: (batch, seq_len)
@@ -820,7 +828,8 @@ class EasyFirstV2(nn.Module):
             masked_head_logp = torch.where(logp_mask==1, head_logp.detach(), neg_inf_logp)
             # rc_probs_list: k* (batch), the probability of recompute after each arc generated
             # new_heads_onehot: (batch, seq_len, seq_len), newly generated arcs
-            rc_probs_list, new_heads_onehot, _ = self._decode_one_step(masked_head_logp, heads_mask, root_mask, device=device)
+            rc_probs_list, new_heads_onehot, _ = self._decode_one_step(masked_head_logp, heads_mask, root_mask, 
+                                                device=device, random_recomp=random_recomp, recomp_prob=recomp_prob)
             
             # prevent generating new arcs for rows that have heads
             # (batch, seq_len)
