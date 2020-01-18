@@ -42,7 +42,8 @@ def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgra
 
 def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, 
         device, beam=1, batch_size=256, get_head_by_layer=False, random_recomp=False, 
-        recomp_prob=0.25):
+        recomp_prob=0.25, write_to_tmp=True, prev_best_lcorr=0, prev_best_ucorr=0,
+        pred_filename=None):
     network.eval()
     accum_ucorr = 0.0
     accum_lcorr = 0.0
@@ -59,6 +60,15 @@ def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_
     accum_total_inst = 0.0
     accum_recomp_freq = 0.0
     n_step = 0
+
+    all_words = []
+    all_postags = []
+    all_heads_pred = []
+    all_types_pred = []
+    all_lengths = []
+    all_src_words = []
+    all_heads_by_layer = []
+
     for data in iterate_data(data, batch_size):
         if torch.cuda.device_count() > 1:
             words = data['WORD'].to(device)
@@ -82,8 +92,20 @@ def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_
 
         words = words.cpu().numpy()
         postags = postags.cpu().numpy()
-        pred_writer.write(words, postags, heads_pred, types_pred, lengths, symbolic_root=True, src_words=data['SRC'], 
+
+        if write_to_tmp:
+            pred_writer.write(words, postags, heads_pred, types_pred, lengths, symbolic_root=True, src_words=data['SRC'], 
                             heads_by_layer=heads_by_layer)
+        else:
+            all_words.append(words)
+            all_postags.append(postags)
+            all_heads_pred.append(heads_pred)
+            all_types_pred.append(types_pred)
+            all_lengths.append(lengths)
+            all_src_words.append(data['SRC'])
+            all_heads_by_layer.append(heads_by_layer)
+
+        
         #gold_writer.write(words, postags, heads, types, lengths, symbolic_root=True)
 
         stats, stats_nopunc, stats_root, num_inst = parser.eval(words, postags, heads_pred, types_pred, heads, types,
@@ -118,6 +140,24 @@ def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_
         accum_ucomlpete_nopunc * 100 / accum_total_inst, accum_lcomplete_nopunc * 100 / accum_total_inst))
     print('Root: corr: %d, total: %d, acc: %.2f%%' %(accum_root_corr, accum_total_root, accum_root_corr * 100 / accum_total_root))
     print ('AVG Recompute frequency: %.2f' % (accum_recomp_freq / n_step))
+    
+    if not write_to_tmp:
+        if prev_best_lcorr < accum_lcorr_nopunc or (prev_best_lcorr == accum_lcorr_nopunc and prev_best_ucorr < accum_ucorr_nopunc):
+            print ('### Saving New Best File ... ###')
+            pred_writer.start(pred_filename)
+            words = np.concatenate(all_words, axis=0)
+            postags = np.concatenate(all_postags, axis=0)
+            heads_pred = np.concatenate(all_postags, axis=0)
+            types_pred = np.concatenate(all_types_pred, axis=0)
+            lengths = np.concatenate(all_lengths, axis=0)
+            src_words = np.concatenate(all_src_words, axis=0)
+            if get_head_by_layer:
+                heads_by_layer = np.concatenate(all_heads_by_layer, axis=0)
+            else:
+                heads_by_layer = None
+            pred_writer.write(words, postags, heads_pred, types_pred, lengths, symbolic_root=True, src_words=data['SRC'], 
+                            heads_by_layer=heads_by_layer)
+
     return (accum_ucorr, accum_lcorr, accum_ucomlpete, accum_lcomplete, accum_total, accum_recomp_freq/n_step), \
            (accum_ucorr_nopunc, accum_lcorr_nopunc, accum_ucomlpete_nopunc, accum_lcomplete_nopunc, accum_total_nopunc), \
            (accum_root_corr, accum_total_root, accum_total_inst)
@@ -508,14 +548,16 @@ def train(args):
             # evaluate performance on dev data
             with torch.no_grad():
                 pred_filename = os.path.join(result_path, 'pred_dev%d' % epoch)
-                pred_writer.start(pred_filename)
-                gold_filename = os.path.join(result_path, 'gold_dev%d' % epoch)
+                #pred_writer.start(pred_filename)
+                #gold_filename = os.path.join(result_path, 'gold_dev%d' % epoch)
                 #gold_writer.start(gold_filename)
 
                 print('Evaluating dev:') 
                 dev_stats, dev_stats_nopunct, dev_stats_root = eval(data_dev, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, 
                                                                     beam=beam, get_head_by_layer=args.get_head_by_layer,
-                                                                    random_recomp=args.random_recomp, recomp_prob=args.recomp_prob)
+                                                                    random_recomp=args.random_recomp, recomp_prob=args.recomp_prob,
+                                                                    write_to_tmp=False, prev_best_lcorr=best_lcorrect_nopunc,
+                                                                    prev_best_ucorr=best_ucorrect_nopunc, pred_filename=pred_filename)
 
                 pred_writer.close()
                 #gold_writer.close()
