@@ -42,7 +42,7 @@ def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgra
 
 def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, 
         device, beam=1, batch_size=256, get_head_by_layer=False, random_recomp=False, 
-        recomp_prob=0.25):
+        recomp_prob=0.25, is_parse=False):
     network.eval()
     accum_ucorr = 0.0
     accum_lcorr = 0.0
@@ -60,7 +60,7 @@ def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_
     accum_recomp_freq = 0.0
     n_step = 0
     for data in iterate_data(data, batch_size):
-        if torch.cuda.device_count() > 1:
+        if is_parse or torch.cuda.device_count() > 1:
             words = data['WORD'].to(device)
             chars = data['CHAR'].to(device)
             postags = data['POS'].to(device)
@@ -694,6 +694,7 @@ def parse(args):
     network = network.to(device)
     network.load_state_dict(torch.load(model_name, map_location=device))
     model = "{}-{}".format(model_type, mode)
+    print ("Recompute Features Weight: [logp(max), sent_lens, new_arcs, (top margin)] ",network.recomp_dense.weight)
     logger.info("Network: %s, hidden=%d, act=%s" % (model, hidden_size, activation))
     
     logger.info("Reading Data")
@@ -703,9 +704,10 @@ def parse(args):
     beam = args.beam
     pred_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, type_alphabet)
     gold_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, type_alphabet)
-    pred_filename = os.path.join(result_path, 'pred.txt')
+    #pred_filename = os.path.join(result_path, 'pred.txt')
+    pred_filename = args.output_filename
     pred_writer.start(pred_filename)
-    gold_filename = os.path.join(result_path, 'gold.txt')
+    #gold_filename = os.path.join(result_path, 'gold.txt')
     #gold_writer.start(gold_filename)
 
     if args.random_recomp:
@@ -715,7 +717,7 @@ def parse(args):
         start_time = time.time()
         eval(data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, 
                 device, beam, batch_size=args.batch_size, get_head_by_layer=args.get_head_by_layer,
-                random_recomp=args.random_recomp, recomp_prob=args.recomp_prob)
+                random_recomp=args.random_recomp, recomp_prob=args.recomp_prob, is_parse=True)
         print('Time: %.2fs' % (time.time() - start_time))
 
     pred_writer.close()
@@ -727,6 +729,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--mode', choices=['train', 'parse'], required=True, help='processing mode')
     args_parser.add_argument('--fine_tune', action='store_true', default=False, help='Whether to fine_tune?')
     args_parser.add_argument('--config', type=str, help='config file')
+    args_parser.add_argument('--output_filename', type=str, help='output filename for parse')
     args_parser.add_argument('--num_epochs', type=int, default=200, help='Number of training epochs')
     args_parser.add_argument('--batch_size', type=int, default=16, help='Number of sentences in each batch')
     args_parser.add_argument('--step_batch_size', type=int, default=16, help='Number of steps in each batch (for easyfirst parsing)')
