@@ -252,43 +252,8 @@ class EasyFirstV2(nn.Module):
 
         return (arc_h, arc_c), (rel_h, rel_c)
 
-
     #def forward(self, input_word, input_char, input_pos, mask=None):
     #    raise RuntimeError('EasyFirst does not implement forward')
-
-    def _get_top_arc_hidden_states(self, dep_hidden_states, head_hidden_states, arc_logp):
-        """
-        Gather the dep/head token hidden states of the top arc (based on predicted head logp)
-        Input:
-          dep_/head_hidden_sates: (batch, seq_len, hidden_size)
-          arc_logp: (batch, seq_len, seq_len), the log probability of every arc
-        """
-        batch_size, seq_len, hidden_size = dep_hidden_states.size()
-        # (batch, seq_len*seq_len)
-        flatten_logp = arc_logp.view([batch_size, -1])
-        # (batch)
-        values, flatten_max_indices = torch.max(flatten_logp, -1)
-        # (batch)
-        max_indices_dep = flatten_max_indices // seq_len
-        max_indices_head = flatten_max_indices % seq_len
-        #print ("arc_logp:\n",arc_logp)
-        #print ("dep:{}, head:{}".format(max_indices_dep, max_indices_head))
-        #print ("dep_hidden_states:\n",dep_hidden_states[:,:,:3])
-
-        ids_dep = max_indices_dep.unsqueeze(1).unsqueeze(2).expand(batch_size,1,hidden_size)
-        #print (id_dep)
-        # (batch, hidden_size)
-        selected_dep_hidden_states = dep_hidden_states.gather(dim=1, index=ids_dep).squeeze(1)
-        #print ("selected_dep_hidden_states:\n",selected_dep_hidden_states[:,:3])
-
-        ids_head = max_indices_head.unsqueeze(1).unsqueeze(2).expand(batch_size,1,hidden_size)
-        #print (id_head)
-        # (batch, hidden_size)
-        selected_head_hidden_states = head_hidden_states.gather(dim=1, index=ids_head).squeeze(1)
-        #print (selected_head_hidden_states)
-        # (batch, 2*hidden_size)
-        top_arc_hidden_states = torch.cat([selected_dep_hidden_states, selected_head_hidden_states], -1)
-        return top_arc_hidden_states
 
     def _get_recomp_logp(self, head_logp, rc_gen_mask, norc_gen_mask, mask, debug=False):
         """
