@@ -132,13 +132,14 @@ def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_
         if prev_best_lcorr < accum_lcorr_nopunc or (prev_best_lcorr == accum_lcorr_nopunc and prev_best_ucorr < accum_ucorr_nopunc):
             print ('### Saving New Best File ... ###')
             pred_writer.start(pred_filename)
-            words = np.concatenate(all_words, axis=0)
-            postags = np.concatenate(all_postags, axis=0)
-            heads_pred = np.concatenate(all_heads_pred, axis=0)
-            types_pred = np.concatenate(all_types_pred, axis=0)
-            lengths = np.concatenate(all_lengths, axis=0)
-            src_words = np.concatenate(all_src_words, axis=0)
-            pred_writer.write(words, postags, heads_pred, types_pred, lengths, symbolic_root=True, src_words=data['SRC'])
+            #words = np.concatenate(all_words, axis=0)
+            #postags = np.concatenate(all_postags, axis=0)
+            #heads_pred = np.concatenate(all_heads_pred, axis=0)
+            #types_pred = np.concatenate(all_types_pred, axis=0)
+            #lengths = np.concatenate(all_lengths, axis=0)
+            #src_words = np.concatenate(all_src_words, axis=0)
+            for i in range(len(all_words)):
+                pred_writer.write(all_words[i], all_postags[i], all_heads_pred[i], all_types_pred[i], all_lengths[i], symbolic_root=True, src_words=all_src_words[i])
             pred_writer.close()
 
     return (accum_ucorr, accum_lcorr, accum_ucomlpete, accum_lcomplete, accum_total), \
@@ -312,7 +313,7 @@ def train(args):
         if num_gpu > 1:
             logger.info("Using Data Parallel")
             network = torch.nn.DataParallel(network)
-            network.to(device)
+        network.to(device)
         single_network = network if num_gpu <= 1 else network.module
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
@@ -433,7 +434,7 @@ def train(args):
             err_cnt += errs
             losses.append(loss)
             if err_cnt >= args.update_batch:
-                print ("Updating with errors: ", err_cnt)
+                #print ("Updating with errors: ", err_cnt)
                 err_cnt = 0
                 loss = torch.stack(losses).sum()
                 losses = []
