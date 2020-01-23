@@ -134,11 +134,12 @@ def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_
             pred_writer.start(pred_filename)
             words = np.concatenate(all_words, axis=0)
             postags = np.concatenate(all_postags, axis=0)
-            heads_pred = np.concatenate(all_postags, axis=0)
+            heads_pred = np.concatenate(all_heads_pred, axis=0)
             types_pred = np.concatenate(all_types_pred, axis=0)
             lengths = np.concatenate(all_lengths, axis=0)
             src_words = np.concatenate(all_src_words, axis=0)
             pred_writer.write(words, postags, heads_pred, types_pred, lengths, symbolic_root=True, src_words=data['SRC'])
+            pred_writer.close()
 
     return (accum_ucorr, accum_lcorr, accum_ucomlpete, accum_lcomplete, accum_total), \
            (accum_ucorr_nopunc, accum_lcorr_nopunc, accum_ucomlpete_nopunc, accum_lcomplete_nopunc, accum_total_nopunc), \
@@ -156,7 +157,6 @@ def train(args):
 
     num_epochs = args.num_epochs
     batch_size = args.batch_size
-    step_batch_size = args.step_batch_size
     optim = args.optim
     learning_rate = args.learning_rate
     lr_decay = args.lr_decay
@@ -272,7 +272,7 @@ def train(args):
         assert char_dim == hyps['char_dim']
     else:
         char_dim = hyps['char_dim']
-    mode = hyps['rnn_mode']
+    mode = hyps['input_encoder']
     use_pos = hyps['pos']
     use_char = hyps['use_char']
     pos_dim = hyps['pos_dim']
@@ -293,7 +293,7 @@ def train(args):
         #p_att = hyps['attention_probs_dropout_prob']
         #p_graph_att = hyps['graph_attention_probs_dropout_prob']
         num_attention_heads = hyps['num_attention_heads']
-        #input_encoder = hyps['input_encoder']
+        input_encoder = hyps['input_encoder']
         num_layers = hyps['num_layers']
         p_rnn = hyps['p_rnn']
         minimize_logp = hyps['minimize_logp']
@@ -325,7 +325,7 @@ def train(args):
     logger.info("Network: %s, hidden=%d, act=%s" % (model, hidden_size, activation))
     p_hid = 0.1; p_att = 0.1; p_graph_att = 0
     logger.info("dropout(in, out, hidden, att, graph_att): %s(%.2f, %.2f, %.2f, %.2f, %.2f)" % ('variational', p_in, p_out, p_hid, p_att, p_graph_att))
-    #logger.info("Input Encoder Type: %s (layer: %d)" % (input_encoder, num_layers))
+    logger.info("Input Encoder Type: %s (layer: %d)" % (input_encoder, num_layers))
     logger.info("Use POS tag: %s" % use_pos)
     logger.info("Use Char: %s" % use_char)
     logger.info('# of Parameters: %d' % (sum([param.numel() for param in network.parameters()])))
@@ -379,6 +379,8 @@ def train(args):
     test_total_root = 0
 
     patient = 0
+    err_cnt = 0
+    losses = []
     beam = args.beam
     reset = args.reset
     num_batches = num_data // batch_size + 1
@@ -416,8 +418,9 @@ def train(args):
             nbatch = words.size(0)
             nwords = masks.sum() - nbatch
             network.train()
-            loss_arc, loss_rel = network(words, chars, postags, heads, types, 
+            loss_arc, loss_rel, errs = network(words, chars, postags, heads, types, 
                                          mask=masks)
+            #print ("errors: ", errs)
             loss_arc = loss_arc.mean()
             loss_rel = loss_rel.mean()
 
@@ -427,49 +430,57 @@ def train(args):
                 loss = loss_total.div(nwords)
             else:
                 loss = loss_total.div(nbatch)
-            loss.backward()
-            if grad_clip > 0:
-                grad_norm = clip_grad_norm_(network.parameters(), grad_clip)
-            else:
-                grad_norm = total_grad_norm(network.parameters())
+            err_cnt += errs
+            losses.append(loss)
+            if err_cnt >= args.update_batch:
+                print ("Updating with errors: ", err_cnt)
+                err_cnt = 0
+                loss = torch.stack(losses).sum()
+                losses = []
 
-            if math.isnan(grad_norm):
-                num_nans += 1
-            else:
-                optimizer.step()
-                scheduler.step()
+                loss.backward()
+                if grad_clip > 0:
+                    grad_norm = clip_grad_norm_(network.parameters(), grad_clip)
+                else:
+                    grad_norm = total_grad_norm(network.parameters())
 
-                with torch.no_grad():
-                    num_insts += nbatch
-                    num_words += nwords
-                    num_steps += 1
-                    train_loss += loss.item()
-                    train_arc_loss += loss_arc.item()
-                    train_rel_loss += loss_rel.item()
-            #torch.cuda.empty_cache()
-            # update log
-            if step % 100 == 0:
-                if not noscreen: 
-                    sys.stdout.write("\b" * num_back)
-                    sys.stdout.write(" " * num_back)
-                    sys.stdout.write("\b" * num_back)
-                    curr_lr = scheduler.get_lr()[0]
-                    num_insts = max(num_insts, 1)
-                    num_words = max(num_words, 1)
-                    log_info = '[%d/%d (%.0f%%) lr=%.6f (%d)] loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f)' % (step, num_batches, 100. * step / num_batches, curr_lr, num_nans,
-                                                                                                                         train_loss / num_insts, train_loss / num_words,
-                                                                                                                         train_arc_loss / num_insts, train_arc_loss / num_words,
-                                                                                                                        train_rel_loss / num_insts, train_rel_loss / num_words)
-                    sys.stdout.write(log_info)
-                    sys.stdout.flush()
-                    num_back = len(log_info)
+                if math.isnan(grad_norm):
+                    num_nans += 1
+                else:
+                    optimizer.step()
+                    scheduler.step()
+
+                    with torch.no_grad():
+                        num_insts += nbatch
+                        num_words += nwords
+                        num_steps += 1
+                        train_loss += loss.item()
+                        train_arc_loss += loss_arc.item()
+                        train_rel_loss += loss_rel.item()
+                #torch.cuda.empty_cache()
+                # update log
+                if step % 100 == 0:
+                    if not noscreen: 
+                        sys.stdout.write("\b" * num_back)
+                        sys.stdout.write(" " * num_back)
+                        sys.stdout.write("\b" * num_back)
+                        curr_lr = scheduler.get_lr()[0]
+                        num_insts = max(num_insts, 1)
+                        num_words = max(num_words, 1)
+                        log_info = '[%d/%d (%.0f%%) lr=%.6f (%d)] loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f)' % (step, num_batches, 100. * step / num_batches, curr_lr, num_nans,
+                                                                                                                             train_loss / num_insts, train_loss / num_words,
+                                                                                                                             train_arc_loss / num_insts, train_arc_loss / num_words,
+                                                                                                                            train_rel_loss / num_insts, train_rel_loss / num_words)
+                        sys.stdout.write(log_info)
+                        sys.stdout.flush()
+                        num_back = len(log_info)
         if not noscreen: 
             sys.stdout.write("\b" * num_back)
             sys.stdout.write(" " * num_back)
             sys.stdout.write("\b" * num_back)
-        print('total: %d (%d), steps: %d, loss: %.4f (nans: %d), arc: %.4f, rel: %.4f, time: %.2fs' % (num_insts, num_words, num_steps, train_loss / (num_steps+1e-9),
-                                                                                                       num_nans, train_arc_loss / (num_steps+1e-9),
-                                                                                                       train_rel_loss / (num_steps+1e-9),
+        print('total: %d (%d), steps: %d, loss: %.4f (nans: %d), arc: %.4f (%.4f), rel: %.4f (%.4f), time: %.2fs' % (num_insts, num_words, num_steps, train_loss / (num_steps+1e-9),
+                                                                                                       num_nans, train_arc_loss / (num_steps+1e-9), train_arc_loss / (num_words+1e-9),
+                                                                                                       train_rel_loss / (num_steps+1e-9), train_rel_loss / (num_words+1e-9),
                                                                                                        time.time() - start_time))
         print('-' * 125)
 
@@ -486,7 +497,7 @@ def train(args):
                                                                     beam=beam, write_to_tmp=False, prev_best_lcorr=best_lcorrect_nopunc,
                                                                     prev_best_ucorr=best_ucorrect_nopunc, pred_filename=pred_filename)
 
-                pred_writer.close()
+                
                 #gold_writer.close()
 
                 dev_ucorr, dev_lcorr, dev_ucomlpete, dev_lcomplete, dev_total = dev_stats
@@ -698,7 +709,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--output_filename', type=str, help='output filename for parse')
     args_parser.add_argument('--num_epochs', type=int, default=200, help='Number of training epochs')
     args_parser.add_argument('--batch_size', type=int, default=16, help='Number of sentences in each batch')
-    args_parser.add_argument('--step_batch_size', type=int, default=16, help='Number of steps in each batch (for easyfirst parsing)')
+    args_parser.add_argument('--update_batch', type=int, default=50, help='Number of errors needed to do one update')
     args_parser.add_argument('--loss_type', choices=['sentence', 'token'], default='sentence', help='loss type (default: sentence)')
     args_parser.add_argument('--optim', choices=['sgd', 'adam'], help='type of optimizer')
     args_parser.add_argument('--learning_rate', type=float, default=0.1, help='Learning rate')

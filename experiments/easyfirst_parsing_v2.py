@@ -147,7 +147,7 @@ def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_
             pred_writer.start(pred_filename)
             words = np.concatenate(all_words, axis=0)
             postags = np.concatenate(all_postags, axis=0)
-            heads_pred = np.concatenate(all_postags, axis=0)
+            heads_pred = np.concatenate(all_heads_pred, axis=0)
             types_pred = np.concatenate(all_types_pred, axis=0)
             lengths = np.concatenate(all_lengths, axis=0)
             src_words = np.concatenate(all_src_words, axis=0)

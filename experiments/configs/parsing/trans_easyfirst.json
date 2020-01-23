@@ -6,7 +6,7 @@
   "use_char": false,
   "minimize_logp": false,
   "pos_dim": 100,
-  "rnn_mode": "Linear",
+  "input_encoder": "Linear",
   "num_layers": 3,
   "num_attention_heads": 8,
   "intermediate_size": 1024,

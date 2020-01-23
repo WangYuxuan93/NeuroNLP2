@@ -6,11 +6,12 @@ import torch.nn.functional as F
 from neuronlp2.nn import TreeCRF, VarGRU, VarRNN, VarLSTM, VarFastLSTM
 from neuronlp2.nn import BiAffine, BiLinear, CharCNN, BiAffine_v2
 from neuronlp2.tasks import parser
+from neuronlp2.nn.transformer import GraphAttentionConfig, GraphAttentionModelV2
 from neuronlp2.nn.transformer import SelfAttentionConfig, SelfAttentionModel
 from neuronlp2.models.parsing import PositionEmbeddingLayer
 
 class TransEasyFirst(nn.Module):
-    def __init__(self, word_dim, num_words, char_dim, num_chars, pos_dim, num_pos, rnn_mode, 
+    def __init__(self, word_dim, num_words, char_dim, num_chars, pos_dim, num_pos, input_encoder, 
                  hidden_size, num_layers, num_labels, arc_space, rel_space,
                  embedd_word=None, embedd_char=None, embedd_pos=None, p_in=0.33, p_out=0.33, 
                  p_rnn=(0.33, 0.33), pos=True, use_char=False, activation='elu',
@@ -37,24 +38,24 @@ class TransEasyFirst(nn.Module):
         if pos:
             dim_enc += pos_dim
 
-        self.input_encoder_type = rnn_mode
-        if rnn_mode == 'RNN':
+        self.input_encoder_type = input_encoder
+        if input_encoder == 'RNN':
             RNN = VarRNN
-        elif rnn_mode == 'LSTM':
+        elif input_encoder == 'LSTM':
             RNN = VarLSTM
-        elif rnn_mode == 'FastLSTM':
+        elif input_encoder == 'FastLSTM':
             RNN = VarFastLSTM
-        elif rnn_mode == 'GRU':
+        elif input_encoder == 'GRU':
             RNN = VarGRU
-        elif rnn_mode == 'Linear':
+        elif input_encoder == 'Linear':
             self.position_embedding_layer = PositionEmbeddingLayer(dim_enc, dropout_prob=0, 
                                                                 max_position_embeddings=256)
             print ("Using Linear Encoder!")
             #self.linear_encoder = True
-        elif rnn_mode == 'Transformer':
+        elif input_encoder == 'Transformer':
             print ("Using Transformer Encoder!")
         else:
-            raise ValueError('Unknown RNN mode: %s' % rnn_mode)
+            raise ValueError('Unknown RNN mode: %s' % input_encoder)
         print ("Use POS tag: %s" % pos)
         print ("Use Char: %s" % use_char)
         print ("Input Encoder Type: %s" % self.input_encoder_type)
@@ -79,13 +80,31 @@ class TransEasyFirst(nn.Module):
             self.input_encoder = RNN(dim_enc, hidden_size, num_layers=num_layers, batch_first=True, bidirectional=True, dropout=p_rnn) 
             out_dim = hidden_size * 2
 
-        self.arc_h = nn.Linear(out_dim, arc_space)
-        self.arc_c = nn.Linear(out_dim, arc_space)
+        self.config = GraphAttentionConfig(input_size=out_dim,
+                                            hidden_size=hidden_size,
+                                            arc_space=arc_space,
+                                            num_attention_heads=num_attention_heads,
+                                            intermediate_size=intermediate_size,
+                                            hidden_act="gelu",
+                                            hidden_dropout_prob=0.1,
+                                            attention_probs_dropout_prob=0.1,
+                                            graph_attention_probs_dropout_prob=0,
+                                            max_position_embeddings=256,
+                                            initializer_range=0.02,
+                                            extra_self_attention_layer=False,
+                                            input_self_attention_layer=False,
+                                            num_input_attention_layers=0)
+
+        self.graph_attention = GraphAttentionModelV2(self.config)
+        encode_dim = hidden_size
+
+        self.arc_h = nn.Linear(encode_dim, arc_space)
+        self.arc_c = nn.Linear(encode_dim, arc_space)
         #self.biaffine = BiAffine(arc_space, arc_space)
         self.biaffine = BiAffine_v2(arc_space, bias_x=True, bias_y=False)
 
-        self.type_h = nn.Linear(out_dim, rel_space)
-        self.type_c = nn.Linear(out_dim, rel_space)
+        self.rel_h = nn.Linear(out_dim, rel_space)
+        self.rel_c = nn.Linear(out_dim, rel_space)
         #self.bilinear = BiLinear(rel_space, rel_space, self.num_labels)
         self.bilinear = BiAffine_v2(rel_space, n_out=self.num_labels, bias_x=True, bias_y=True)
 
@@ -119,10 +138,10 @@ class TransEasyFirst(nn.Module):
         nn.init.xavier_uniform_(self.arc_c.weight)
         nn.init.constant_(self.arc_c.bias, 0.)
 
-        nn.init.xavier_uniform_(self.type_h.weight)
-        nn.init.constant_(self.type_h.bias, 0.)
-        nn.init.xavier_uniform_(self.type_c.weight)
-        nn.init.constant_(self.type_c.bias, 0.)
+        nn.init.xavier_uniform_(self.rel_h.weight)
+        nn.init.constant_(self.rel_h.bias, 0.)
+        nn.init.xavier_uniform_(self.rel_c.weight)
+        nn.init.constant_(self.rel_c.bias, 0.)
 
         nn.init.xavier_uniform_(self.dep_dense.weight)
         nn.init.constant_(self.dep_dense.bias, 0.)
@@ -170,43 +189,42 @@ class TransEasyFirst(nn.Module):
 
         return output
 
-    def _mlp(self, input_tensor):
+    def _arc_mlp(self, input_tensor):
 
         # output size [batch, length, arc_space]
         arc_h = self.activation(self.arc_h(input_tensor))
         arc_c = self.activation(self.arc_c(input_tensor))
 
-        # output size [batch, length, rel_space]
-        type_h = self.activation(self.type_h(input_tensor))
-        type_c = self.activation(self.type_c(input_tensor))
-
         # apply dropout on arc
         # [batch, length, dim] --> [batch, 2 * length, dim]
         arc = torch.cat([arc_h, arc_c], dim=1)
-        type = torch.cat([type_h, type_c], dim=1)
         arc = self.dropout_out(arc.transpose(1, 2)).transpose(1, 2)
         arc_h, arc_c = arc.chunk(2, 1)
 
-        # apply dropout on type
+        return (arc_h, arc_c)
+
+    def _rel_mlp(self, input_tensor):
+
+        # output size [batch, length, rel_space]
+        rel_h = self.activation(self.rel_h(input_tensor))
+        rel_c = self.activation(self.rel_c(input_tensor))
+
+        # apply dropout on arc
         # [batch, length, dim] --> [batch, 2 * length, dim]
-        type = self.dropout_out(type.transpose(1, 2)).transpose(1, 2)
-        type_h, type_c = type.chunk(2, 1)
-        type_h = type_h.contiguous()
-        type_c = type_c.contiguous()
+        rel = torch.cat([rel_h, rel_c], dim=1)
 
-        return (arc_h, arc_c), (type_h, type_c)
+        # apply dropout on rel
+        # [batch, length, dim] --> [batch, 2 * length, dim]
+        rel = self.dropout_out(rel.transpose(1, 2)).transpose(1, 2)
+        rel_h, rel_c = rel.chunk(2, 1)
+        rel_h = rel_h.contiguous()
+        rel_c = rel_c.contiguous()
 
-    def _get_score(self, input_word, input_char, input_pos, mask=None):
-        # output from rnn [batch, length, dim]
-        arc, type = self._input_encoder(input_word, input_char, input_pos, mask=mask)
-        # [batch, length_head, length_child]
-        #arc_logits = self.biaffine(arc[0], arc[1], mask_query=mask, mask_key=mask)
-        arc_logits = self.biaffine(arc[1], arc[0])
-        return arc_logits, type
+        return (rel_h, rel_c)
 
-    def _get_arc_loss(self, logits, heads_3D, debug=False):
+    def _get_arc_loss(self, logits, gold_arcs_3D, debug=False):
         # in the original code, the i,j = 1 means i is head of j
-        # but in heads_3D, it means j is head of i
+        # but in gold_arcs_3D, it means j is head of i
         logits = logits.permute(0,2,1)
         # (batch, seq_len, seq_len), log softmax over all possible arcs
         head_logp_given_dep = F.log_softmax(logits, dim=-1)
@@ -225,24 +243,78 @@ class TransEasyFirst(nn.Module):
         # (batch, seq_len, seq_len)
         head_logp = head_logp_given_dep + dep_logp.unsqueeze(2)
         # (batch, seq_len)
-        ref_heads_logp = (head_logp * heads_3D).sum(dim=-1)
+        ref_heads_logp = (head_logp * gold_arcs_3D).sum(dim=-1)
         # (batch, seq_len)
         loss_arc = - ref_heads_logp
 
         if debug:
             print ("logits:\n",logits)
             print ("softmax:\n", torch.softmax(logits, dim=-1))
-            print ("heads_3D:\n", heads_3D)
+            print ("gold_arcs_3D:\n", gold_arcs_3D)
             print ("head_logp_given_dep:\n", head_logp_given_dep)
             #print ("dep_logits:\n",self.dep_dense(context_layer).squeeze(-1))
             print ("dep_logp:\n", dep_logp)
             print ("head_logp:\n", head_logp)
-            print ("heads_logp*heads_3D:\n", head_logp * heads_3D)
+            print ("heads_logp*gold_arcs_3D:\n", head_logp * gold_arcs_3D)
             print ("loss_arc:\n", loss_arc)
 
         return loss_arc
 
-   # def _train_one_step(self, ):
+    def _max_3D(self, tensor):
+        """
+        Input:
+            tensor: (batch, seq_len, seq_len)
+        Return:
+            max_val: (batch), the max value
+            max_tensor_3D: (batch, seq_len, seq_len)
+            max_heads_2D: (batch, seq_len), each entry is the index of head
+        """
+        batch_size, seq_len, _ = tensor.size()
+        # (batch, seq_len*seq_len)
+        flatten_tensor = tensor.view([batch_size, -1])
+        # (batch)
+        max_val, max_indices = flatten_tensor.max(dim=1)
+        max_dep_indices = max_indices // seq_len
+        max_head_indices = max_indices % seq_len
+
+        dep_mask = torch.zeros(batch_size, seq_len, dtype=torch.int32, device=tensor.device)
+        dep_mask.scatter_(1, max_dep_indices.unsqueeze(1), 1)
+
+        max_heads_2D = torch.zeros(batch_size, seq_len, dtype=torch.int32, device=tensor.device)
+        max_heads_2D.scatter_(1, max_dep_indices.unsqueeze(1), max_head_indices.unsqueeze(1).int())
+
+        max_tensor_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=tensor.device)
+        max_tensor_3D.scatter_(-1, max_heads_2D.unsqueeze(-1).long(), 1)
+        max_tensor_3D = max_tensor_3D * dep_mask.unsqueeze(-1)
+
+        return max_val, max_tensor_3D, max_heads_2D
+
+
+    def _get_arc_loss_one_step(self, arc_logits, gen_arcs_3D, gold_arcs_3D, mask_3D=None, margin=1):
+
+        # (batch, seq_len, seq_len)
+        neg_inf_tensor = torch.Tensor(arc_logits.size()).fill_(-1e9).to(arc_logits.device)
+        # (batch, seq_len)
+        finished_token_mask = gen_arcs_3D.sum(-1)
+        # (batch, seq_len, seq_len), mask out all rows whose heads are found
+        valid_mask = (1-finished_token_mask).unsqueeze(-1) * mask_3D
+        # (batch, seq_len, seq_len), mask out invalid positions
+        arc_logits = torch.where(valid_mask==1, arc_logits, neg_inf_tensor)
+        
+        # (batch, seq_len, seq_len), the gold arcs not generated
+        remained_gold_mask = gold_arcs_3D - gen_arcs_3D
+        # (batch, seq_len, seq_len), only remained gold arcs are left
+        gold_arc_logits = torch.where(remained_gold_mask==1, arc_logits, neg_inf_tensor)
+        # (batch, seq_len, seq_len), false arcs are left
+        false_arc_logits = torch.where(gold_arcs_3D==0, arc_logits, neg_inf_tensor)
+
+        gold_max_val, gold_max_tensor, _ = self._max_3D(gold_arc_logits)
+        false_max_val, false_max_tensor, _ = self._max_3D(false_arc_logits)
+        general_max_val, general_max_tensor, _ = self._max_3D(arc_logits)
+        # (batch)
+        margin_loss = torch.max(margin - gold_max_val + false_max_val, torch.zeros_like(gold_max_val))
+
+        return margin_loss, general_max_tensor, gold_max_tensor, false_max_tensor
 
 
     def forward(self, input_word, input_char, input_pos, heads, rels, mask=None):
@@ -254,49 +326,70 @@ class TransEasyFirst(nn.Module):
         # (batch, seq_len, seq_len)
         mask_3D = (root_mask.unsqueeze(-1) * mask.unsqueeze(1))
         # (batch, seq_len, seq_len)
-        heads_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
-        heads_3D.scatter_(-1, heads.unsqueeze(-1), 1)
-        heads_3D = heads_3D * mask_3D
+        gold_arcs_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
+        gold_arcs_3D.scatter_(-1, heads.unsqueeze(-1), 1)
+        gold_arcs_3D = gold_arcs_3D * mask_3D
         # (batch, seq_len, seq_len)
         rels_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.long, device=heads.device)
         rels_3D.scatter_(-1, heads.unsqueeze(-1), rels.unsqueeze(-1))
 
+        # (batch, seq_len, seq_len)
+        gen_arcs_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
+        err_count = torch.zeros((batch_size), dtype=torch.int32, device=heads.device)
         # arc_logits shape [batch, seq_len, hidden_size]
         encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=mask)
-        
-        arc, rel = self._mlp(encoder_output)
-        
-        arc_logits = self.biaffine(arc[1], arc[0])
-        
-        # get vector for heads [batch, length, rel_space]
-        rel_h, rel_c = rel
+        arc_losses = []
+        for i in range(seq_len):
+            all_encoder_layers = self.graph_attention(encoder_output, gen_arcs_3D, root_mask)
+            # [batch, length, hidden_size]
+            graph_attention_output = all_encoder_layers[-1]
+            arc_h, arc_c = self._arc_mlp(graph_attention_output)
+            arc_logits = self.biaffine(arc_c, arc_h)
+            # arc_loss: (batch)
+            arc_loss, general_max_tensor, gold_max_tensor, false_max_tensor = self._get_arc_loss_one_step(arc_logits, gen_arcs_3D, gold_arcs_3D, mask_3D)
+            # (batch), count the number of error predictions
+            err_mask = 1 - (general_max_tensor * gold_max_tensor).sum(dim=(-1,-2))
+            err_count = err_count + err_mask
+            arc_losses.append(arc_loss.unsqueeze(-1))
+            # update with max arcs among all
+            gen_arcs_3D = gen_arcs_3D + general_max_tensor
+        # (batch, seq_len), remove the invalid loss
+        arc_loss = torch.cat(arc_losses, dim=-1) * root_mask
+        arc_loss = arc_loss[:,1:].sum(dim=1)
 
+        # get vector for heads [batch, length, rel_space]     
+        rel_h, rel_c = self._rel_mlp(encoder_output)
         # (batch, n_rels, seq_len, seq_len)
         rel_logits = self.bilinear(rel_c, rel_h)
-
-        if self.minimize_logp:
-            # (batch, seq_len)
-            loss_arc = self._get_arc_loss(arc_logits, heads_3D)
-        else:
-            # mask invalid position to -inf for log_softmax
-            if mask is not None:
-                minus_mask = mask.eq(0).unsqueeze(2)
-                arc_logits = arc_logits.masked_fill(minus_mask, float('-inf'))
-            # loss_arc shape [batch, length_c]
-            loss_arc = self.criterion(arc_logits, heads)
         #loss_rel = self.criterion(rel_logits.transpose(1, 2), rels)
-        loss_rel = (self.criterion(rel_logits, rels_3D) * heads_3D).sum(-1)
-
-        # mask invalid position to 0 for sum loss
+        rel_loss = (self.criterion(rel_logits, rels_3D) * gold_arcs_3D).sum(-1)
         if mask is not None:
-            loss_arc = loss_arc * mask
-            loss_rel = loss_rel * mask
+            rel_loss = rel_loss * mask
+        rel_loss = rel_loss[:, 1:].sum(dim=1)
 
         # [batch, length - 1] -> [batch] remove the symbolic root.
-        return loss_arc[:, 1:].sum(dim=1), loss_rel[:, 1:].sum(dim=1)
+        return arc_loss, rel_loss, err_count.sum().cpu().numpy()
 
 
-    def decode(self, input_word, input_char, input_pos, mask=None, leading_symbolic=0):
+    def _decode_one_step(self, arc_logits, gen_arcs_3D, mask_3D=None):
+
+        # (batch, seq_len, seq_len)
+        neg_inf_tensor = torch.Tensor(arc_logits.size()).fill_(-1e9).to(arc_logits.device)
+        # (batch, seq_len)
+        finished_token_mask = gen_arcs_3D.sum(-1)
+        # (batch, seq_len, seq_len), mask out all rows whose heads are found
+        valid_mask = (1-finished_token_mask).unsqueeze(-1) * mask_3D
+        # (batch, seq_len, seq_len), mask out invalid positions
+        arc_logits = torch.where(valid_mask==1, arc_logits, neg_inf_tensor)
+        
+        general_max_val, general_max_tensor, _ = self._max_3D(arc_logits)
+
+        #print ("arc_logits:\n", arc_logits)
+
+        return general_max_tensor
+
+
+    def decode(self, input_word, input_char, input_pos, mask=None, leading_symbolic=0, debug=False):
         """
         Args:
             input_word: Tensor
@@ -318,32 +411,50 @@ class TransEasyFirst(nn.Module):
                 predicted heads and types.
 
         """
+        # Pre-processing
+        batch_size, seq_len = input_word.size()
+        # (batch, seq_len), seq mask, where at position 0 is 0
+        root_mask = torch.arange(seq_len, device=input_word.device).gt(0).float().unsqueeze(0) * mask
+        # (batch, seq_len, seq_len)
+        mask_3D = (root_mask.unsqueeze(-1) * mask.unsqueeze(1))
 
         encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=mask)
-        
-        arc, rel = self._mlp(encoder_output)
-        arc_logits = self.biaffine(arc[1], arc[0])
+        # (batch, seq_len, seq_len)
+        gen_arcs_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=input_word.device)
+        for i in range(seq_len):
+            if debug:
+                print ("gen_arcs_3D:\n", gen_arcs_3D)
+            all_encoder_layers = self.graph_attention(encoder_output, gen_arcs_3D, root_mask)
+            # [batch, length, hidden_size]
+            graph_attention_output = all_encoder_layers[-1]
+            # to add loop
+            arc_h, arc_c = self._arc_mlp(graph_attention_output)
+            arc_logits = self.biaffine(arc_c, arc_h)
+            # (batch, seq_len, seq_len)
+            general_max_tensor = self._decode_one_step(arc_logits, gen_arcs_3D, mask_3D)
+            gen_arcs_3D = gen_arcs_3D + general_max_tensor
 
-        # get vector for heads [batch, length, rel_space]
-        rel_h, rel_c = rel
+        # (batch, seq_len)
+        _, heads_pred = torch.max(gen_arcs_3D, dim=-1)
+
+
+        # get vector for heads [batch, length, rel_space]     
+        rel_h, rel_c = self._rel_mlp(encoder_output)
         # (batch, n_rels, seq_len, seq_len)
-        rel_logits = self.bilinear(rel_c, rel_h).permute(0,3,2,1)
-
-        batch, max_len, rel_space = rel_h.size()
-
-        # => (batch, length_h, length_c, num_labels)
-        #out_type = self.bilinear(type_c, type_h).permute(0,3,2,1)
-
-        if mask is not None:
-            minus_mask = mask.eq(0).unsqueeze(2)
-            arc_logits.masked_fill_(minus_mask, float('-inf'))
-        # loss_arc shape [batch, length_h, length_c]
-        loss_arc = F.log_softmax(arc_logits, dim=1)
-        # loss_rel shape [batch, length_h, length_c, num_labels]
-        loss_rel = F.log_softmax(rel_logits, dim=3).permute(0, 3, 1, 2)
-        # [batch, num_labels, length_h, length_c]
-        energy = loss_arc.unsqueeze(1) + loss_rel
+        # => (batch, seq_len, seq_len, n_rels)
+        rel_logits = self.bilinear(rel_c, rel_h).permute(0,2,3,1)
+        # (batch_size, seq_len, seq_len)
+        rel_ids = rel_logits.argmax(-1)
+        # (batch_size, seq_len)
+        masked_heads_pred = heads_pred * root_mask
+        # (batch_size, seq_len)
+        rels_pred = rel_ids.gather(dim=-1, index=masked_heads_pred.unsqueeze(-1).long()).squeeze(-1)
+        
+        if debug:
+            print ("rel_ids:\n", rel_ids)
+            print ("masked_heads_pred:\n", masked_heads_pred)
+            print ("rels_pred:\n", rels_pred)
 
         # compute lengths
         length = mask.sum(dim=1).long().cpu().numpy()
-        return parser.decode_MST(energy.cpu().numpy(), length, leading_symbolic=leading_symbolic, labeled=True)
+        return heads_pred.cpu().numpy(), rels_pred.cpu().numpy()
