@@ -145,18 +145,24 @@ def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_
         if prev_best_lcorr < accum_lcorr_nopunc or (prev_best_lcorr == accum_lcorr_nopunc and prev_best_ucorr < accum_ucorr_nopunc):
             print ('### Saving New Best File ... ###')
             pred_writer.start(pred_filename)
-            words = np.concatenate(all_words, axis=0)
-            postags = np.concatenate(all_postags, axis=0)
-            heads_pred = np.concatenate(all_heads_pred, axis=0)
-            types_pred = np.concatenate(all_types_pred, axis=0)
-            lengths = np.concatenate(all_lengths, axis=0)
-            src_words = np.concatenate(all_src_words, axis=0)
-            if get_head_by_layer:
-                heads_by_layer = np.concatenate(all_heads_by_layer, axis=0)
-            else:
-                heads_by_layer = None
-            pred_writer.write(words, postags, heads_pred, types_pred, lengths, symbolic_root=True, src_words=data['SRC'], 
-                            heads_by_layer=heads_by_layer)
+            #words = np.concatenate(all_words, axis=0)
+            #postags = np.concatenate(all_postags, axis=0)
+            #heads_pred = np.concatenate(all_heads_pred, axis=0)
+            #types_pred = np.concatenate(all_types_pred, axis=0)
+            #lengths = np.concatenate(all_lengths, axis=0)
+            #src_words = np.concatenate(all_src_words, axis=0)
+            #if get_head_by_layer:
+            #    heads_by_layer = np.concatenate(all_heads_by_layer, axis=0)
+            #else:
+            #    heads_by_layer = None
+            for i in range(len(all_words)):
+                if get_head_by_layer:
+                    heads_by_layer = all_heads_by_layer[i]
+                else:
+                    heads_by_layer = None
+                pred_writer.write(all_words[i], all_postags[i], all_heads_pred[i], all_types_pred[i], 
+                                all_lengths[i], symbolic_root=True, src_words=all_src_words[i],
+                                heads_by_layer=heads_by_layer)
 
     return (accum_ucorr, accum_lcorr, accum_ucomlpete, accum_lcomplete, accum_total, accum_recomp_freq/n_step), \
            (accum_ucorr_nopunc, accum_lcorr_nopunc, accum_ucomlpete_nopunc, accum_lcomplete_nopunc, accum_total_nopunc), \
@@ -305,6 +311,9 @@ def train(args):
     activation = hyps['activation']
     loss_interpolation = hyps['loss_interpolation']
     recomp_ratio = hyps['recomp_ratio']
+    always_recompute = hyps['always_recompute']
+    if always_recompute:
+        target_recomp_prob = 1
 
     num_gpu = torch.cuda.device_count()
 
@@ -344,7 +353,8 @@ def train(args):
                            input_self_attention_layer=input_self_attention_layer,
                            num_input_attention_layers=num_input_attention_layers,
                            maximize_unencoded_arcs_for_norc=maximize_unencoded_arcs_for_norc,
-                           encode_all_arc_for_rel=encode_all_arc_for_rel)
+                           encode_all_arc_for_rel=encode_all_arc_for_rel,
+                           always_recompute=always_recompute)
         if fine_tune:
             logger.info("Fine-tuning: Loading model from %s" % model_name)
             network.load_state_dict(torch.load(model_name))
@@ -368,6 +378,7 @@ def train(args):
     logger.info("Input Encoder Type: %s (layer: %d)" % (input_encoder, num_layers))
     logger.info("Use Input Self Attention Layer: %s (layer: %d)" % (input_self_attention_layer, num_input_attention_layers))
     logger.info("Use Top Self Attention Layer: %s" % extra_self_attention_layer)
+    logger.info("Always Recompute after Generation: %s" % always_recompute)
     logger.info("Maximize All Unencoded Arcs for No Recompute: %s" % maximize_unencoded_arcs_for_norc)
     logger.info("Encode All Arcs for Relation Prediction: %s" % encode_all_arc_for_rel)
     logger.info("Use POS tag: %s" % use_pos)
