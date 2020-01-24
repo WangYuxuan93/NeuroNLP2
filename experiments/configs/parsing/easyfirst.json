@@ -8,6 +8,7 @@
   "use_chosen_head": false,
   "maximize_unencoded_arcs_for_norc": false,
   "encode_all_arc_for_rel": false,
+  "use_input_encode_for_rel": true,
   "always_recompute": true,
   "use_whole_seq": true,
   "use_top2_margin": true,

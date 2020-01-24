@@ -28,6 +28,7 @@ class EasyFirstV2(nn.Module):
                  input_self_attention_layer=False, num_input_attention_layers=3,
                  maximize_unencoded_arcs_for_norc=False,
                  encode_all_arc_for_rel=False,
+                 use_input_encode_for_rel=False,
                  always_recompute=False):
         super(EasyFirstV2, self).__init__()
         self.device = device
@@ -35,6 +36,7 @@ class EasyFirstV2(nn.Module):
         self.use_top2_margin = use_top2_margin
         self.maximize_unencoded_arcs_for_norc = maximize_unencoded_arcs_for_norc
         self.encode_all_arc_for_rel = encode_all_arc_for_rel
+        self.use_input_encode_for_rel = use_input_encode_for_rel
         self.always_recompute = always_recompute
         self.target_recomp_prob = target_recomp_prob
 
@@ -103,13 +105,17 @@ class EasyFirstV2(nn.Module):
 
         self.graph_attention = GraphAttentionModelV2(self.config)
 
-        out_dim = hidden_size
-        self.arc_h = nn.Linear(out_dim, arc_space)
-        self.arc_c = nn.Linear(out_dim, arc_space)
+        graph_attention_dim = hidden_size
+        self.arc_h = nn.Linear(graph_attention_dim, arc_space)
+        self.arc_c = nn.Linear(graph_attention_dim, arc_space)
         self.arc_attn = BiAffine_v2(arc_space, bias_x=True, bias_y=False)
 
-        self.rel_h = nn.Linear(out_dim, type_space)
-        self.rel_c = nn.Linear(out_dim, type_space)
+        if self.use_input_encode_for_rel:
+            self.rel_h = nn.Linear(out_dim, type_space)
+            self.rel_c = nn.Linear(out_dim, type_space)
+        else:
+            self.rel_h = nn.Linear(graph_attention_dim, type_space)
+            self.rel_c = nn.Linear(graph_attention_dim, type_space)
         self.rel_attn = BiAffine_v2(type_space, n_out=self.num_labels, bias_x=True, bias_y=True)
 
         self.dep_dense = nn.Linear(out_dim, 1)
@@ -455,25 +461,30 @@ class EasyFirstV2(nn.Module):
         #"""
 
         # ----- encoding -----
+        # (batch, seq_len, hidden_size)
+        input_encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=root_mask, device=device)
+        
         fast_mode = True
         if fast_mode:
             if self.encode_all_arc_for_rel:
                 # (3*batch, seq_len)
-                input_words = torch.cat([input_word,input_word,input_word], dim=0)
-                input_chars = torch.cat([input_char,input_char,input_char], dim=0)
-                input_poss = torch.cat([input_pos,input_pos,input_pos], dim=0)
+                #input_words = torch.cat([input_word,input_word,input_word], dim=0)
+                #input_chars = torch.cat([input_char,input_char,input_char], dim=0)
+                #input_poss = torch.cat([input_pos,input_pos,input_pos], dim=0)
+                input_encoder_outputs = torch.cat([input_encoder_output,input_encoder_output,input_encoder_output], dim=0)
                 graph_matrices = torch.cat([rc_gen_heads_onehot,norc_gen_heads_onehot,heads_3D], dim=0)
                 masks = torch.cat([root_mask,root_mask,root_mask], dim=0)
             else:
                 # (2*batch, seq_len)
-                input_words = torch.cat([input_word,input_word], dim=0)
-                input_chars = torch.cat([input_char,input_char], dim=0)
-                input_poss = torch.cat([input_pos,input_pos], dim=0)
+                #input_words = torch.cat([input_word,input_word], dim=0)
+                #input_chars = torch.cat([input_char,input_char], dim=0)
+                #input_poss = torch.cat([input_pos,input_pos], dim=0)
+                input_encoder_outputs = torch.cat([input_encoder_output,input_encoder_output], dim=0)
                 graph_matrices = torch.cat([rc_gen_heads_onehot, norc_gen_heads_onehot], dim=0)
                 masks = torch.cat([root_mask,root_mask], dim=0)
             # (2*batch, seq_len, hidden_size) or (3*batch, seq_len, hidden_size)
-            input_encoder_output = self._input_encoder(input_words, input_chars, input_poss, mask=masks, device=device)
-            all_encoder_layers = self.graph_attention(input_encoder_output, graph_matrices, masks)
+            
+            all_encoder_layers = self.graph_attention(input_encoder_outputs, graph_matrices, masks)
             encoder_output = all_encoder_layers[-1]
 
             if self.encode_all_arc_for_rel:
@@ -493,12 +504,13 @@ class EasyFirstV2(nn.Module):
                 arc_h, arc_c = self._arc_mlp(encoder_output)
                 rc_arc_h, norc_arc_h = arc_h.split(batch_size, dim=0)
                 rc_arc_c, norc_arc_c = arc_c.split(batch_size, dim=0)
-                rel_h, rel_c = self._rel_mlp(encoder_output)
-                rc_rel_h, _ = rel_h.split(batch_size, dim=0)
-                rc_rel_c, _ = rel_c.split(batch_size, dim=0)
+                if not self.use_input_encode_for_rel:
+                    rel_h, rel_c = self._rel_mlp(encoder_output)
+                    rc_rel_h, _ = rel_h.split(batch_size, dim=0)
+                    rc_rel_c, _ = rel_c.split(batch_size, dim=0)
         else:
             # (batch, seq_len, hidden_size)
-            input_encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=root_mask, device=device)
+            #input_encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=root_mask, device=device)
             rc_all_encoder_layers = self.graph_attention(input_encoder_output, rc_gen_heads_onehot, root_mask)
             rc_encoder_output = rc_all_encoder_layers[-1]
             norc_all_encoder_layers = self.graph_attention(input_encoder_output, norc_gen_heads_onehot, root_mask)
@@ -506,8 +518,9 @@ class EasyFirstV2(nn.Module):
             #print ("rc_encoder_output:\n",rc_encoder_output)
             norc_arc_h, norc_arc_c = self._arc_mlp(norc_encoder_output)
             rc_arc_h, rc_arc_c = self._arc_mlp(rc_encoder_output)
-            # (batch, length, type_space), out_type shape 
-            rc_rel_h, rc_rel_c = self._rel_mlp(rc_encoder_output)
+            if not self.use_input_encode_for_rel:
+                # (batch, length, type_space), out_type shape 
+                rc_rel_h, rc_rel_c = self._rel_mlp(rc_encoder_output)
 
         # ----- compute arc loss -----
         if self.always_recompute:
@@ -595,18 +608,9 @@ class EasyFirstV2(nn.Module):
             # (batch, length, hidden_size)
             graph_attention_output = all_encoder_layers[-1]
             # output size [batch, length, type_space]
-            rel_h = self.activation(self.rel_h(graph_attention_output))
-            rel_c = self.activation(self.rel_c(graph_attention_output))
-            # apply dropout on arc
-            # [batch, length, dim] --> [batch, 2 * length, dim]
-            rel = torch.cat([rel_h, rel_c], dim=1)
-            # apply dropout on rel
-            # [batch, length, dim] --> [batch, 2 * length, dim]
-            rel = self.dropout_out(rel.transpose(1, 2)).transpose(1, 2)
-            #rel = self.dropout_out(rel)
-            rel_h, rel_c = rel.chunk(2, 1)
-            rel_h = rel_h.contiguous()
-            rel_c = rel_c.contiguous()
+            rel_h, rel_c = self._rel_mlp(graph_attention_output)
+        elif self.use_input_encode_for_rel:
+            rel_h, rel_c = self._rel_mlp(input_encoder_output)
         else:
             rel_h = rc_rel_h
             rel_c = rc_rel_c
@@ -791,10 +795,12 @@ class EasyFirstV2(nn.Module):
         # (batch, seq_len, seq_len)
         mask_3D = (root_mask.unsqueeze(-1) * mask.unsqueeze(1))
         heads_by_layer = []
+        # (batch, seq_len, hidden_size)
+        input_encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=root_mask, device=device)
         while True:
             # ----- encoding -----
             # (batch, seq_len, hidden_size)
-            input_encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=root_mask, device=device)
+            #input_encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=root_mask, device=device)
             all_encoder_layers = self.graph_attention(input_encoder_output, gen_heads_onehot, root_mask)
             encoder_output = all_encoder_layers[-1]
             # ----- compute arc probs -----
@@ -849,12 +855,14 @@ class EasyFirstV2(nn.Module):
 
         # ----- compute rel probs -----
         if self.encode_all_arc_for_rel:
-            input_encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=root_mask)
+            #input_encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=root_mask)
             all_encoder_layers = self.graph_attention(input_encoder_output, gen_heads_onehot, root_mask)
             encoder_output = all_encoder_layers[-1]
         # compute arc logp for no recompute generate mask
-        #arc, type = self._mlp(encoder_output)
-        rel_h, rel_c = self._rel_mlp(encoder_output)
+        if self.use_input_encode_for_rel:
+            rel_h, rel_c = self._rel_mlp(input_encoder_output)
+        else:
+            rel_h, rel_c = self._rel_mlp(encoder_output)
         # (batch_size, seq_len, seq_len, n_rels)
         rel_logits = self.rel_attn(rel_c, rel_h).permute(0, 2, 3, 1)
         # (batch_size, seq_len, seq_len)

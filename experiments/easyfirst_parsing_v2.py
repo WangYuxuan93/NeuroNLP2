@@ -163,6 +163,7 @@ def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_
                 pred_writer.write(all_words[i], all_postags[i], all_heads_pred[i], all_types_pred[i], 
                                 all_lengths[i], symbolic_root=True, src_words=all_src_words[i],
                                 heads_by_layer=heads_by_layer)
+            pred_writer.close()
 
     return (accum_ucorr, accum_lcorr, accum_ucomlpete, accum_lcomplete, accum_total, accum_recomp_freq/n_step), \
            (accum_ucorr_nopunc, accum_lcorr_nopunc, accum_ucomlpete_nopunc, accum_lcomplete_nopunc, accum_total_nopunc), \
@@ -335,6 +336,7 @@ def train(args):
         p_rnn = hyps['p_rnn']
         maximize_unencoded_arcs_for_norc = hyps['maximize_unencoded_arcs_for_norc']
         encode_all_arc_for_rel = hyps['encode_all_arc_for_rel']
+        use_input_encode_for_rel = hyps['use_input_encode_for_rel']
         
         network = EasyFirstV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                            hidden_size, num_types, arc_space, type_space,
@@ -354,6 +356,7 @@ def train(args):
                            num_input_attention_layers=num_input_attention_layers,
                            maximize_unencoded_arcs_for_norc=maximize_unencoded_arcs_for_norc,
                            encode_all_arc_for_rel=encode_all_arc_for_rel,
+                           use_input_encode_for_rel=use_input_encode_for_rel,
                            always_recompute=always_recompute)
         if fine_tune:
             logger.info("Fine-tuning: Loading model from %s" % model_name)
@@ -381,6 +384,7 @@ def train(args):
     logger.info("Always Recompute after Generation: %s" % always_recompute)
     logger.info("Maximize All Unencoded Arcs for No Recompute: %s" % maximize_unencoded_arcs_for_norc)
     logger.info("Encode All Arcs for Relation Prediction: %s" % encode_all_arc_for_rel)
+    logger.info("Only Use Input Encoder for Relation Prediction: %s" % use_input_encode_for_rel)
     logger.info("Use POS tag: %s" % use_pos)
     logger.info("Use Char: %s" % use_char)
     logger.info("Input Encoder Type: %s" % input_encoder)
@@ -570,7 +574,6 @@ def train(args):
                                                                     write_to_tmp=False, prev_best_lcorr=best_lcorrect_nopunc,
                                                                     prev_best_ucorr=best_ucorrect_nopunc, pred_filename=pred_filename)
 
-                pred_writer.close()
                 #gold_writer.close()
 
                 dev_ucorr, dev_lcorr, dev_ucomlpete, dev_lcomplete, dev_total, dev_recomp_freq = dev_stats
