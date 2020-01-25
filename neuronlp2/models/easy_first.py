@@ -494,7 +494,7 @@ class EasyFirstV2(nn.Module):
                 arc_h, arc_c = self._arc_mlp(encoder_output)
                 rc_arc_h, norc_arc_h, _ = arc_h.split(batch_size, dim=0)
                 rc_arc_c, norc_arc_c, _ = arc_c.split(batch_size, dim=0)
-                rel_h, rel_c = self._rel_mlp(encoder_ouput)
+                rel_h, rel_c = self._rel_mlp(encoder_output)
                 _, _, rc_rel_h = rel_h.split(batch_size, dim=0)
                 _, _, rc_rel_c = rel_c.split(batch_size, dim=0)
             else:
@@ -878,7 +878,7 @@ class EasyFirstV2(nn.Module):
             print ("rels_pred:\n", rels_pred)
 
         # (batch)
-        num_words = root_mask.sum(-1) - 1
+        num_words = root_mask.sum(-1) - 1 + 1e-9
         freq_recomp = (num_recomp-1) / num_words
         if debug:
             print ("num_recomp:\n", num_recomp)
@@ -1211,7 +1211,7 @@ class EasyFirst(nn.Module):
         """
         Use dep/head hidden states of top arc to attend encoder output
         Input:
-            encoder_ouput: (batch, seq_len, hidden_size)
+            encoder_output: (batch, seq_len, hidden_size)
             top_arc_hidden_states: (batch, 2*arc_space)
         """
         # (batch, att_dim)
