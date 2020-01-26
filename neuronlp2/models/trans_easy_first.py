@@ -368,7 +368,7 @@ class TransEasyFirst(nn.Module):
         rel_loss = rel_loss[:, 1:].sum(dim=1)
 
         # [batch, length - 1] -> [batch] remove the symbolic root.
-        return arc_loss, rel_loss, err_count.sum().cpu().numpy()
+        return arc_loss, rel_loss, err_count
 
 
     def _decode_one_step(self, arc_logits, gen_arcs_3D, mask_3D=None):

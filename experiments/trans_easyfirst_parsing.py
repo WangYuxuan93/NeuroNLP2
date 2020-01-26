@@ -421,17 +421,18 @@ def train(args):
             network.train()
             loss_arc, loss_rel, errs = network(words, chars, postags, heads, types, 
                                          mask=masks)
+            errs = errs.sum()
             #print ("errors: ", errs)
-            loss_arc = loss_arc.mean()
-            loss_rel = loss_rel.mean()
+            loss_arc = loss_arc.sum().div(errs)
+            loss_rel = loss_rel.sum().div(nwords)
 
             #loss = 0.5 *((1.0 - loss_interpolation) * loss_arc + loss_interpolation * loss_rel) + recomp_ratio * loss_recomp
-            loss_total = loss_arc + loss_rel
-            if loss_ty_token:
-                loss = loss_total.div(nwords)
-            else:
-                loss = loss_total.div(nbatch)
-            err_cnt += errs
+            loss = loss_arc + loss_rel
+            #if loss_ty_token:
+            #    loss = loss_total.div(nwords)
+            #else:
+            #    loss = loss_total.div(nbatch)
+            err_cnt += errs.cpu().numpy()
             losses.append(loss)
             if err_cnt >= args.update_batch:
                 #print ("Updating with errors: ", err_cnt)
@@ -479,9 +480,9 @@ def train(args):
             sys.stdout.write("\b" * num_back)
             sys.stdout.write(" " * num_back)
             sys.stdout.write("\b" * num_back)
-        print('total: %d (%d), steps: %d, loss: %.4f (nans: %d), arc: %.4f (%.4f), rel: %.4f (%.4f), time: %.2fs' % (num_insts, num_words, num_steps, train_loss / (num_steps+1e-9),
-                                                                                                       num_nans, train_arc_loss / (num_steps+1e-9), train_arc_loss / (num_words+1e-9),
-                                                                                                       train_rel_loss / (num_steps+1e-9), train_rel_loss / (num_words+1e-9),
+        print('total: %d (%d), steps: %d, loss: %.4f (nans: %d), arc: %.4f, rel: %.4f, time: %.2fs' % (num_insts, num_words, num_steps, train_loss / (num_steps+1e-9),
+                                                                                                       num_nans, train_arc_loss / (num_steps+1e-9),
+                                                                                                       train_rel_loss / (num_steps+1e-9),
                                                                                                        time.time() - start_time))
         print('-' * 125)
 
