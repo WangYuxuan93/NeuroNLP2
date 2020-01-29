@@ -27,7 +27,7 @@ class HardConcreteDist(nn.Module):
         """
         if self.training:
             batch_size = loc.size()
-            u = Variable(torch.Tensor(batch_size).uniform_())
+            u = Variable(torch.Tensor(batch_size).uniform_().to(loc.device))
             #self.uniform.uniform_()
             #u = Variable(self.uniform)
             s = torch.sigmoid((torch.log(u) - torch.log(1 - u) + loc) / self.temp)
@@ -47,7 +47,7 @@ class HardConcreteDist(nn.Module):
 
 
 # Testing
-
+"""
 import matplotlib.pyplot as plt
 from ipywidgets import interact
 plt.style.use("ggplot")
@@ -74,3 +74,4 @@ if __name__ == '__main__':
     temp = 0.1
     print ("Temperature:{}".format(temp))
     plot_hard_concreate(temp, eps=0.1)
+"""
