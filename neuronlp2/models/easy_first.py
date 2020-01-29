@@ -12,6 +12,7 @@ from neuronlp2.tasks import parser
 from neuronlp2.nn.transformer import GraphAttentionConfig, GraphAttentionModel, GraphAttentionModelV2
 from neuronlp2.nn.transformer import SelfAttentionConfig, SelfAttentionModel
 from neuronlp2.models.parsing import PositionEmbeddingLayer
+from neuronlp2.nn.hard_concrete import HardConcreteDist
 
 
 class EasyFirstV2(nn.Module):
@@ -29,7 +30,8 @@ class EasyFirstV2(nn.Module):
                  maximize_unencoded_arcs_for_norc=False,
                  encode_all_arc_for_rel=False,
                  use_input_encode_for_rel=False,
-                 always_recompute=False):
+                 always_recompute=False,
+                 use_hard_concrete_dist=True, hard_concrete_temp=0.1, hard_concrete_eps=0.1):
         super(EasyFirstV2, self).__init__()
         self.device = device
         self.dep_prob_depend_on_head = dep_prob_depend_on_head
@@ -39,6 +41,7 @@ class EasyFirstV2(nn.Module):
         self.use_input_encode_for_rel = use_input_encode_for_rel
         self.always_recompute = always_recompute
         self.target_recomp_prob = target_recomp_prob
+        self.use_hard_concrete_dist = use_hard_concrete_dist
 
         self.word_embed = nn.Embedding(num_words, word_dim, _weight=embedd_word, padding_idx=1)
         self.pos_embed = nn.Embedding(num_pos, pos_dim, _weight=embedd_pos, padding_idx=1) if pos else None
@@ -120,6 +123,8 @@ class EasyFirstV2(nn.Module):
 
         self.dep_dense = nn.Linear(out_dim, 1)
         if not self.always_recompute:
+            if self.use_hard_concrete_dist:
+                self.recomp_dist = HardConcreteDist(beta=hard_concrete_temp, eps=hard_concrete_eps)
             feature_dim = 3 + self.use_top2_margin
             self.recomp_dense = nn.Linear(feature_dim, 1)
 
@@ -317,12 +322,17 @@ class EasyFirstV2(nn.Module):
 
         # (batch, n_feature)
         features = torch.cat(features, -1)
-        # (batch)
-        rc_probs = torch.sigmoid(self.recomp_dense(features)).squeeze(-1)
+        if self.use_hard_concrete_dist:
+            # (batch)
+            rc_probs, l0_loss = self.recomp_dist._get_prob(self.recomp_dense(features).squeeze(-1))
+        else:
+            # (batch)
+            rc_probs = torch.sigmoid(self.recomp_dense(features)).squeeze(-1)
+            l0_loss = None
         # (batch)
         rc_logp = torch.log(rc_probs)
         norc_logp = torch.log(1.0 - rc_probs)
-        return rc_probs, rc_logp, norc_logp
+        return rc_probs, rc_logp, norc_logp, l0_loss
 
     def _get_head_logp(self, arc_c, arc_h, encoder_output, mask=None, debug=False):
         """
@@ -545,7 +555,7 @@ class EasyFirstV2(nn.Module):
             # (batch, seq_len, seq_len), mask out generated heads
             masked_norc_head_logp = torch.where(logp_mask==1, norc_head_logp_given_norc.detach(), neg_inf_logp)
             # (batch)
-            rc_probs, rc_logp, norc_logp = self._get_recomp_logp(masked_norc_head_logp, rc_gen_mask, norc_gen_mask, root_mask)
+            rc_probs, rc_logp, norc_logp, l0_loss = self._get_recomp_logp(masked_norc_head_logp, rc_gen_mask, norc_gen_mask, root_mask)
             # (batch, seq_len, seq_len)
             norc_head_logp = norc_logp.unsqueeze(1).unsqueeze(2) + norc_head_logp_given_norc
             #"""
@@ -565,9 +575,13 @@ class EasyFirstV2(nn.Module):
             
             loss_arc = -0.5*(norc_ref_heads_logp.sum()/norc_num_heads+rc_ref_heads_logp.sum()/rc_num_heads) 
             #loss_arc = - rc_ref_heads_logp.sum() / num_heads
-            # regularizer of recompute prob, prevent always predicting recompute
-            loss_recomp = self.l2_loss(rc_probs.mean(dim=-1,keepdim=True), torch.Tensor([self.target_recomp_prob]).to(device))
-            #print ("rc_probs: ({})\n {}".format(self.target_recomp_prob, rc_probs))
+            if self.use_hard_concrete_dist:
+                loss_recomp = l0_loss.sum()
+            else:
+                # regularizer of recompute prob, prevent always predicting recompute
+                loss_recomp = self.l2_loss(rc_probs.mean(dim=-1,keepdim=True), torch.Tensor([self.target_recomp_prob]).to(device))
+            
+            print ("rc_probs: ({})\n {}".format(self.target_recomp_prob, rc_probs))
             if debug:
                 print ('rc_ref_heads_onehot:\n',rc_ref_heads_onehot)
                 print ('rc_head_logp:\n', rc_head_logp)
@@ -695,8 +709,12 @@ class EasyFirstV2(nn.Module):
 
                 # (batch, n_feature)
                 features = torch.cat(features, -1)
-                # (batch)
-                rc_probs = torch.sigmoid(self.recomp_dense(features)).squeeze(-1)
+                if self.use_hard_concrete_dist:
+                    # (batch)
+                    rc_probs, _ = self.recomp_dist._get_prob(self.recomp_dense(features).squeeze(-1))
+                else:
+                    # (batch)
+                    rc_probs = torch.sigmoid(self.recomp_dense(features)).squeeze(-1)
             rc_probs_list.append(rc_probs)
 
             # ----- get top arc & update state -----
@@ -836,7 +854,7 @@ class EasyFirstV2(nn.Module):
             num_recomp = num_recomp + (new_heads_mask.sum(-1).ge(1)).int()
             if get_head_by_layer:
                 heads_by_layer.append(new_heads_mask.unsqueeze(1))
-            #print ("rc_probs_list:\n", rc_probs_list)
+            print ("rc_probs_list:\n", rc_probs_list)
             if debug:
                 print ("rc_probs_list:\n", rc_probs_list)
                 print ("logp_mask:\n",logp_mask)

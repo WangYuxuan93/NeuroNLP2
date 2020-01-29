@@ -313,6 +313,10 @@ def train(args):
     loss_interpolation = hyps['loss_interpolation']
     recomp_ratio = hyps['recomp_ratio']
     always_recompute = hyps['always_recompute']
+    use_hard_concrete_dist = hyps['use_hard_concrete_dist']
+    hc_temp = hyps['hard_concrete_temp']
+    hc_eps = hyps['hard_concrete_eps']
+
     if always_recompute:
         target_recomp_prob = 1
 
@@ -357,7 +361,9 @@ def train(args):
                            maximize_unencoded_arcs_for_norc=maximize_unencoded_arcs_for_norc,
                            encode_all_arc_for_rel=encode_all_arc_for_rel,
                            use_input_encode_for_rel=use_input_encode_for_rel,
-                           always_recompute=always_recompute)
+                           always_recompute=always_recompute,
+                           use_hard_concrete_dist=use_hard_concrete_dist, 
+                           hard_concrete_temp=hc_temp, hard_concrete_eps=hc_eps)
         if fine_tune:
             logger.info("Fine-tuning: Loading model from %s" % model_name)
             network.load_state_dict(torch.load(model_name))
@@ -381,6 +387,8 @@ def train(args):
     logger.info("Input Encoder Type: %s (layer: %d)" % (input_encoder, num_layers))
     logger.info("Use Input Self Attention Layer: %s (layer: %d)" % (input_self_attention_layer, num_input_attention_layers))
     logger.info("Use Top Self Attention Layer: %s" % extra_self_attention_layer)
+    logger.info("Use Hard Concrete Distribution: %s (Temperature: %.2f, Epsilon: %.2f)" % (use_hard_concrete_dist,
+                                                                                        hc_temp, hc_eps))
     logger.info("Always Recompute after Generation: %s" % always_recompute)
     logger.info("Maximize All Unencoded Arcs for No Recompute: %s" % maximize_unencoded_arcs_for_norc)
     logger.info("Encode All Arcs for Relation Prediction: %s" % encode_all_arc_for_rel)

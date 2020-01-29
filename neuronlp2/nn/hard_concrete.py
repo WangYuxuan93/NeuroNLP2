@@ -6,7 +6,7 @@ import torch
 
 class HardConcreteDist(nn.Module):
 
-    def __init__(self, batch_size, beta=2 / 3, eps=0.1, fix_temp=True):
+    def __init__(self, beta=2 / 3, eps=0.1, fix_temp=True):
         """
         Base class of layers using L0 Norm
         :param beta: initial temperature parameter
@@ -14,9 +14,9 @@ class HardConcreteDist(nn.Module):
         :param fix_temp: True if temperature is fixed
         """
         super(HardConcreteDist, self).__init__()
-        self.batch_size = batch_size
+        #self.batch_size = batch_size
         self.temp = beta if fix_temp else nn.Parameter(torch.zeros(1).fill_(beta))
-        self.register_buffer("uniform", torch.zeros(self.batch_size))
+        #self.register_buffer("uniform", torch.zeros(self.batch_size))
         self.eps = eps
         self.gamma_zeta_ratio = math.log(eps / (1.0+eps))
 
@@ -26,16 +26,20 @@ class HardConcreteDist(nn.Module):
             loc: (batch_size), the location parameter
         """
         if self.training:
-            self.uniform.uniform_()
-            u = Variable(self.uniform)
+            batch_size = loc.size()
+            u = Variable(torch.Tensor(batch_size).uniform_())
+            #self.uniform.uniform_()
+            #u = Variable(self.uniform)
             s = torch.sigmoid((torch.log(u) - torch.log(1 - u) + loc) / self.temp)
             #s = s * (self.zeta - self.gamma) + self.gamma
             s = s * (1 + 2 * self.eps) - self.eps
             penalty = torch.sigmoid(loc - self.temp * self.gamma_zeta_ratio).sum()
+            #print ('from training')
         else:
             #s = F.sigmoid(loc) * (self.zeta - self.gamma) + self.gamma
             s = torch.sigmoid(loc) * (1 + 2 * self.eps) - self.eps
             penalty = 0
+            #print ('from test')
         return self.hard_sigmoid(s), penalty
 
     def hard_sigmoid(self, x):
@@ -49,7 +53,7 @@ from ipywidgets import interact
 plt.style.use("ggplot")
 
 def plot_hard_concreate(temp, eps, num=50, bins=100, **kwargs):
-    hard_concrete_dist = HardConcreteDist(num//2, beta=temp, eps=0.1)
+    hard_concrete_dist = HardConcreteDist(beta=temp, eps=0.1)
     loc = torch.Tensor(num//2).normal_()
     print (loc)
 
@@ -66,6 +70,7 @@ def plot_hard_concreate(temp, eps, num=50, bins=100, **kwargs):
     plt.hist(data, bins=bins, density=True, **kwargs)
     plt.show()
 
-temp = 0.1
-print ("Temperature:{}".format(temp))
-plot_hard_concreate(temp, eps=0.1)
+if __name__ == '__main__':
+    temp = 0.1
+    print ("Temperature:{}".format(temp))
+    plot_hard_concreate(temp, eps=0.1)
