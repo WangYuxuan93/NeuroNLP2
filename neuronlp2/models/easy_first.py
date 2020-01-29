@@ -325,14 +325,22 @@ class EasyFirstV2(nn.Module):
         if self.use_hard_concrete_dist:
             # (batch)
             rc_probs, l0_loss = self.recomp_dist._get_prob(self.recomp_dense(features).squeeze(-1))
+            #rc_probs = rc_probs
+            rc_logp = torch.log(rc_probs + 1e-9)
+            norc_logp = torch.log(1.0 - rc_probs + 1e-9)
+            loss_recomp = l0_loss.sum() / batch_size
         else:
             # (batch)
             rc_probs = torch.sigmoid(self.recomp_dense(features)).squeeze(-1)
             l0_loss = None
+            rc_logp = torch.log(rc_probs)
+            norc_logp = torch.log(1.0 - rc_probs)
+            loss_recomp = self.l2_loss(rc_probs.mean(dim=-1,keepdim=True), torch.Tensor([self.target_recomp_prob]).to(head_logp.device))
         # (batch)
-        rc_logp = torch.log(rc_probs)
-        norc_logp = torch.log(1.0 - rc_probs)
-        return rc_probs, rc_logp, norc_logp, l0_loss
+        
+        #print ("rc_logp:\n",rc_logp)
+        #print ("norc_logp:\n",norc_logp)
+        return rc_probs, rc_logp, norc_logp, loss_recomp
 
     def _get_head_logp(self, arc_c, arc_h, encoder_output, mask=None, debug=False):
         """
@@ -555,7 +563,7 @@ class EasyFirstV2(nn.Module):
             # (batch, seq_len, seq_len), mask out generated heads
             masked_norc_head_logp = torch.where(logp_mask==1, norc_head_logp_given_norc.detach(), neg_inf_logp)
             # (batch)
-            rc_probs, rc_logp, norc_logp, l0_loss = self._get_recomp_logp(masked_norc_head_logp, rc_gen_mask, norc_gen_mask, root_mask)
+            rc_probs, rc_logp, norc_logp, loss_recomp = self._get_recomp_logp(masked_norc_head_logp, rc_gen_mask, norc_gen_mask, root_mask)
             # (batch, seq_len, seq_len)
             norc_head_logp = norc_logp.unsqueeze(1).unsqueeze(2) + norc_head_logp_given_norc
             #"""
@@ -575,13 +583,13 @@ class EasyFirstV2(nn.Module):
             
             loss_arc = -0.5*(norc_ref_heads_logp.sum()/norc_num_heads+rc_ref_heads_logp.sum()/rc_num_heads) 
             #loss_arc = - rc_ref_heads_logp.sum() / num_heads
-            if self.use_hard_concrete_dist:
-                loss_recomp = l0_loss.sum()
-            else:
+            #if self.use_hard_concrete_dist:
+            #    loss_recomp = l0_loss
+            #else:
                 # regularizer of recompute prob, prevent always predicting recompute
-                loss_recomp = self.l2_loss(rc_probs.mean(dim=-1,keepdim=True), torch.Tensor([self.target_recomp_prob]).to(device))
+                
             
-            print ("rc_probs: ({})\n {}".format(self.target_recomp_prob, rc_probs))
+            #print ("rc_probs: ({})\n {}".format(self.target_recomp_prob, rc_probs))
             if debug:
                 print ('rc_ref_heads_onehot:\n',rc_ref_heads_onehot)
                 print ('rc_head_logp:\n', rc_head_logp)
@@ -616,7 +624,7 @@ class EasyFirstV2(nn.Module):
             print ("num_total_heads:",num_total_heads)
 
         if not fast_mode and self.encode_all_arc_for_rel:
-            print ("Encoding all arc for relation")
+            #print ("Encoding all arc for relation")
             # encode all arcs for relation prediction
             all_encoder_layers = self.graph_attention(input_encoder_output, heads_3D, root_mask)
             # (batch, length, hidden_size)
@@ -854,7 +862,7 @@ class EasyFirstV2(nn.Module):
             num_recomp = num_recomp + (new_heads_mask.sum(-1).ge(1)).int()
             if get_head_by_layer:
                 heads_by_layer.append(new_heads_mask.unsqueeze(1))
-            print ("rc_probs_list:\n", rc_probs_list)
+            #print ("rc_probs_list:\n", rc_probs_list)
             if debug:
                 print ("rc_probs_list:\n", rc_probs_list)
                 print ("logp_mask:\n",logp_mask)
