@@ -934,6 +934,13 @@ class EasyFirstV2(nn.Module):
         batch_size, seq_len = input_word.size()
         device = gold_heads.device
 
+        if self.always_recompute:
+            random_recomp = True
+            recomp_prob = 1
+        else:
+            random_recomp = False
+            recomp_prob = 0
+
         # for neural network
         # (batch_size, seq_len)
         heads_pred = torch.zeros((batch_size, seq_len), dtype=torch.int64, device=device)
@@ -983,7 +990,8 @@ class EasyFirstV2(nn.Module):
             # rc_probs_list: k* (batch), the probability of recompute after each arc generated
             # new_heads_onehot: (batch, seq_len, seq_len), newly generated arcs
             rc_probs_list, new_heads_onehot, order_mask = self._decode_one_step(masked_head_logp, 
-                                        heads_mask, root_mask, device=device, get_order=True)
+                                        heads_mask, root_mask, device=device, get_order=True, 
+                                        random_recomp=random_recomp, recomp_prob=recomp_prob)
             tmp_rc_mask = heads_mask
             heads_mask_ = heads_mask.cpu().numpy()
             # (batch, seq_len)
