@@ -31,7 +31,8 @@ class EasyFirstV2(nn.Module):
                  encode_all_arc_for_rel=False,
                  use_input_encode_for_rel=False,
                  always_recompute=False,
-                 use_hard_concrete_dist=True, hard_concrete_temp=0.1, hard_concrete_eps=0.1):
+                 use_hard_concrete_dist=True, hard_concrete_temp=0.1, hard_concrete_eps=0.1,
+                 apply_recomp_prob_first=False):
         super(EasyFirstV2, self).__init__()
         self.device = device
         self.dep_prob_depend_on_head = dep_prob_depend_on_head
@@ -42,6 +43,7 @@ class EasyFirstV2(nn.Module):
         self.always_recompute = always_recompute
         self.target_recomp_prob = target_recomp_prob
         self.use_hard_concrete_dist = use_hard_concrete_dist
+        self.apply_recomp_prob_first = apply_recomp_prob_first
 
         self.word_embed = nn.Embedding(num_words, word_dim, _weight=embedd_word, padding_idx=1)
         self.pos_embed = nn.Embedding(num_pos, pos_dim, _weight=embedd_pos, padding_idx=1) if pos else None
@@ -564,24 +566,38 @@ class EasyFirstV2(nn.Module):
             masked_norc_head_logp = torch.where(logp_mask==1, norc_head_logp_given_norc.detach(), neg_inf_logp)
             # (batch)
             rc_probs, rc_logp, norc_logp, loss_recomp = self._get_recomp_logp(masked_norc_head_logp, rc_gen_mask, norc_gen_mask, root_mask)
-            # (batch, seq_len, seq_len)
-            norc_head_logp = norc_logp.unsqueeze(1).unsqueeze(2) + norc_head_logp_given_norc
-            #"""
             # compute arc logp for recompute generate mask
             # (batch, seq_len, seq_len)
             rc_head_logp_given_rc = self._get_head_logp(rc_arc_c, rc_arc_h, rc_encoder_output)
-            # (batch, seq_len, seq_len)
-            rc_head_logp = rc_logp.unsqueeze(1).unsqueeze(2) + rc_head_logp_given_rc
+            if self.apply_recomp_prob_first:
+                # (batch, seq_len, seq_len)
+                head_probs = (1-rc_probs).unsqueeze(1).unsqueeze(2) * torch.exp(norc_head_logp_given_norc) + rc_probs.unsqueeze(1).unsqueeze(2) * torch.exp(rc_head_logp_given_rc)
+                head_logp = torch.log(head_probs)
+                # (batch), number of ref heads in total
+                rc_num_heads = rc_ref_heads_onehot.sum() + 1e-5
+                # (batch), reference loss for recompute
+                ref_heads_logp = (head_logp * rc_ref_heads_onehot).sum(dim=(1,2))
+                loss_arc = - ref_heads_logp.sum()/rc_num_heads
+                if debug:
+                    print ("rc_probs:\n", rc_probs)
+                    print ("rc_head_logp_given_norc:\n", rc_head_logp_given_rc)
+                    print ("norc_head_logp_given_norc:\n", norc_head_logp_given_norc)
+                    print ("head_logp:\n", head_logp)
+            else:
+                # (batch, seq_len, seq_len)
+                norc_head_logp = norc_logp.unsqueeze(1).unsqueeze(2) + norc_head_logp_given_norc
+                # (batch, seq_len, seq_len)
+                rc_head_logp = rc_logp.unsqueeze(1).unsqueeze(2) + rc_head_logp_given_rc
 
-            # (batch), number of ref heads in total
-            rc_num_heads = rc_ref_heads_onehot.sum() + 1e-5
-            norc_num_heads = norc_ref_heads_onehot.sum() + 1e-5
-            # (batch), reference loss for no recompute
-            norc_ref_heads_logp = (norc_head_logp * norc_ref_heads_onehot).sum(dim=(1,2))
-            # (batch), reference loss for recompute
-            rc_ref_heads_logp = (rc_head_logp * rc_ref_heads_onehot).sum(dim=(1,2))
-            
-            loss_arc = -0.5*(norc_ref_heads_logp.sum()/norc_num_heads+rc_ref_heads_logp.sum()/rc_num_heads) 
+                # (batch), number of ref heads in total
+                rc_num_heads = rc_ref_heads_onehot.sum() + 1e-5
+                norc_num_heads = norc_ref_heads_onehot.sum() + 1e-5
+                # (batch), reference loss for no recompute
+                norc_ref_heads_logp = (norc_head_logp * norc_ref_heads_onehot).sum(dim=(1,2))
+                # (batch), reference loss for recompute
+                rc_ref_heads_logp = (rc_head_logp * rc_ref_heads_onehot).sum(dim=(1,2))
+                
+                loss_arc = -0.5*(norc_ref_heads_logp.sum()/norc_num_heads+rc_ref_heads_logp.sum()/rc_num_heads) 
             #loss_arc = - rc_ref_heads_logp.sum() / num_heads
             #if self.use_hard_concrete_dist:
             #    loss_recomp = l0_loss
