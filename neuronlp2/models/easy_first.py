@@ -123,7 +123,7 @@ class EasyFirstV2(nn.Module):
             self.rel_c = nn.Linear(graph_attention_dim, type_space)
         self.rel_attn = BiAffine_v2(type_space, n_out=self.num_labels, bias_x=True, bias_y=True)
 
-        self.dep_dense = nn.Linear(out_dim, 1)
+        self.dep_dense = nn.Linear(graph_attention_dim, 1)
         if not self.always_recompute:
             if self.use_hard_concrete_dist:
                 self.recomp_dist = HardConcreteDist(beta=hard_concrete_temp, eps=hard_concrete_eps)
