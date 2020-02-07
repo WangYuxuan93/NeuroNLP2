@@ -583,6 +583,12 @@ class EasyFirstV2(nn.Module):
                     print ("rc_head_logp_given_norc:\n", rc_head_logp_given_rc)
                     print ("norc_head_logp_given_norc:\n", norc_head_logp_given_norc)
                     print ("head_logp:\n", head_logp)
+                if not torch.isfinite(loss_arc):
+                    print ("None Finite Loss Detected")
+                    print ("rc_probs:\n", rc_probs)
+                    print ("rc_head_logp_given_norc:\n", rc_head_logp_given_rc)
+                    print ("norc_head_logp_given_norc:\n", norc_head_logp_given_norc)
+                    print ("head_logp:\n", head_logp)
             else:
                 # (batch, seq_len, seq_len)
                 norc_head_logp = norc_logp.unsqueeze(1).unsqueeze(2) + norc_head_logp_given_norc
