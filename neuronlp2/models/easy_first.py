@@ -32,7 +32,7 @@ class EasyFirstV2(nn.Module):
                  use_input_encode_for_rel=False,
                  always_recompute=False,
                  use_hard_concrete_dist=True, hard_concrete_temp=0.1, hard_concrete_eps=0.1,
-                 apply_recomp_prob_first=False):
+                 apply_recomp_prob_first=False, num_graph_attention_layers=1):
         super(EasyFirstV2, self).__init__()
         self.device = device
         self.dep_prob_depend_on_head = dep_prob_depend_on_head
@@ -97,6 +97,7 @@ class EasyFirstV2(nn.Module):
                                             hidden_size=hidden_size,
                                             arc_space=arc_space,
                                             num_attention_heads=num_attention_heads,
+                                            num_graph_attention_layers=num_graph_attention_layers,
                                             intermediate_size=intermediate_size,
                                             hidden_act="gelu",
                                             hidden_dropout_prob=hidden_dropout_prob,

@@ -372,6 +372,7 @@ class GraphAttentionConfig(object):
                 input_size=100,
                 hidden_size=768,
                 arc_space=600,
+                num_graph_attention_layers=1,
                 num_attention_heads=12,
                 intermediate_size=3072,
                 hidden_act="gelu",
@@ -409,6 +410,7 @@ class GraphAttentionConfig(object):
         self.hidden_size = hidden_size
         self.arc_space = arc_space
         self.num_attention_heads = num_attention_heads
+        self.num_graph_attention_layers = num_graph_attention_layers
         self.hidden_act = hidden_act
         self.intermediate_size = intermediate_size
         self.hidden_dropout_prob = hidden_dropout_prob
@@ -809,13 +811,16 @@ class GraphAttentionLayerV2(nn.Module):
 class GraphAttentionEncoderV2(nn.Module):
     def __init__(self, config):
         super(GraphAttentionEncoderV2, self).__init__()
-        self.layer = GraphAttentionLayerV2(config)
+        layer = GraphAttentionLayerV2(config)
+        self.layers = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.num_graph_attention_layers)])
 
     def forward(self, hidden_states, graph_matrix, attention_mask):
         all_encoder_layers = []
-        hidden_states = self.layer(hidden_states, graph_matrix, attention_mask)
-        all_encoder_layers.append(hidden_states)
+        for layer_module in self.layers:
+            hidden_states = layer_module(hidden_states, graph_matrix, attention_mask)
+            all_encoder_layers.append(hidden_states)
         return all_encoder_layers
+
 
 class GraphAttentionModelV2(nn.Module):
     def __init__(self, config: GraphAttentionConfig):

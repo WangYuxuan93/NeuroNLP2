@@ -13,7 +13,7 @@
   "use_hard_concrete_dist": true,
   "hard_concrete_temp": 0.1,
   "hard_concrete_eps": 0.1,
-  "apply_recomp_prob_first": true,
+  "apply_recomp_prob_first": false,
   "use_whole_seq": true,
   "use_top2_margin": true,
   "dep_prob_depend_on_head": false,
@@ -21,7 +21,8 @@
   "input_self_attention_layer": false,
   "num_input_attention_layers": 3,
   "input_encoder": "Linear",
-  "num_layers": 3,
+  "num_layers": 1,
+  "num_graph_attention_layers": 1,
   "pos_dim": 100,
   "target_recomp_prob": 0.25,
   "hidden_size": 256,
@@ -37,6 +38,6 @@
   "attention_probs_dropout_prob":  0.1,
   "graph_attention_probs_dropout_prob": 0,
   "loss_interpolation": 0.25,
-  "recomp_ratio": 0.1,
+  "recomp_ratio": 0.01,
   "activation": "elu"
 }
