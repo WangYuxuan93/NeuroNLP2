@@ -145,6 +145,7 @@ class EasyFirstV2(nn.Module):
             self.dropout_out.to(device)
             if self.input_encoder is not None:
                 self.input_encoder.to(device)
+            self.position_embedding_layer.to(device)
             self.graph_attention.to(device)
             self.arc_h.to(device)
             self.arc_c.to(device)
@@ -584,11 +585,15 @@ class EasyFirstV2(nn.Module):
                     print ("norc_head_logp_given_norc:\n", norc_head_logp_given_norc)
                     print ("head_logp:\n", head_logp)
                 if not torch.isfinite(loss_arc):
-                    print ("None Finite Loss Detected")
+                    np.set_printoptions(threshold=np.inf)
+                    print ("None Finite Loss Detected:", loss_arc)
                     print ("rc_probs:\n", rc_probs)
-                    print ("rc_head_logp_given_norc:\n", rc_head_logp_given_rc)
+                    print ("rc_head_logp_given_rc:\n", rc_head_logp_given_rc)
                     print ("norc_head_logp_given_norc:\n", norc_head_logp_given_norc)
-                    print ("head_logp:\n", head_logp)
+                    print ("torch.exp(rc_head_logp_given_rc):\n", torch.exp(rc_head_logp_given_rc))
+                    print ("head_logp:\n", head_logp.detach().cpu().numpy())
+                    print ("head_logp* rc_ref_heads_onehot:\n", (head_logp*rc_ref_heads_onehot).detach().cpu().numpy())
+                    print ("ref_heads_logp:\n", ref_heads_logp)
             else:
                 # (batch, seq_len, seq_len)
                 norc_head_logp = norc_logp.unsqueeze(1).unsqueeze(2) + norc_head_logp_given_norc
