@@ -343,6 +343,7 @@ def train(args):
         encode_all_arc_for_rel = hyps['encode_all_arc_for_rel']
         use_input_encode_for_rel = hyps['use_input_encode_for_rel']
         num_graph_attention_layers = hyps['num_graph_attention_layers']
+        share_params = hyps['share_params']
         
         network = EasyFirstV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                            hidden_size, num_types, arc_space, type_space,
@@ -367,7 +368,8 @@ def train(args):
                            use_hard_concrete_dist=use_hard_concrete_dist, 
                            hard_concrete_temp=hc_temp, hard_concrete_eps=hc_eps,
                            apply_recomp_prob_first=apply_recomp_prob_first,
-                           num_graph_attention_layers=num_graph_attention_layers)
+                           num_graph_attention_layers=num_graph_attention_layers,
+                           share_params=share_params)
         if fine_tune:
             logger.info("Fine-tuning: Loading model from %s" % model_name)
             network.load_state_dict(torch.load(model_name))
@@ -386,7 +388,8 @@ def train(args):
 
     #network = network.to(device)
     model = "{}-{}".format(model_type, mode)
-    logger.info("Network: %s, hidden=%d, act=%s, graph att layers:%s" % (model, hidden_size, activation, num_graph_attention_layers))
+    logger.info("Network: %s, hidden=%d, act=%s, graph att layers:%s, share params:%s" % (model, 
+                hidden_size, activation, num_graph_attention_layers, share_params))
     logger.info("dropout(in, out, hidden, att, graph_att): %s(%.2f, %.2f, %.2f, %.2f, %.2f)" % ('variational', p_in, p_out, p_hid, p_att, p_graph_att))
     logger.info("Input Encoder Type: %s (layer: %d)" % (input_encoder, num_layers))
     logger.info("Use Input Self Attention Layer: %s (layer: %d)" % (input_self_attention_layer, num_input_attention_layers))

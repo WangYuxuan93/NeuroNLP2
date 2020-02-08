@@ -381,6 +381,7 @@ class GraphAttentionConfig(object):
                 graph_attention_probs_dropout_prob=0,
                 max_position_embeddings=512,
                 initializer_range=0.02,
+                share_params=False,
                 extra_self_attention_layer=False,
                 input_self_attention_layer=False,
                 num_input_attention_layers=3):
@@ -418,6 +419,7 @@ class GraphAttentionConfig(object):
         self.graph_attention_probs_dropout_prob = graph_attention_probs_dropout_prob
         self.max_position_embeddings = max_position_embeddings
         self.initializer_range = initializer_range
+        self.share_params = share_params
         self.extra_self_attention_layer = extra_self_attention_layer
         self.input_self_attention_layer = input_self_attention_layer
         self.num_input_attention_layers = num_input_attention_layers
@@ -811,14 +813,24 @@ class GraphAttentionLayerV2(nn.Module):
 class GraphAttentionEncoderV2(nn.Module):
     def __init__(self, config):
         super(GraphAttentionEncoderV2, self).__init__()
+        self.share_params = config.share_params
+        self.num_graph_attention_layers = config.num_graph_attention_layers
         layer = GraphAttentionLayerV2(config)
-        self.layers = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.num_graph_attention_layers)])
+        if self.share_params:
+            self.layer = layer
+        else:
+            self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.num_graph_attention_layers)])
 
     def forward(self, hidden_states, graph_matrix, attention_mask):
         all_encoder_layers = []
-        for layer_module in self.layers:
-            hidden_states = layer_module(hidden_states, graph_matrix, attention_mask)
-            all_encoder_layers.append(hidden_states)
+        if self.share_params:
+            for _ in range(self.num_graph_attention_layers):
+                hidden_states = self.layer(hidden_states, graph_matrix, attention_mask)
+                all_encoder_layers.append(hidden_states)
+        else:
+            for layer_module in self.layer:
+                hidden_states = layer_module(hidden_states, graph_matrix, attention_mask)
+                all_encoder_layers.append(hidden_states)
         return all_encoder_layers
 
 
