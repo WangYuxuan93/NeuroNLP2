@@ -56,7 +56,8 @@ def random_sample(data, batch_size, step_batch_size=None, unk_replace=0., shuffl
     if shuffle:
         np.random.shuffle((bucket_indices))
 
-    easyfirst_keys = ['MASK', 'POS', 'CHAR', 'HEAD', 'TYPE','RECOMP_GEN_MASK', 'NO_RECOMP_GEN_MASK', 'NEXT_HEAD_MASK']
+    easyfirst_keys = ['MASK', 'POS', 'CHAR', 'HEAD', 'TYPE', 'RECOMP_GEN_MASK', 'NO_RECOMP_GEN_MASK', 
+                      'REF_MASK', 'NEXT_HEAD_MASK']
     for bucket_id in bucket_indices:
         data = data_tensor[bucket_id]
         bucket_size = bucket_sizes[bucket_id]
@@ -110,7 +111,8 @@ def sample_generate_order(batch, lengths, target_recomp_prob=0.25, recomp_in_pre
     batch_length = lengths.max().item()
 
     basic_keys = ['WORD', 'MASK', 'LENGTH', 'POS', 'CHAR', 'HEAD', 'TYPE', 'SINGLE']
-    all_keys = basic_keys + ['RECOMP_GEN_MASK', 'NO_RECOMP_GEN_MASK', 'NEXT_HEAD_MASK']
+    all_keys = basic_keys + ['RECOMP_GEN_MASK', 'NO_RECOMP_GEN_MASK', 'REF_MASK', 
+                             'NEXT_HEAD_MASK']
     sampled_batch = {key: [] for key in all_keys}
 
     # for every sentence
@@ -140,12 +142,16 @@ def sample_generate_order(batch, lengths, target_recomp_prob=0.25, recomp_in_pre
         zero_mask = np.zeros([batch_length], dtype=np.int32)
         recomp_gen_heads = np.zeros([batch_length], dtype=np.int32)
         no_recomp_gen_heads = np.zeros([batch_length], dtype=np.int32)
+        token_mask = np.zeros([batch_length], dtype=np.int32)
+        token_mask[1:seq_len] = 1
         # the input generated head list if do recompute before predicting
         recomp_gen_list = []
         # the input generated head list if not do recompute before predicting
         no_recomp_gen_list = []
         # whether to recompute at this step
         recomp_list = []
+        # the not generated arc set
+        ref_list = []
         # the next head to be generated, in shape of 0-1 mask
         next_list = []
         while n_step < len(sample_order):
@@ -155,6 +161,7 @@ def sample_generate_order(batch, lengths, target_recomp_prob=0.25, recomp_in_pre
                 next_list[-1][next_step] = 1
                 recomp_gen_list.append(np.copy(recomp_gen_heads))
                 no_recomp_gen_list.append(np.copy(no_recomp_gen_heads))
+                ref_list.append(token_mask - recomp_gen_heads)
                 #recomp_list.append(NO_RECOMP)
                 # add one new head to the generated heads with recomp
                 recomp_gen_heads[next_step] = 1
@@ -168,13 +175,14 @@ def sample_generate_order(batch, lengths, target_recomp_prob=0.25, recomp_in_pre
             print ("recomp_gen_list:\n", recomp_gen_list)
             print ("no_recomp_gen_list:\n", no_recomp_gen_list)
             print ("next_list:\n", next_list)
-        
+
         for n_step in range(len(next_list)):
             for key in basic_keys:
                 sampled_batch[key].append(batch[key][i])
             sampled_batch['RECOMP_GEN_MASK'].append(recomp_gen_list[n_step])
             sampled_batch['NO_RECOMP_GEN_MASK'].append(no_recomp_gen_list[n_step])
             sampled_batch['NEXT_HEAD_MASK'].append(next_list[n_step])
+            sampled_batch['REF_MASK'].append(ref_list[n_step])
 
     for key in sampled_batch.keys():
         sampled_batch[key] = torch.from_numpy(np.stack(sampled_batch[key]))
@@ -194,8 +202,10 @@ def from_model_sample(network, data, batch_size, unk_replace=0., shuffle=False,
         np.random.shuffle((bucket_indices))
 
     basic_keys = ['MASK', 'POS', 'CHAR', 'HEAD', 'TYPE']
-    all_keys =  basic_keys + ['WORD', 'LENGTH', 'RECOMP_GEN_MASK', 'NO_RECOMP_GEN_MASK', 'NEXT_HEAD_MASK']
-    easyfirst_keys = ['MASK', 'POS', 'CHAR', 'HEAD', 'TYPE','RECOMP_GEN_MASK', 'NO_RECOMP_GEN_MASK', 'NEXT_HEAD_MASK']
+    all_keys =  basic_keys + ['WORD', 'LENGTH', 'RECOMP_GEN_MASK', 'NO_RECOMP_GEN_MASK', 'REF_MASK', 
+                              'NEXT_HEAD_MASK']
+    easyfirst_keys = ['MASK', 'POS', 'CHAR', 'HEAD', 'TYPE','RECOMP_GEN_MASK', 'NO_RECOMP_GEN_MASK', 
+                      'REF_MASK', 'NEXT_HEAD_MASK']
 
     for bucket_id in bucket_indices:
         data = data_tensor[bucket_id]

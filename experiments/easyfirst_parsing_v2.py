@@ -509,6 +509,7 @@ def train(args):
             recomp_gen_mask = data['RECOMP_GEN_MASK'].to(device)
             # (batch, seq_len)
             no_recmp_gen_mask = data['NO_RECOMP_GEN_MASK'].to(device)
+            ref_mask = data['REF_MASK'].to(device)
             if use_chosen_head:
                 next_head_mask = data['NEXT_HEAD_MASK'].to(device)
             else:
@@ -516,7 +517,7 @@ def train(args):
             nwords = masks.sum() - nbatch
             network.train()
             loss_arc, loss_rel, loss_recomp = network(words, chars, postags, heads, types, 
-                                                recomp_gen_mask, no_recmp_gen_mask, 
+                                                recomp_gen_mask, no_recmp_gen_mask, ref_mask, 
                                                 mask=masks, next_head_mask=next_head_mask, device=device)
             loss_arc = loss_arc.mean()
             loss_rel = loss_rel.mean()

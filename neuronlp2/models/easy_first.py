@@ -394,7 +394,7 @@ class EasyFirstV2(nn.Module):
 
 
     def forward(self, input_word, input_char, input_pos, heads, rels, rc_gen_mask, 
-             norc_gen_mask, mask=None, next_head_mask=None, device=torch.device('cpu'),
+             norc_gen_mask, ref_mask, mask=None, next_head_mask=None, device=torch.device('cpu'),
              debug=False):
         """
         Input:
@@ -418,16 +418,18 @@ class EasyFirstV2(nn.Module):
         mask_3D = (root_mask.unsqueeze(-1) * mask.unsqueeze(1))
 
         # (batch, seq_len), the mask of generated heads
-        generated_head_mask = rc_gen_mask
+        #generated_head_mask = rc_gen_mask
         if next_head_mask is None:
             # (batch, seq_len), mask of heads t.cuda()o be generated
-            rc_ref_heads_mask = (1 - generated_head_mask) * root_mask
+            #rc_ref_heads_mask = (1 - generated_head_mask) * root_mask
+            rc_ref_heads_mask = ref_mask * root_mask
         else:
             rc_ref_heads_mask = next_head_mask
         # (batch, seq_len, seq_len)
         rc_ref_heads_onehot = torch.zeros(batch_size, seq_len, seq_len, dtype=torch.int32, device=device)
         rc_ref_heads_onehot.scatter_(-1, (rc_ref_heads_mask*heads).unsqueeze(-1).long(), 1)
         rc_ref_heads_onehot = rc_ref_heads_onehot * rc_ref_heads_mask.unsqueeze(2)
+        """
         if self.maximize_unencoded_arcs_for_norc:
             norc_ref_heads_mask = (1 - norc_gen_mask) * root_mask
             norc_ref_heads_onehot = torch.zeros(batch_size, seq_len, seq_len, dtype=torch.int32, device=device)
@@ -436,6 +438,9 @@ class EasyFirstV2(nn.Module):
         else:
             norc_ref_heads_mask = None
             norc_ref_heads_onehot = rc_ref_heads_onehot
+        """
+        norc_ref_heads_mask = None
+        norc_ref_heads_onehot = rc_ref_heads_onehot
         
         # (batch, seq_len, seq_len)
         rels_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.long, device=device)
@@ -972,7 +977,7 @@ class EasyFirstV2(nn.Module):
 
         # collect inference results
         basic_keys = ['WORD', 'MASK', 'LENGTH', 'POS', 'CHAR', 'HEAD', 'TYPE']
-        all_keys =  basic_keys + ['RECOMP_GEN_MASK', 'NO_RECOMP_GEN_MASK', 'NEXT_HEAD_MASK']
+        all_keys =  basic_keys + ['RECOMP_GEN_MASK', 'NO_RECOMP_GEN_MASK', 'REF_MASK', 'NEXT_HEAD_MASK']
         sampled_batch = {key: [] for key in all_keys}
 
         next_list = []
@@ -1024,6 +1029,7 @@ class EasyFirstV2(nn.Module):
                 has_head = next_head_mask.sum(-1).cpu().numpy()
                 next_head_mask_ = next_head_mask.cpu().numpy()
                 tmp_rc_mask_ = tmp_rc_mask.cpu().numpy()
+                ref_mask_ = (root_mask.int() - tmp_rc_mask).cpu().numpy()
                 for j in range(batch_size):
                     if has_head[j] == 1:
                         for key in basic_keys:
@@ -1031,6 +1037,7 @@ class EasyFirstV2(nn.Module):
                         sampled_batch['RECOMP_GEN_MASK'].append(tmp_rc_mask_[j])
                         sampled_batch['NO_RECOMP_GEN_MASK'].append(heads_mask_[j])
                         sampled_batch['NEXT_HEAD_MASK'].append(next_head_mask_[j])
+                        sampled_batch['REF_MASK'].append(ref_mask_[j])
                         #next_list.append(next_head_mask_[j])
                         #rc_gen_list.append(tmp_rc_mask_[j])
                         #norc_gen_list.append(heads_mask_[j])
