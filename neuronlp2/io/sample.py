@@ -49,7 +49,7 @@ def random_sample_(data, batch_size, step_batch_size=None, unk_replace=0., shuff
 """
 
 def random_sample(data, batch_size, step_batch_size=None, unk_replace=0., shuffle=False, 
-                    target_recomp_prob=0.25, debug=False, use_2d_mask=False):
+                    target_recomp_prob=0.25, debug=False, use_1d_mask=False):
     data_tensor, bucket_sizes = data
 
     bucket_indices = np.arange(len(bucket_sizes))
@@ -69,7 +69,7 @@ def random_sample(data, batch_size, step_batch_size=None, unk_replace=0., shuffl
             continue
 
         sampled_data = sample_generate_order(data, data['LENGTH'], target_recomp_prob=target_recomp_prob, 
-                                            use_2d_mask=use_2d_mask)
+                                            use_1d_mask=use_1d_mask)
         sample_size = sampled_data['WORD'].size(0)
         if sample_size == 0:
             continue
@@ -99,7 +99,7 @@ def random_sample(data, batch_size, step_batch_size=None, unk_replace=0., shuffl
             # [batch_size, batch_len]
             batch = {'WORD': words[excerpt, :batch_length], 'LENGTH': lengths}
             batch.update({key: field[excerpt, :batch_length] for key, field in sampled_data.items() if key in basic_keys and key not in ['WORD','LENGTH']})
-            if use_2d_mask:
+            if use_1d_mask:
                 batch.update({key: field[excerpt, :batch_length] for key, field in sampled_data.items() if key in all_keys and key not in basic_keys})
             else:
                 batch.update({key: field[excerpt, :batch_length, :batch_length] for key, field in sampled_data.items() if key in all_keys and key not in basic_keys})
@@ -111,7 +111,7 @@ def random_sample(data, batch_size, step_batch_size=None, unk_replace=0., shuffl
             yield batch
 
 def sample_generate_order(batch, lengths, target_recomp_prob=0.25, recomp_in_prev=False, 
-                          debug=False, use_2d_mask=False):
+                          debug=False, use_1d_mask=False):
 
     RECOMP = -1
     #EOS = -2
@@ -151,7 +151,7 @@ def sample_generate_order(batch, lengths, target_recomp_prob=0.25, recomp_in_pre
             #print ("recomp_pos:",recomp_pos)
             print ("sample_order:",sample_order)
         n_step = 0
-        if use_2d_mask:
+        if use_1d_mask:
             zero_mask = np.zeros([batch_length], dtype=np.int32)
             recomp_gen_heads = np.zeros([batch_length], dtype=np.int32)
             no_recomp_gen_heads = np.zeros([batch_length], dtype=np.int32)
@@ -179,7 +179,7 @@ def sample_generate_order(batch, lengths, target_recomp_prob=0.25, recomp_in_pre
         while n_step < len(sample_order):
             next_step = sample_order[n_step]
             if next_step != RECOMP:
-                if use_2d_mask:
+                if use_1d_mask:
                     next_list.append(np.copy(zero_mask))
                     next_list[-1][next_step] = 1
                     recomp_gen_list.append(np.copy(recomp_gen_heads))
@@ -225,7 +225,7 @@ def sample_generate_order(batch, lengths, target_recomp_prob=0.25, recomp_in_pre
 
 
 def from_model_sample(network, data, batch_size, unk_replace=0., shuffle=False, 
-                      device=torch.device('cpu'), debug=False):
+                      device=torch.device('cpu'), debug=False, explore=False):
     data_tensor, bucket_sizes = data
 
     bucket_indices = np.arange(len(bucket_sizes))
@@ -281,7 +281,7 @@ def from_model_sample(network, data, batch_size, unk_replace=0., shuffle=False,
             gold_heads = batch['HEAD'].to(device)
             mask = batch['MASK'].to(device)
             sampled_batch = network.inference(input_word, input_char, input_pos, gold_heads, 
-                                batch, mask=mask, device=device)
+                                batch, mask=mask, device=device, explore=explore)
             for key in all_keys:
                 sampled_batches[key].append(sampled_batch[key])
 

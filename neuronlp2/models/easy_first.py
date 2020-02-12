@@ -396,7 +396,7 @@ class EasyFirstV2(nn.Module):
 
     def forward(self, input_word, input_char, input_pos, heads, rels, rc_gen_mask, 
              norc_gen_mask, ref_mask, mask=None, next_head_mask=None, device=torch.device('cpu'),
-             debug=False, use_2d_mask=False):
+             debug=False, use_1d_mask=False):
         """
         Input:
             input_word: (batch, seq_len)
@@ -425,7 +425,7 @@ class EasyFirstV2(nn.Module):
         heads_3D.scatter_(-1, heads.unsqueeze(-1), 1)
         heads_3D = (heads_3D * mask_3D).int()
 
-        if use_2d_mask:
+        if use_1d_mask:
             # (batch, seq_len), the mask of generated heads
             #generated_head_mask = rc_gen_mask
             if next_head_mask is None:
@@ -702,7 +702,7 @@ class EasyFirstV2(nn.Module):
 
     def _decode_one_step(self, head_logp, heads_mask, mask, device=torch.device('cpu'), 
                             debug=False, get_order=False, random_recomp=False, recomp_prob=0.25,
-                            use_2d_mask=False):
+                            use_1d_mask=False):
         """
         Input:
             head_logp: (batch, seq_len, seq_len)
@@ -828,7 +828,7 @@ class EasyFirstV2(nn.Module):
                 print ("masked_head_logp:\n",masked_head_logp)
 
             if get_order:
-                if use_2d_mask:
+                if use_1d_mask:
                     # n * (batch, seq_len), 1 for dep of new arc
                     order_mask.append(new_arc_onehot.sum(-1))
                 else:
@@ -975,7 +975,7 @@ class EasyFirstV2(nn.Module):
 
 
     def inference(self, input_word, input_char, input_pos, gold_heads, batch, mask=None, 
-                  explore=False, debug=False, device=torch.device('cpu'), use_2d_mask=False):
+                  explore=False, debug=False, device=torch.device('cpu'), use_1d_mask=False):
         """
         Input:
             input_word: (batch, seq_len)
@@ -1049,9 +1049,9 @@ class EasyFirstV2(nn.Module):
             rc_probs_list, new_heads_onehot, order_mask = self._decode_one_step(masked_head_logp, 
                                         heads_mask, root_mask, device=device, get_order=True, 
                                         random_recomp=random_recomp, recomp_prob=recomp_prob,
-                                        use_2d_mask=use_2d_mask)
+                                        use_1d_mask=use_1d_mask)
             
-            if use_2d_mask:
+            if use_1d_mask:
                 tmp_rc_mask = heads_mask
                 heads_mask_ = heads_mask.cpu().numpy()
                 # (batch, seq_len)
@@ -1080,9 +1080,11 @@ class EasyFirstV2(nn.Module):
                 for i, next_head_mask in enumerate(order_mask):
                     # (batch)
                     has_head = next_head_mask.sum(dim=(-1,-2)).cpu().numpy()
-                    next_head_mask_ = next_head_mask.cpu().numpy()
+                    next_head_mask_ = (gold_heads_3D * next_head_mask.sum(-1).unsqueeze(-1)).cpu().numpy()
                     tmp_rc_mask_ = tmp_rc_mask.cpu().numpy()
-                    ref_mask_ = (gold_heads_3D - tmp_rc_mask).cpu().numpy()
+                    # (batch, seq_len)
+                    tmp_rc_mask_1d = 1 - tmp_rc_mask.sum(-1)
+                    ref_mask_ = (gold_heads_3D * tmp_rc_mask_1d.unsqueeze(-1)).cpu().numpy()
                     for j in range(batch_size):
                         if has_head[j] == 1:
                             for key in basic_keys:

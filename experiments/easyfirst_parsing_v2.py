@@ -194,6 +194,7 @@ def train(args):
     eval_every = args.eval_every
     noscreen = args.noscreen
     fine_tune = args.fine_tune
+    explore = args.explore
 
     loss_ty_token = args.loss_type == 'token'
     unk_replace = args.unk_replace
@@ -390,6 +391,7 @@ def train(args):
     model = "{}-{}".format(model_type, mode)
     logger.info("Network: %s, hidden=%d, act=%s, graph att layers:%s, share params:%s" % (model, 
                 hidden_size, activation, num_graph_attention_layers, share_params))
+    logger.info("Sampler: %s (explore: %s)" % (sampler, explore))
     logger.info("dropout(in, out, hidden, att, graph_att): %s(%.2f, %.2f, %.2f, %.2f, %.2f)" % ('variational', p_in, p_out, p_hid, p_att, p_graph_att))
     logger.info("Input Encoder Type: %s (layer: %d)" % (input_encoder, num_layers))
     logger.info("Use Input Self Attention Layer: %s (layer: %d)" % (input_self_attention_layer, num_input_attention_layers))
@@ -488,7 +490,8 @@ def train(args):
                             shuffle=False, target_recomp_prob=target_recomp_prob)
         elif sampler == 'from_model':
             data_sampler = from_model_sample(single_network, data_train, batch_size, 
-                              unk_replace=unk_replace, shuffle=False, device=device)
+                              unk_replace=unk_replace, shuffle=False, device=device,
+                              explore=explore)
         for step, data in enumerate(data_sampler):
             #print ('number in batch:',len(sub_data['WORD']))
             optimizer.zero_grad()
@@ -800,6 +803,7 @@ if __name__ == '__main__':
     args_parser = argparse.ArgumentParser(description='Tuning with graph-based parsing')
     args_parser.add_argument('--mode', choices=['train', 'parse'], required=True, help='processing mode')
     args_parser.add_argument('--fine_tune', action='store_true', default=False, help='Whether to fine_tune?')
+    args_parser.add_argument('--explore', action='store_true', default=False, help='Whether to explore (encode wrong prediction) while sampling from model?')
     args_parser.add_argument('--config', type=str, help='config file')
     args_parser.add_argument('--output_filename', type=str, help='output filename for parse')
     args_parser.add_argument('--num_epochs', type=int, default=200, help='Number of training epochs')
