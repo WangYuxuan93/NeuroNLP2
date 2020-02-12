@@ -396,7 +396,7 @@ class EasyFirstV2(nn.Module):
 
     def forward(self, input_word, input_char, input_pos, heads, rels, rc_gen_mask, 
              norc_gen_mask, ref_mask, mask=None, next_head_mask=None, device=torch.device('cpu'),
-             debug=False):
+             debug=False, use_2d_mask=False):
         """
         Input:
             input_word: (batch, seq_len)
@@ -417,75 +417,89 @@ class EasyFirstV2(nn.Module):
         root_mask = torch.arange(seq_len, device=device).gt(0).float().unsqueeze(0) * mask
         # (batch, seq_len, seq_len)
         mask_3D = (root_mask.unsqueeze(-1) * mask.unsqueeze(1))
-
-        # (batch, seq_len), the mask of generated heads
-        #generated_head_mask = rc_gen_mask
-        if next_head_mask is None:
-            # (batch, seq_len), mask of heads t.cuda()o be generated
-            #rc_ref_heads_mask = (1 - generated_head_mask) * root_mask
-            rc_ref_heads_mask = ref_mask * root_mask
-        else:
-            rc_ref_heads_mask = next_head_mask
-        # (batch, seq_len, seq_len)
-        rc_ref_heads_onehot = torch.zeros(batch_size, seq_len, seq_len, dtype=torch.int32, device=device)
-        rc_ref_heads_onehot.scatter_(-1, (rc_ref_heads_mask*heads).unsqueeze(-1).long(), 1)
-        rc_ref_heads_onehot = rc_ref_heads_onehot * rc_ref_heads_mask.unsqueeze(2)
-        """
-        if self.maximize_unencoded_arcs_for_norc:
-            norc_ref_heads_mask = (1 - norc_gen_mask) * root_mask
-            norc_ref_heads_onehot = torch.zeros(batch_size, seq_len, seq_len, dtype=torch.int32, device=device)
-            norc_ref_heads_onehot.scatter_(-1, (norc_ref_heads_mask*heads).unsqueeze(-1).long(), 1)
-            norc_ref_heads_onehot = norc_ref_heads_onehot * norc_ref_heads_mask.unsqueeze(2)
-        else:
-            norc_ref_heads_mask = None
-            norc_ref_heads_onehot = rc_ref_heads_onehot
-        """
-        norc_ref_heads_mask = None
-        norc_ref_heads_onehot = rc_ref_heads_onehot
-        
         # (batch, seq_len, seq_len)
         rels_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.long, device=device)
         rels_3D.scatter_(-1, heads.unsqueeze(-1), rels.unsqueeze(-1))
-
         # (batch, seq_len, seq_len)
         heads_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=device)
         heads_3D.scatter_(-1, heads.unsqueeze(-1), 1)
         heads_3D = (heads_3D * mask_3D).int()
 
-        #print ('mask:\n',mask)
-        #print ("root_mask:\n",root_mask)
-        if debug:
-            print ("mask_3D:\n",mask_3D)
-            print ('rc_ref_heads_mask:\n',rc_ref_heads_mask)
-            if norc_ref_heads_mask is not None:
-                print ('norc_ref_heads_mask:\n',norc_ref_heads_mask)
-            print ('rc_ref_heads_onehot:\n',rc_ref_heads_onehot)
-            print ('norc_ref_heads_onehot:\n',norc_ref_heads_onehot)
-            print ('rc_gen_mask:\n', rc_gen_mask)
-            print ('rc_gen_mask*heads:\n', rc_gen_mask*heads)
-        
-        # (batch, seq_len, seq_len)
-        rc_gen_heads_onehot = torch.zeros(batch_size, seq_len, seq_len, dtype=torch.int32, device=device)
-        rc_gen_heads_onehot.scatter_(-1, (rc_gen_mask*heads).unsqueeze(-1), 1)
-        # (batch, seq_len, seq_len)
-        rc_gen_heads_onehot = rc_gen_heads_onehot * rc_gen_mask.unsqueeze(-1)
+        if use_2d_mask:
+            # (batch, seq_len), the mask of generated heads
+            #generated_head_mask = rc_gen_mask
+            if next_head_mask is None:
+                # (batch, seq_len), mask of heads t.cuda()o be generated
+                #rc_ref_heads_mask = (1 - generated_head_mask) * root_mask
+                rc_ref_heads_mask = ref_mask * root_mask
+            else:
+                rc_ref_heads_mask = next_head_mask
+            # (batch, seq_len, seq_len)
+            rc_ref_heads_onehot = torch.zeros(batch_size, seq_len, seq_len, dtype=torch.int32, device=device)
+            rc_ref_heads_onehot.scatter_(-1, (rc_ref_heads_mask*heads).unsqueeze(-1).long(), 1)
+            rc_ref_heads_onehot = rc_ref_heads_onehot * rc_ref_heads_mask.unsqueeze(2)
+            """
+            if self.maximize_unencoded_arcs_for_norc:
+                norc_ref_heads_mask = (1 - norc_gen_mask) * root_mask
+                norc_ref_heads_onehot = torch.zeros(batch_size, seq_len, seq_len, dtype=torch.int32, device=device)
+                norc_ref_heads_onehot.scatter_(-1, (norc_ref_heads_mask*heads).unsqueeze(-1).long(), 1)
+                norc_ref_heads_onehot = norc_ref_heads_onehot * norc_ref_heads_mask.unsqueeze(2)
+            else:
+                norc_ref_heads_mask = None
+                norc_ref_heads_onehot = rc_ref_heads_onehot
+            """
+            norc_ref_heads_mask = None
+            norc_ref_heads_onehot = rc_ref_heads_onehot
 
-        if debug:
-            print ('rc_gen_heads_onehot:\n',rc_gen_heads_onehot.cpu().numpy())
+            #print ('mask:\n',mask)
+            #print ("root_mask:\n",root_mask)
+            if debug:
+                print ("mask_3D:\n",mask_3D)
+                print ('rc_ref_heads_mask:\n',rc_ref_heads_mask)
+                if norc_ref_heads_mask is not None:
+                    print ('norc_ref_heads_mask:\n',norc_ref_heads_mask)
+                print ('rc_ref_heads_onehot:\n',rc_ref_heads_onehot)
+                print ('norc_ref_heads_onehot:\n',norc_ref_heads_onehot)
+                print ('rc_gen_mask:\n', rc_gen_mask)
+                print ('rc_gen_mask*heads:\n', rc_gen_mask*heads)
+            
+            # (batch, seq_len, seq_len)
+            rc_gen_heads_onehot = torch.zeros(batch_size, seq_len, seq_len, dtype=torch.int32, device=device)
+            rc_gen_heads_onehot.scatter_(-1, (rc_gen_mask*heads).unsqueeze(-1), 1)
+            # (batch, seq_len, seq_len)
+            rc_gen_heads_onehot = rc_gen_heads_onehot * rc_gen_mask.unsqueeze(-1)
 
-        #"""
-        # (batch, seq_len, seq_len)
-        norc_gen_heads_onehot = torch.zeros(batch_size, seq_len, seq_len, dtype=torch.int32, device=device)
-        norc_gen_heads_onehot.scatter_(-1, (norc_gen_mask*heads).unsqueeze(-1), 1)
-        # (batch, seq_len, seq_len)
-        norc_gen_heads_onehot = norc_gen_heads_onehot * norc_gen_mask.unsqueeze(-1)
-        
-        if debug:
-            np.set_printoptions(threshold=np.inf)
-            print ('rc_gen_heads_onehot:\n',rc_gen_heads_onehot.cpu().numpy())
-            print ('norc_gen_mask:\n', norc_gen_mask)
-            print ('norc_gen_mask*heads:\n', norc_gen_mask*heads)
-            print ('norc_gen_heads_onehot:\n',norc_gen_heads_onehot.cpu().numpy())
+            if debug:
+                print ('rc_gen_heads_onehot:\n',rc_gen_heads_onehot.cpu().numpy())
+
+            #"""
+            # (batch, seq_len, seq_len)
+            norc_gen_heads_onehot = torch.zeros(batch_size, seq_len, seq_len, dtype=torch.int32, device=device)
+            norc_gen_heads_onehot.scatter_(-1, (norc_gen_mask*heads).unsqueeze(-1), 1)
+            # (batch, seq_len, seq_len)
+            norc_gen_heads_onehot = norc_gen_heads_onehot * norc_gen_mask.unsqueeze(-1)
+            
+            if debug:
+                np.set_printoptions(threshold=np.inf)
+                print ('rc_gen_heads_onehot:\n',rc_gen_heads_onehot.cpu().numpy())
+                print ('norc_gen_mask:\n', norc_gen_mask)
+                print ('norc_gen_mask*heads:\n', norc_gen_mask*heads)
+                print ('norc_gen_heads_onehot:\n',norc_gen_heads_onehot.cpu().numpy())
+        else:
+            rc_ref_heads_onehot = ref_mask
+            norc_ref_heads_mask = None
+            norc_ref_heads_onehot = rc_ref_heads_onehot
+            rc_gen_heads_onehot = rc_gen_mask
+            norc_gen_heads_onehot = norc_gen_mask
+
+            if debug:
+                np.set_printoptions(threshold=np.inf)
+                print ("mask_3D:\n",mask_3D)
+                print ('rc_ref_heads_onehot:\n',rc_ref_heads_onehot)
+                print ('norc_ref_heads_onehot:\n',norc_ref_heads_onehot)
+                print ('rc_gen_heads_onehot:\n',rc_gen_heads_onehot.cpu().numpy())
+                print ('norc_gen_heads_onehot:\n',norc_gen_heads_onehot.cpu().numpy())
+
         #"""
 
         # ----- encoding -----
@@ -687,7 +701,8 @@ class EasyFirstV2(nn.Module):
 
 
     def _decode_one_step(self, head_logp, heads_mask, mask, device=torch.device('cpu'), 
-                            debug=False, get_order=False, random_recomp=False, recomp_prob=0.25):
+                            debug=False, get_order=False, random_recomp=False, recomp_prob=0.25,
+                            use_2d_mask=False):
         """
         Input:
             head_logp: (batch, seq_len, seq_len)
@@ -813,8 +828,12 @@ class EasyFirstV2(nn.Module):
                 print ("masked_head_logp:\n",masked_head_logp)
 
             if get_order:
-                # n * (batch, seq_len), 1 for dep of new arc
-                order_mask.append(new_arc_onehot.sum(-1))
+                if use_2d_mask:
+                    # n * (batch, seq_len), 1 for dep of new arc
+                    order_mask.append(new_arc_onehot.sum(-1))
+                else:
+                    # n * (batch, seq_len, seq_len)
+                    order_mask.append(new_arc_onehot)
 
             # update logp
             #norc_mask_3D = (1-rc_mask.int()).unsqueeze(1).unsqueeze(2).expand_as(max_dep_mask)
@@ -956,7 +975,7 @@ class EasyFirstV2(nn.Module):
 
 
     def inference(self, input_word, input_char, input_pos, gold_heads, batch, mask=None, 
-                  debug=False, device=torch.device('cpu')):
+                  explore=False, debug=False, device=torch.device('cpu'), use_2d_mask=False):
         """
         Input:
             input_word: (batch, seq_len)
@@ -1002,6 +1021,7 @@ class EasyFirstV2(nn.Module):
         # (batch, seq_len, seq_len)
         gold_heads_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=device)
         gold_heads_3D.scatter_(-1, gold_heads.unsqueeze(-1), 1)
+        gold_heads_3D = gold_heads_3D * mask_3D
 
         while True:
             # ----- encoding -----
@@ -1017,36 +1037,64 @@ class EasyFirstV2(nn.Module):
             
             # (batch, seq_len, seq_len)
             neg_inf_logp = torch.Tensor(head_logp.size()).fill_(-1e9).to(device)
-            # only allow gold arcs
-            logp_mask = gold_heads_3D * (1-heads_mask).unsqueeze(-1).expand_as(head_logp) * mask_3D
+            if explore:
+                logp_mask = (1-heads_mask).unsqueeze(-1).expand_as(head_logp) * mask_3D
+            else:
+                # only allow gold arcs
+                logp_mask = gold_heads_3D * (1-heads_mask).unsqueeze(-1).expand_as(head_logp) * mask_3D
             # (batch, seq_len, seq_len), mask out generated heads
             masked_head_logp = torch.where(logp_mask==1, head_logp.detach(), neg_inf_logp)
             # rc_probs_list: k* (batch), the probability of recompute after each arc generated
             # new_heads_onehot: (batch, seq_len, seq_len), newly generated arcs
             rc_probs_list, new_heads_onehot, order_mask = self._decode_one_step(masked_head_logp, 
                                         heads_mask, root_mask, device=device, get_order=True, 
-                                        random_recomp=random_recomp, recomp_prob=recomp_prob)
-            tmp_rc_mask = heads_mask
-            heads_mask_ = heads_mask.cpu().numpy()
-            # (batch, seq_len)
-            for i, next_head_mask in enumerate(order_mask):
-                # (batch)
-                has_head = next_head_mask.sum(-1).cpu().numpy()
-                next_head_mask_ = next_head_mask.cpu().numpy()
-                tmp_rc_mask_ = tmp_rc_mask.cpu().numpy()
-                ref_mask_ = (root_mask.int() - tmp_rc_mask).cpu().numpy()
-                for j in range(batch_size):
-                    if has_head[j] == 1:
-                        for key in basic_keys:
-                            sampled_batch[key].append(batch[key][j])
-                        sampled_batch['RECOMP_GEN_MASK'].append(tmp_rc_mask_[j])
-                        sampled_batch['NO_RECOMP_GEN_MASK'].append(heads_mask_[j])
-                        sampled_batch['NEXT_HEAD_MASK'].append(next_head_mask_[j])
-                        sampled_batch['REF_MASK'].append(ref_mask_[j])
-                        #next_list.append(next_head_mask_[j])
-                        #rc_gen_list.append(tmp_rc_mask_[j])
-                        #norc_gen_list.append(heads_mask_[j])
-                tmp_rc_mask = tmp_rc_mask + next_head_mask
+                                        random_recomp=random_recomp, recomp_prob=recomp_prob,
+                                        use_2d_mask=use_2d_mask)
+            
+            if use_2d_mask:
+                tmp_rc_mask = heads_mask
+                heads_mask_ = heads_mask.cpu().numpy()
+                # (batch, seq_len)
+                for i, next_head_mask in enumerate(order_mask):
+                    # (batch)
+                    has_head = next_head_mask.sum(-1).cpu().numpy()
+                    next_head_mask_ = next_head_mask.cpu().numpy()
+                    tmp_rc_mask_ = tmp_rc_mask.cpu().numpy()
+                    ref_mask_ = (root_mask.int() - tmp_rc_mask).cpu().numpy()
+                    for j in range(batch_size):
+                        if has_head[j] == 1:
+                            for key in basic_keys:
+                                sampled_batch[key].append(batch[key][j])
+                            sampled_batch['RECOMP_GEN_MASK'].append(tmp_rc_mask_[j])
+                            sampled_batch['NO_RECOMP_GEN_MASK'].append(heads_mask_[j])
+                            sampled_batch['NEXT_HEAD_MASK'].append(next_head_mask_[j])
+                            sampled_batch['REF_MASK'].append(ref_mask_[j])
+                            #next_list.append(next_head_mask_[j])
+                            #rc_gen_list.append(tmp_rc_mask_[j])
+                            #norc_gen_list.append(heads_mask_[j])
+                    tmp_rc_mask = tmp_rc_mask + next_head_mask
+            else:
+                tmp_rc_mask = gen_heads_onehot
+                heads_mask_ = gen_heads_onehot.cpu().numpy()
+                # (batch, seq_len, seq_len)
+                for i, next_head_mask in enumerate(order_mask):
+                    # (batch)
+                    has_head = next_head_mask.sum(dim=(-1,-2)).cpu().numpy()
+                    next_head_mask_ = next_head_mask.cpu().numpy()
+                    tmp_rc_mask_ = tmp_rc_mask.cpu().numpy()
+                    ref_mask_ = (gold_heads_3D - tmp_rc_mask).cpu().numpy()
+                    for j in range(batch_size):
+                        if has_head[j] == 1:
+                            for key in basic_keys:
+                                sampled_batch[key].append(batch[key][j])
+                            sampled_batch['RECOMP_GEN_MASK'].append(tmp_rc_mask_[j])
+                            sampled_batch['NO_RECOMP_GEN_MASK'].append(heads_mask_[j])
+                            sampled_batch['NEXT_HEAD_MASK'].append(next_head_mask_[j])
+                            sampled_batch['REF_MASK'].append(ref_mask_[j])
+                            #next_list.append(next_head_mask_[j])
+                            #rc_gen_list.append(tmp_rc_mask_[j])
+                            #norc_gen_list.append(heads_mask_[j])
+                    tmp_rc_mask = tmp_rc_mask + next_head_mask
 
             # prevent generating new arcs for rows that have heads
             # (batch, seq_len)
