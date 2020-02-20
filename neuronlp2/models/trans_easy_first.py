@@ -15,7 +15,8 @@ class TransEasyFirst(nn.Module):
                  hidden_size, num_layers, num_labels, arc_space, rel_space,
                  embedd_word=None, embedd_char=None, embedd_pos=None, p_in=0.33, p_out=0.33, 
                  p_rnn=(0.33, 0.33), pos=True, use_char=False, activation='elu',
-                 num_attention_heads=8, intermediate_size=1024, minimize_logp=False):
+                 num_attention_heads=8, intermediate_size=1024, minimize_logp=False,
+                 num_graph_attention_layers=1, share_params=False):
         super(TransEasyFirst, self).__init__()
 
         self.minimize_logp = minimize_logp
@@ -84,6 +85,8 @@ class TransEasyFirst(nn.Module):
                                             hidden_size=hidden_size,
                                             arc_space=arc_space,
                                             num_attention_heads=num_attention_heads,
+                                            num_graph_attention_layers=num_graph_attention_layers,
+                                            share_params=share_params,
                                             intermediate_size=intermediate_size,
                                             hidden_act="gelu",
                                             hidden_dropout_prob=0.1,

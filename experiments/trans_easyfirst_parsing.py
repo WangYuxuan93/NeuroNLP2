@@ -298,13 +298,17 @@ def train(args):
         num_layers = hyps['num_layers']
         p_rnn = hyps['p_rnn']
         minimize_logp = hyps['minimize_logp']
+        num_graph_attention_layers = hyps['num_graph_attention_layers']
+        share_params = hyps['share_params']
         
         network = TransEasyFirst(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                                mode, hidden_size, num_layers, num_types, arc_space, type_space,
                                embedd_word=word_table, embedd_char=char_table,
                                p_in=p_in, p_out=p_out, p_rnn=p_rnn, pos=use_pos, use_char=use_char,
                                activation=activation, num_attention_heads=num_attention_heads,
-                               intermediate_size=intermediate_size, minimize_logp=minimize_logp)
+                               intermediate_size=intermediate_size, minimize_logp=minimize_logp,
+                               num_graph_attention_layers=num_graph_attention_layers,
+                               share_params=share_params)
         if fine_tune:
             logger.info("Fine-tuning: Loading model from %s" % model_name)
             network.load_state_dict(torch.load(model_name))
@@ -323,7 +327,8 @@ def train(args):
 
     #network = network.to(device)
     model = "{}-{}".format(model_type, mode)
-    logger.info("Network: %s, hidden=%d, act=%s" % (model, hidden_size, activation))
+    logger.info("Network: %s, hidden=%d, act=%s,  graph att layers:%s, share params:%s" % (model, 
+                            hidden_size, activation, num_graph_attention_layers, share_params))
     p_hid = 0.1; p_att = 0.1; p_graph_att = 0
     logger.info("dropout(in, out, hidden, att, graph_att): %s(%.2f, %.2f, %.2f, %.2f, %.2f)" % ('variational', p_in, p_out, p_hid, p_att, p_graph_att))
     logger.info("Input Encoder Type: %s (layer: %d)" % (input_encoder, num_layers))
