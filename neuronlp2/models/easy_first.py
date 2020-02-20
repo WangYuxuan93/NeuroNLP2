@@ -202,7 +202,7 @@ class EasyFirst(nn.Module):
         
         #np.set_printoptions(threshold=np.inf)
         #print ("graph_matrix:\n", graph_matrix.cpu().numpy())
-        
+         
         # [batch, length, word_dim]
         word = self.word_embed(input_word)
         # apply dropout word on input
@@ -1208,7 +1208,6 @@ class EasyFirstV2(EasyFirst):
 
     def forward(self, input_word, input_char, input_pos, heads, rels, order_masks,
                 mask=None, explore=True):
-
         # Pre-processing
         batch_size, seq_len = input_word.size()
         # (batch, seq_len), seq mask, where at position 0 is 0
@@ -1226,9 +1225,11 @@ class EasyFirstV2(EasyFirst):
         # (batch, seq_len, seq_len)
         gen_arcs_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
         # arc_logits shape [batch, seq_len, hidden_size]
-        input_encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=mask)
+        input_encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=root_mask, device=heads.device)
         losses_arc = []
         losses_recomp = []
+        # (batch, seq_len, seq_len) => (seq_len, batch, seq_len)
+        order_masks = order_masks.permute(1,0,2)
         for i in range(seq_len-1):
             # (batch, seq_len), 1 represent the token whose head is to be generated at this step
             order_mask = order_masks[i]
@@ -1270,5 +1271,5 @@ class EasyFirstV2(EasyFirst):
         loss_rel = loss_rel[:, 1:].sum() / gold_arcs_3D.sum()
 
         # [batch, length - 1] -> [batch] remove the symbolic root.
-        return loss_arc, loss_rel, loss_recomp
+        return loss_arc.unsqueeze(0), loss_rel.unsqueeze(0), loss_recomp.unsqueeze(0)
         

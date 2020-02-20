@@ -615,7 +615,6 @@ def train(args):
                 types = data['TYPE'].to(device)
                 masks = data['MASK'].to(device)
                 order_masks = get_order_mask(data['LENGTH'], sampler=sampler).to(device)
-
                 nbatch = words.size(0)
                 nwords = masks.sum() - nbatch
                 network.train()
