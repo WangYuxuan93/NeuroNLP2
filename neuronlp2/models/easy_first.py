@@ -15,7 +15,7 @@ from neuronlp2.models.parsing import PositionEmbeddingLayer
 from neuronlp2.nn.hard_concrete import HardConcreteDist
 
 
-class EasyFirstV2(nn.Module):
+class EasyFirst(nn.Module):
     def __init__(self, word_dim, num_words, char_dim, num_chars, pos_dim, num_pos, hidden_size, num_labels, arc_space, type_space,
                  intermediate_size,
                  device=torch.device('cpu'),
@@ -33,7 +33,7 @@ class EasyFirstV2(nn.Module):
                  always_recompute=False,
                  use_hard_concrete_dist=True, hard_concrete_temp=0.1, hard_concrete_eps=0.1,
                  apply_recomp_prob_first=False, num_graph_attention_layers=1, share_params=False):
-        super(EasyFirstV2, self).__init__()
+        super(EasyFirst, self).__init__()
         self.device = device
         self.dep_prob_depend_on_head = dep_prob_depend_on_head
         self.use_top2_margin = use_top2_margin
@@ -660,8 +660,8 @@ class EasyFirstV2(nn.Module):
         # (batch, n_rels, seq_len, seq_len)
         norc_rel_logits = self.rel_attn(norc_rel_c, norc_rel_h) #.permute(0, 2, 3, 1)
         # (batch, seq_len, seq_len)
-        norc_rel_loss = self.criterion(norc_rel_logits, rels_3D) * (mask_3D * heads_3D)
-        norc_rel_loss = norc_rel_loss.sum() / num_total_heads
+        norc_loss_rel = self.criterion(norc_rel_logits, rels_3D) * (mask_3D * heads_3D)
+        norc_loss_rel = norc_loss_rel.sum() / num_total_heads
         """
 
         # compute label loss for no recompute
@@ -690,11 +690,11 @@ class EasyFirstV2(nn.Module):
         # (batch, seq_len, seq_len)
         loss_rel = self.criterion(rel_logits, rels_3D) * heads_3D
 
-        #print ("rc_rel_loss:\n",rc_rel_loss)
+        #print ("rc_loss_rel:\n",rc_loss_rel)
 
         loss_rel = loss_rel.sum() / num_total_heads
 
-        #loss_rel = 0.5*norc_rel_loss + 0.5*rc_rel_loss
+        #loss_rel = 0.5*norc_loss_rel + 0.5*rc_loss_rel
 
 
         return loss_arc.unsqueeze(0), loss_rel.unsqueeze(0), loss_recomp.unsqueeze(0)
@@ -1138,699 +1138,137 @@ class EasyFirstV2(nn.Module):
         return sampled_batch
 
 
-class EasyFirst(nn.Module):
-    def __init__(self, word_dim, num_words, char_dim, num_chars, pos_dim, num_pos, hidden_size, num_labels, arc_space, type_space,
-                 num_attention_heads, intermediate_size, recomp_att_dim,
-                 device=torch.device('cpu'),
-                 hidden_dropout_prob=0.1,
-                 attention_probs_dropout_prob=0.1, graph_attention_probs_dropout_prob=0,
-                 embedd_word=None, embedd_char=None, embedd_pos=None, p_in=0.33, p_out=0.33, pos=True, use_char=False, activation='elu'):
-        super(EasyFirst, self).__init__()
-        self.device = device
+class EasyFirstV2(EasyFirst):
+    def __init__(self, *args, **kwargs):
+        super(EasyFirstV2, self).__init__(*args, **kwargs)
 
-        self.word_embed = nn.Embedding(num_words, word_dim, _weight=embedd_word, padding_idx=1)
-        self.pos_embed = nn.Embedding(num_pos, pos_dim, _weight=embedd_pos, padding_idx=1) if pos else None
-        if use_char:
-            self.char_embed = nn.Embedding(num_chars, char_dim, _weight=embedd_char, padding_idx=1)
-            self.char_cnn = CharCNN(2, char_dim, char_dim, hidden_channels=char_dim * 4, activation=activation).to(device)
-        else:
-            self.char_embed = None
-            self.char_cnn = None
-
-        self.dropout_in = nn.Dropout2d(p=p_in).to(device)
-        self.dropout_out = nn.Dropout2d(p=p_out).to(device)
-        self.num_labels = num_labels
-
-        dim_enc = word_dim
-        if use_char:
-            dim_enc += char_dim
-        if pos:
-            dim_enc += pos_dim
-
-        self.config = GraphAttentionConfig(input_size=dim_enc,
-                                            hidden_size=hidden_size,
-                                            arc_space=arc_space,
-                                            num_attention_heads=num_attention_heads,
-                                            intermediate_size=intermediate_size,
-                                            hidden_act="gelu",
-                                            hidden_dropout_prob=hidden_dropout_prob,
-                                            attention_probs_dropout_prob=attention_probs_dropout_prob,
-                                            graph_attention_probs_dropout_prob=graph_attention_probs_dropout_prob,
-                                            max_position_embeddings=256,
-                                            initializer_range=0.02)
-
-        self.graph_attention = GraphAttentionModel(self.config).to(device)
-
-        out_dim = hidden_size
-        self.arc_h = nn.Linear(out_dim, arc_space).to(device)
-        self.arc_c = nn.Linear(out_dim, arc_space).to(device)
-        self.arc_attn = BiAffine_v2(arc_space, bias_x=True, bias_y=False).to(device)
-
-        self.rel_h = nn.Linear(out_dim, type_space).to(device)
-        self.rel_c = nn.Linear(out_dim, type_space).to(device)
-        self.rel_attn = BiAffine_v2(type_space, n_out=self.num_labels, bias_x=True, bias_y=True).to(device)
-        self.tanh = nn.Tanh().to(device)
-        self.recomp = nn.Linear(2*arc_space+hidden_size, 3).to(device)
-
-        assert activation in ['elu', 'tanh']
-        if activation == 'elu':
-            self.activation = nn.ELU(inplace=True).to(device)
-        else:
-            self.activation = nn.Tanh().to(device)
-        self.criterion = nn.CrossEntropyLoss(reduction='none').to(device)
-        self.reset_parameters(embedd_word, embedd_char, embedd_pos)
-
-    def reset_parameters(self, embedd_word, embedd_char, embedd_pos):
-        if embedd_word is None:
-            nn.init.uniform_(self.word_embed.weight, -0.1, 0.1)
-        if embedd_char is None and self.char_embed is not None:
-            nn.init.uniform_(self.char_embed.weight, -0.1, 0.1)
-        if embedd_pos is None and self.pos_embed is not None:
-            nn.init.uniform_(self.pos_embed.weight, -0.1, 0.1)
-
-        with torch.no_grad():
-            self.word_embed.weight[self.word_embed.padding_idx].fill_(0)
-            if self.char_embed is not None:
-                self.char_embed.weight[self.char_embed.padding_idx].fill_(0)
-            if self.pos_embed is not None:
-                self.pos_embed.weight[self.pos_embed.padding_idx].fill_(0)
-
-        nn.init.xavier_uniform_(self.arc_h.weight)
-        nn.init.constant_(self.arc_h.bias, 0.)
-        nn.init.xavier_uniform_(self.arc_c.weight)
-        nn.init.constant_(self.arc_c.bias, 0.)
-
-        nn.init.xavier_uniform_(self.rel_h.weight)
-        nn.init.constant_(self.rel_h.bias, 0.)
-        nn.init.xavier_uniform_(self.rel_c.weight)
-        nn.init.constant_(self.rel_c.bias, 0.)
-
-        nn.init.xavier_uniform_(self.arc_hidden_to_att.weight)
-        nn.init.constant_(self.arc_hidden_to_att.bias, 0.)
-        nn.init.xavier_uniform_(self.encoder_to_att.weight)
-        nn.init.constant_(self.encoder_to_att.bias, 0.)
-        nn.init.uniform_(self.recomp_att.weight)
-        nn.init.xavier_uniform_(self.recomp.weight)
-        nn.init.constant_(self.recomp.bias, 0.)
-
-    def _get_encoder_output(self, input_word, input_char, input_pos, graph_matrices, mask=None):
-        # [batch, length, word_dim]
-        word = self.word_embed(input_word)
-        # apply dropout word on input
-        word = self.dropout_in(word).to(self.device)
-        enc = word
-
-        if self.char_embed is not None:
-            # [batch, length, char_length, char_dim]
-            char = self.char_cnn(self.char_embed(input_char).to(self.device))
-            char = self.dropout_in(char)
-            # concatenate word and char [batch, length, word_dim+char_filter]
-            enc = torch.cat([enc, char], dim=2)
-
-        if self.pos_embed is not None:
-            # [batch, length, pos_dim]
-            pos = self.pos_embed(input_pos)
-            # apply dropout on input
-            pos = self.dropout_in(pos).to(self.device)
-            enc = torch.cat([enc, pos], dim=2)
-
-        all_encoder_layers = self.graph_attention(enc, graph_matrices, mask)
-        # [batch, length, hidden_size]
-        output = all_encoder_layers[-1]
-
-        # apply dropout for output
-        # [batch, length, hidden_size] --> [batch, hidden_size, length] --> [batch, length, hidden_size]
-        output = self.dropout_out(output.transpose(1, 2)).transpose(1, 2)
-
-        return output
-
-    def _mlp(self, input_tensor):
-        # output size [batch, length, arc_space]
-        arc_h = self.activation(self.arc_h(input_tensor))
-        arc_c = self.activation(self.arc_c(input_tensor))
-
-        # output size [batch, length, type_space]
-        rel_h = self.activation(self.rel_h(input_tensor))
-        rel_c = self.activation(self.rel_c(input_tensor))
-
-        # apply dropout on arc
-        # [batch, length, dim] --> [batch, 2 * length, dim]
-        arc = torch.cat([arc_h, arc_c], dim=1)
-        type = torch.cat([rel_h, rel_c], dim=1)
-        arc = self.dropout_out(arc.transpose(1, 2)).transpose(1, 2)
-        arc_h, arc_c = arc.chunk(2, 1)
-
-        # apply dropout on type
-        # [batch, length, dim] --> [batch, 2 * length, dim]
-        type = self.dropout_out(type.transpose(1, 2)).transpose(1, 2)
-        rel_h, rel_c = type.chunk(2, 1)
-        rel_h = rel_h.contiguous()
-        rel_c = rel_c.contiguous()
-
-        return (arc_h, arc_c), (rel_h, rel_c)
-
-
-    def forward(self, input_word, input_char, input_pos, mask=None):
-        raise RuntimeError('EasyFirst does not implement forward')
-
-    def _get_top_arc_hidden_states(self, dep_hidden_states, head_hidden_states, arc_logp):
+    def _max_3D(self, tensor):
         """
-        Gather the dep/head token hidden states of the top arc (based on predicted head logp)
         Input:
-          dep_/head_hidden_sates: (batch, seq_len, hidden_size)
-          arc_logp: (batch, seq_len, seq_len), the log probability of every arc
+            tensor: (batch, seq_len, seq_len)
+        Return:
+            max_val: (batch), the max value
+            max_tensor_3D: (batch, seq_len, seq_len)
+            max_heads_2D: (batch, seq_len), each entry is the index of head
         """
-        batch_size, seq_len, hidden_size = dep_hidden_states.size()
+        batch_size, seq_len, _ = tensor.size()
         # (batch, seq_len*seq_len)
-        flatten_logp = arc_logp.view([batch_size, -1])
+        flatten_tensor = tensor.view([batch_size, -1])
         # (batch)
-        values, flatten_max_indices = torch.max(flatten_logp, -1)
-        # (batch)
-        max_indices_dep = flatten_max_indices // seq_len
-        max_indices_head = flatten_max_indices % seq_len
-        #print ("arc_logp:\n",arc_logp)
-        #print ("dep:{}, head:{}".format(max_indices_dep, max_indices_head))
-        #print ("dep_hidden_states:\n",dep_hidden_states[:,:,:3])
+        max_val, max_indices = flatten_tensor.max(dim=1)
+        max_dep_indices = max_indices // seq_len
+        max_head_indices = max_indices % seq_len
 
-        ids_dep = max_indices_dep.unsqueeze(1).unsqueeze(2).expand(batch_size,1,hidden_size)
-        #print (id_dep)
-        # (batch, hidden_size)
-        selected_dep_hidden_states = dep_hidden_states.gather(dim=1, index=ids_dep).squeeze(1)
-        #print ("selected_dep_hidden_states:\n",selected_dep_hidden_states[:,:3])
+        dep_mask = torch.zeros(batch_size, seq_len, dtype=torch.int32, device=tensor.device)
+        dep_mask.scatter_(1, max_dep_indices.unsqueeze(1), 1)
 
-        ids_head = max_indices_head.unsqueeze(1).unsqueeze(2).expand(batch_size,1,hidden_size)
-        #print (id_head)
-        # (batch, hidden_size)
-        selected_head_hidden_states = head_hidden_states.gather(dim=1, index=ids_head).squeeze(1)
-        #print (selected_head_hidden_states)
-        # (batch, 2*hidden_size)
-        top_arc_hidden_states = torch.cat([selected_dep_hidden_states, selected_head_hidden_states], -1)
-        return top_arc_hidden_states
+        max_heads_2D = torch.zeros(batch_size, seq_len, dtype=torch.int32, device=tensor.device)
+        max_heads_2D.scatter_(1, max_dep_indices.unsqueeze(1), max_head_indices.unsqueeze(1).int())
 
-    def _get_recomp_prob(self, encoder_output, top_arc_hidden_states):
-        """
-        Use dep/head hidden states of top arc to attend encoder output
-        Input:
-            encoder_output: (batch, seq_len, hidden_size)
-            top_arc_hidden_states: (batch, 2*arc_space)
-        """
-        # (batch, att_dim)
-        arc_hidden_att = self.arc_hidden_to_att(top_arc_hidden_states)
-        # (batch, seq_len, att_dim)
-        enc_att = self.encoder_to_att(encoder_output)
-        # (batch, seq_len, att_dim) -> (batch, seq_len, 1) -> (batch, seq_len)
-        weight = self.recomp_att(self.tanh(enc_att + arc_hidden_att.unsqueeze(1))).squeeze(-1)
-        weight = F.softmax(weight, -1)
-        # (batch, 1, seq_len) * (batch, seq_len, hidden_size)
-        # -> (batch, 1, hidden_size) -> (batch, hidden_size)
-        context_layer = torch.bmm(weight.unsqueeze(1), encoder_output).squeeze(1)
-        # (batch, 2*arc_space+hidden_size) -> (batch, 3)
-        recomp_logits = self.recomp(torch.cat([context_layer, top_arc_hidden_states], -1))
-        # (batch, 3) logp of (no_recomp, do_recomp, eos)
-        recomp_logp = F.log_softmax(recomp_logits, dim=-1)
+        max_tensor_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=tensor.device)
+        max_tensor_3D.scatter_(-1, max_heads_2D.unsqueeze(-1).long(), 1)
+        max_tensor_3D = max_tensor_3D * dep_mask.unsqueeze(-1)
 
-        return recomp_logp
+        return max_val, max_tensor_3D, max_heads_2D
 
-    def _get_arc_logp(self, arc_logits, arc_c, arc_h, encoder_output):
-        """
-        Input:
-            arc_logits: (batch, seq_len, seq_len)
-            arc_c/arc_h: (batch, seq_len, arc_space)
-            encoder_output: (batch, seq_len, hidden_size)
-        """
-        batch_size = arc_logits.size(0)
-        # (batch, seq_len*seq_len)
-        reshaped_logits = arc_logits.view([batch_size, -1])
-        # (batch, seq_len, seq_len), log softmax over all possible arcs
-        arc_logp = F.log_softmax(reshaped_logits, dim=-1).view(arc_logits.size())
 
-        # (batch, 2*arc_space)
-        top_arc_hidden_states = self._get_top_arc_hidden_states(arc_c, arc_h, arc_logp)
-        # (batch, 3), recompute logp of (no_recomp, do_recomp, eos)
-        recomp_logp = self._get_recomp_prob(encoder_output, top_arc_hidden_states)
-        # (batch)
-        no_recomp_logp = recomp_logp[:,0]
+    def _get_loss_arc_one_step(self, head_logp, gen_arcs_3D, gold_arcs_3D, order_mask, 
+                                mask_3D=None, margin=1):
+
         # (batch, seq_len, seq_len)
-        arc_logp = arc_logp + no_recomp_logp.unsqueeze(1).unsqueeze(2).expand_as(arc_logp)
+        neg_inf_tensor = torch.Tensor(head_logp.size()).fill_(-1e9).to(head_logp.device)
+        # (batch, seq_len)
+        unfinished_token_mask_2D = (1 - gen_arcs_3D.sum(-1))
+        # (batch, seq_len, seq_len), the gold arcs not generated
+        ref_heads_mask = unfinished_token_mask_2D.unsqueeze(-1) * gold_arcs_3D
+        # (batch, seq_len, seq_len), mask out all rows whose heads are found
+        valid_mask = unfinished_token_mask_2D.unsqueeze(-1) * mask_3D
+        # (batch, seq_len, seq_len), mask out invalid positions
+        head_logp = torch.where(valid_mask==1, head_logp, neg_inf_tensor)
 
-        return arc_logp, recomp_logp
+        # (batch), number of ref heads in total
+        num_heads = ref_heads_mask.sum() + 1e-5
+        # (batch), sum of reference losses
+        ref_heads_logp = (head_logp * ref_heads_mask).sum(dim=(1,2))
+        loss_arc = - ref_heads_logp.sum()/num_heads
+        loss_recomp = torch.zeros_like(loss_arc)
+
+        # Select arcs with max scores
+        # (batch, seq_len, seq_len), only remained gold arcs are left
+        gold_head_logp = torch.where(ref_heads_mask==1, head_logp, neg_inf_tensor)
+        # (batch, seq_len, seq_len), false arcs are left
+        false_head_logp = torch.where(gold_arcs_3D==0, head_logp, neg_inf_tensor)
+
+        gold_max_val, gold_max_tensor, _ = self._max_3D(gold_head_logp)
+        false_max_val, false_max_tensor, _ = self._max_3D(false_head_logp)
+        general_max_val, general_max_tensor, _ = self._max_3D(head_logp)
+
+        return loss_arc, loss_recomp, general_max_tensor, gold_max_tensor, false_max_tensor
 
 
-    def forward(self, input_word, input_char, input_pos, heads, rels, recomps, gen_heads,  
-             mask=None, next_head=None, device=torch.device('cpu')):
-        """
-        Input:
-            input_word: (batch, seq_len)
-            input_char: (batch, seq_len, char_len)
-            input_pos: (batch, seq_len)
-            heads: (batch, seq_len)
-            rels: (batch, seq_len)
-            recomps: (batch)
-            gen_heads: (n_layers, batch, seq_len), 0-1 mask
-            mask: (batch, seq_len)
-            next_head: (batch, seq_len), 0-1 mask of the next head prediction
-        """
-        # preprocessing
-        n_layers, batch_size, seq_len = gen_heads.size()
+    def forward(self, input_word, input_char, input_pos, heads, rels, order_masks,
+                mask=None, explore=True):
 
-        # (batch, seq_len), at position 0 is 0
-        root_mask = torch.arange(seq_len, device=device).gt(0).float().unsqueeze(0) * mask
+        # Pre-processing
+        batch_size, seq_len = input_word.size()
+        # (batch, seq_len), seq mask, where at position 0 is 0
+        root_mask = torch.arange(seq_len, device=heads.device).gt(0).float().unsqueeze(0) * mask
         # (batch, seq_len, seq_len)
         mask_3D = (root_mask.unsqueeze(-1) * mask.unsqueeze(1))
-
-        # (batch, seq_len), the mask of generated heads
-        generated_head_mask = gen_heads.sum(0)
-        if next_head is None:
-            # (batch, seq_len), mask of heads to be generated
-            ref_heads_mask = (1 - generated_head_mask) * root_mask
-        else:
-            ref_heads_mask = next_head
         # (batch, seq_len, seq_len)
-        ref_heads_onehot = torch.zeros(batch_size, seq_len, seq_len, dtype=torch.int32, device=device)
-        ref_heads_onehot.scatter_(-1, (ref_heads_mask*heads).unsqueeze(-1).long(), 1)
-        ref_heads_onehot = ref_heads_onehot * ref_heads_mask.unsqueeze(2)
-        
-        #print ('mask:\n',mask)
-        #print ("root_mask:\n",root_mask)
-        """
-        print ("mask_3D:\n",mask_3D)
-        print ('ref_heads_mask:\n',ref_heads_mask)
-        print ('ref_heads_onehot:\n',ref_heads_onehot)
-        print ('gen_heads:\n', gen_heads)
-        print ('gen_heads*heads:\n', gen_heads*heads)
-        """
-        
-        # (n_layers, batch, seq_len, seq_len)
-        gen_heads_onehot = torch.zeros(n_layers, batch_size, seq_len, seq_len, dtype=torch.int32, device=device)
-        gen_heads_onehot.scatter_(-1, torch.unsqueeze(gen_heads*heads, -1), 1)
-        # (1, batch, 1, seq_len)
-        #expanded_mask = mask.unsqueeze(0).unsqueeze(2)
-        # (n_layers, batch, seq_len, seq_len)
-        gen_heads_onehot = gen_heads_onehot * gen_heads.unsqueeze(-1)
-        
-        #np.set_printoptions(threshold=np.inf)
-        #print ('gen_heads_onehot:\n',gen_heads_onehot.cpu().numpy())
-
-        encoder_output = self._get_encoder_output(input_word, input_char, input_pos, gen_heads_onehot, mask=mask)
-        arc, type = self._mlp(encoder_output)
-
-        # compute arc loss
-        arc_h, arc_c = arc
-        # [batch, seq_len, seq_len]
-        arc_logits = self.arc_attn(arc_c, arc_h)
-        # mask invalid position to -inf for log_softmax
-        if mask is not None:
-            minus_mask = root_mask.eq(0).unsqueeze(2)
-            arc_logits = arc_logits.masked_fill(minus_mask, float('-inf'))
-
+        gold_arcs_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
+        gold_arcs_3D.scatter_(-1, heads.unsqueeze(-1), 1)
+        gold_arcs_3D = gold_arcs_3D * mask_3D
         # (batch, seq_len, seq_len)
-        arc_logp, recomp_logp = self._get_arc_logp(arc_logits, arc_c, arc_h, encoder_output)
-        # (batch)
-        no_recomp_logp = recomp_logp[:,0]
-        do_recomp_logp = recomp_logp[:,1]
-        eos_logp = recomp_logp[:,2]
-
-        # (batch, seq_len, seq_len)
-        neg_inf_like_logp = torch.Tensor(arc_logp.size()).fill_(-1e9).to(device)
-        selected_gold_heads_logp = torch.where(ref_heads_onehot==1, arc_logp, neg_inf_like_logp)
-        # (batch) number of ref heads in total
-        n_heads = ref_heads_onehot.sum(dim=(1,2)) + 1e-5
-        # (batch)
-        logp_selected_gold_heads = torch.logsumexp(selected_gold_heads_logp, dim=(1, 2)) #/ n_heads
-
-        # (batch), fill in no_recomp and do_recomp
-        overall_logp = torch.where(recomps==0, logp_selected_gold_heads, do_recomp_logp)
-        # add eos
-        overall_logp = torch.where(recomps==2, eos_logp, overall_logp)
-
-        loss_arc = -overall_logp.sum()
-
-        # compute label loss
-        # out_type shape [batch, length, type_space]
-        rel_h, rel_c = type
-        # [batch, n_rels, seq_len, seq_len]
-        rel_logits = self.rel_attn(rel_c, rel_h) #.permute(0, 2, 3, 1)
-        
-        # (batch, seq_len, seq_len)
-        rels_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.long, device=device)
+        rels_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.long, device=heads.device)
         rels_3D.scatter_(-1, heads.unsqueeze(-1), rels.unsqueeze(-1))
 
         # (batch, seq_len, seq_len)
-        heads_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=device)
-        heads_3D.scatter_(-1, heads.unsqueeze(-1), 1)
-        # (batch, seq_len, seq_len)
-        loss_type = self.criterion(rel_logits, rels_3D) * (mask_3D * heads_3D)
-        loss_type = loss_type.sum()
-
-        return loss_arc, loss_type
-
-    def _decode_rels(self, out_type, heads, leading_symbolic):
-        # out_type shape [batch, length, type_space]
-        rel_h, rel_c = out_type
-        # get vector for heads [batch, length, type_space],
-        rel_h = rel_h.gather(dim=1, index=heads.unsqueeze(2).expand(rel_h.size()))
-        # compute output for type [batch, length, num_labels]
-        out_type = self.bilinear(rel_h, rel_c)
-        # remove the first #leading_symbolic rels.
-        out_type = out_type[:, :, leading_symbolic:]
-        # compute the prediction of rels [batch, length]
-        _, rels = out_type.max(dim=2)
-        return rels + leading_symbolic
-
-    def decode(self, input_word, input_char, input_pos, mask=None, max_layers=6, max_steps=100,
-                debug=False, device=torch.device('cpu')):
-        """
-        Input:
-            input_word: (batch, seq_len)
-            input_char: (batch, seq_len, char_len)
-            input_pos: (batch, seq_len)
-            mask: (batch, seq_len)
-        """
-        batch_size, seq_len = input_word.size()
-
-        # (batch_size, seq_len)
-        heads_pred = torch.zeros((batch_size, seq_len), dtype=torch.int64, device=device)
-        heads_mask = torch.zeros_like(heads_pred, device=device)
-        rels_pred = torch.zeros_like(heads_pred, device=device)
-
-        for batch_id in range(batch_size):
-            word = input_word[batch_id:batch_id+1, :]
-            char = input_char[batch_id:batch_id+1, :, :]
-            pos = input_pos[batch_id:batch_id+1, :]
-            mask_ = mask[batch_id:batch_id+1, :]
-            # (batch, seq_len), at position 0 is 0
-            root_mask = torch.arange(seq_len, device=device).gt(0).float().unsqueeze(0) * mask_
-            # (n_layers=1, batch=1, seq_len, seq_len)
-            gen_heads_onehot = torch.zeros((1, 1, seq_len, seq_len), dtype=torch.int32, device=device)
-            #recomp_minus_mask = torch.Tensor([0,0,0]).bool()
-            recomp_minus_mask = torch.Tensor([0,0,1]).bool().to(device)
-
-            for n_step in range(max_steps):
-                if debug:
-                    print ("step:{}\n".format(n_step))
-                encoder_output = self._get_encoder_output(word, char, pos, gen_heads_onehot, mask=mask_)
-                arc, type = self._mlp(encoder_output)
-
-                # compute arc loss
-                arc_h, arc_c = arc
-                # [batch, seq_len, seq_len]
-                arc_logits = self.arc_attn(arc_c, arc_h)
-
-                # mask words that have heads, this only for tree parsing
-                #generated_mask = heads_pred[batch_id:batch_id+1,:].ne(0)
-                generated_mask = heads_mask[batch_id:batch_id+1,:]
-                # (1, seq_len, 1)
-                #logit_mask = (mask_.eq(0) + generated_mask).unsqueeze(2)
-                logit_mask = (root_mask * (1-generated_mask)).unsqueeze(2)
-                # (1, seq_len, seq_len)
-                minus_mask = (logit_mask * mask_.unsqueeze(1)).eq(0)
-                # mask invalid position to -inf for log_softmax
-                #minus_mask = logit_mask.unsqueeze(2)
-                arc_logits = arc_logits.masked_fill(minus_mask, float('-inf'))
-                
-                # (batch, seq_len, seq_len), (batch, 3)
-                arc_logp, recomp_logp = self._get_arc_logp(arc_logits, arc_c, arc_h, encoder_output)
-                
-                recomp_logp = recomp_logp.masked_fill(recomp_minus_mask, float('-inf'))
-                # (seq_len*seq_len+2), the last two are do_recomp and eos
-                overall_logp = torch.cat([arc_logp.view(-1),recomp_logp.view(-1)[1:]])
-                eos_id = overall_logp.size(0) - 1
-                do_recomp_id = eos_id - 1
-
-                if debug:
-                    print ("heads_pred:\n", heads_pred)
-                    print ("heads_mask:\n", heads_mask)
-                    print ("root_mask:\n", root_mask)
-                    print ("minus_mask:",minus_mask)
-                    print ("arc_logp:\n", arc_logp)
-                    print ("recomp_logp:\n", recomp_logp)
-
-                prediction = torch.argmax(overall_logp)
-                recomp_pred = prediction.cpu().numpy()
-                if debug:
-                    print ("prediction:",recomp_pred)
-                    print ("recomp_mask:",recomp_minus_mask)
-                if recomp_pred == eos_id:
-                    # predict label here
-                    # out_type shape [batch, length, type_space]
-                    rel_h, rel_c = type
-                    # [batch_size=1, seq_len, seq_len, n_rels]
-                    rel_logits = self.rel_attn(rel_c, rel_h).permute(0, 2, 3, 1)
-                    # (batch_size=1, seq_len, seq_len)
-                    rel_ids = rel_logits.argmax(-1)
-                    # (1, seq_len)
-                    masked_heads_pred = heads_pred[batch_id:batch_id+1,:] * root_mask
-                    # (1, seq_len)
-                    gathered_rels_pred = rel_ids.gather(dim=-1, index=masked_heads_pred.unsqueeze(-1).long()).squeeze(-1)
-                    # (1, seq_len)
-                    rels_pred[batch_id:batch_id+1,:] = gathered_rels_pred
-                    break
-                elif recomp_pred == do_recomp_id:
-                    # add a new layer to gen_heads
-                    # (1, batch=1, seq_len, seq_len)
-                    gen_heads_new_layer = torch.zeros((1, 1, seq_len, seq_len), dtype=torch.int32, device=device)
-                    # (n_layers+1, batch=1, seq_len, seq_len)
-                    gen_heads_onehot = torch.cat([gen_heads_onehot, gen_heads_new_layer], dim=0)
-                    # update recomp_minus_mask, disable do_recomp action
-                    n_layers = gen_heads_onehot.size(0)
-                    if n_layers == max_layers:
-                        #recomp_minus_mask = torch.Tensor([0,1,0]).bool()
-                        recomp_minus_mask = torch.Tensor([0,1,1]).bool().to(device)
+        gen_arcs_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
+        # arc_logits shape [batch, seq_len, hidden_size]
+        input_encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=mask)
+        losses_arc = []
+        losses_recomp = []
+        for i in range(seq_len-1):
+            # (batch, seq_len), 1 represent the token whose head is to be generated at this step
+            order_mask = order_masks[i]
+            if self.always_recompute:
+                all_encoder_layers = self.graph_attention(input_encoder_output, gen_arcs_3D, root_mask)
+                # [batch, length, hidden_size]
+                encoder_output = all_encoder_layers[-1]
+                arc_h, arc_c = self._arc_mlp(encoder_output)
+                #arc_logits = self.arc_attn(arc_c, arc_h)
+                # (batch, seq_len, seq_len)
+                head_logp = self._get_head_logp(arc_c, arc_h, encoder_output)
+                # loss_arc: (batch)
+                loss_arc, loss_recomp, general_max_tensor, gold_max_tensor, false_max_tensor = self._get_loss_arc_one_step(head_logp, gen_arcs_3D, gold_arcs_3D, order_mask, mask_3D)
+                # (batch), count the number of error predictions
+                losses_arc.append(loss_arc.unsqueeze(0))
+                losses_recomp.append(loss_recomp.unsqueeze(0))
+                if explore:
+                    # update with max arcs among all
+                    gen_arcs_3D = gen_arcs_3D + general_max_tensor
                 else:
-                    # calculate the predicted arc
-                    dep = prediction // seq_len
-                    head = prediction % seq_len
-                    heads_pred[batch_id,dep] = head
-                    heads_mask[batch_id,dep] = 1
-                    # update it to gen_heads by layer for encoder input
-                    gen_heads_onehot[-1,0,dep,head] = 1
-                    #if torch.equal(heads_mask[batch_id], mask[batch_id].long()):
-                    if torch.equal(heads_mask[batch_id], root_mask[0].long()):
-                        # predict label here
-                        # out_type shape [batch, length, type_space]
-                        rel_h, rel_c = type
-                        # [batch_size=1, seq_len, seq_len, n_rels]
-                        rel_logits = self.rel_attn(rel_c, rel_h).permute(0, 2, 3, 1)
-                        # (batch_size=1, seq_len, seq_len)
-                        rel_ids = rel_logits.argmax(-1)
-                        # (1, seq_len)
-                        masked_heads_pred = heads_pred[batch_id:batch_id+1,:] * root_mask
-                        # (1, seq_len)
-                        gathered_rels_pred = rel_ids.gather(dim=-1, index=masked_heads_pred.unsqueeze(-1).long()).squeeze(-1)
-                        # (1, seq_len)
-                        rels_pred[batch_id:batch_id+1,:] = gathered_rels_pred
-                        break
+                    # update with max gold arcs
+                    gen_arcs_3D = gen_arcs_3D + gold_max_tensor
+            else:
+                print ("Not Implemented!")
+        # (batch)
+        loss_arc = torch.cat(losses_arc).mean()
+        loss_recomp = torch.cat(losses_recomp).mean()
 
-        return heads_pred.cpu().numpy(), rels_pred.cpu().numpy()
+        if self.use_input_encode_for_rel:
+            # get vector for heads [batch, length, rel_space]     
+            rel_h, rel_c = self._rel_mlp(input_encoder_output)
+        else:
+            print ("Not Implemented!")
+        # (batch, n_rels, seq_len, seq_len)
+        rel_logits = self.rel_attn(rel_c, rel_h)
+        loss_rel = (self.criterion(rel_logits, rels_3D) * gold_arcs_3D).sum(-1)
+        if mask is not None:
+            loss_rel = loss_rel * mask
+        loss_rel = loss_rel[:, 1:].sum() / gold_arcs_3D.sum()
 
-
-    def _get_best_gold_head(self, gold_heads, arc_logp, device=torch.device('cpu'), debug=False):
-
-        batch_size, seq_len = gold_heads.size()
-        # (batch, seq_len, seq_len)
-        heads_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=device)
-        heads_3D.scatter_(-1, gold_heads.unsqueeze(-1), 1)
-        minus_mask = heads_3D.eq(0)
-        arc_logp = arc_logp.masked_fill(minus_mask, float('-inf'))
-        best_head_index = torch.argmax(arc_logp)
-        dep = best_head_index // seq_len
-        head = best_head_index % seq_len
-
-        if debug:
-            print ("new arc_logp:",arc_logp)
-            print ("dep:{}, head:{}".format(dep, head))
-            print ("gold_heads:\n", gold_heads)
-
-        return dep, head
-
-    def inference(self, input_word, input_char, input_pos, gold_heads, batch, mask=None, 
-                  max_layers=6, use_whole_seq=True, debug=False, device=torch.device('cpu')):
-        """
-        Input:
-            input_word: (batch, seq_len)
-            input_char: (batch, seq_len, char_len)
-            input_pos: (batch, seq_len)
-            gold_heads: (batch, seq_len), the gold heads
-            mask: (batch, seq_len)
-        """
-        NO_RECOMP = 0
-        DO_RECOMP = 1
-        DO_EOS = 2
-
-        batch_size, seq_len = input_word.size()
-
-        # for neural network
-        # (batch_size, seq_len)
-        heads_pred = torch.zeros((batch_size, seq_len), dtype=torch.int64, device=device)
-        heads_mask = torch.zeros_like(heads_pred, device=device)
-
-        # collect inference results
-        easyfirst_keys = ['WORD', 'MASK', 'LENGTH', 'POS', 'CHAR', 'HEAD', 'TYPE']
-        all_keys =  easyfirst_keys + ['RECOMP', 'GEN_HEAD', 'NEXT_HEAD']
-        batch_by_layer = {i: {key: [] for key in all_keys} for i in range(max_layers)}
-
-        for batch_id in range(batch_size):
-            generated_heads = np.zeros([1,seq_len], dtype=np.int32)
-            zero_mask = np.zeros([seq_len], dtype=np.int32)
-            # the input generated head list
-            generated_heads_list = []
-            # whether to recompute at this step
-            recomp_list = []
-            # the next head to be generated, in shape of 0-1 mask
-            next_list = []
-
-            word = input_word[batch_id:batch_id+1, :]
-            char = input_char[batch_id:batch_id+1, :, :]
-            pos = input_pos[batch_id:batch_id+1, :]
-            mask_ = mask[batch_id:batch_id+1, :]
-            # (batch, seq_len), at position 0 is 0
-            root_mask = torch.arange(seq_len, device=device).gt(0).float().unsqueeze(0) * mask_
-            # (n_layers=1, batch=1, seq_len, seq_len)
-            gen_heads_onehot = torch.zeros((1, 1, seq_len, seq_len), dtype=torch.int32, device=device)
-            #recomp_minus_mask = torch.Tensor([0,0,0]).bool()
-            recomp_minus_mask = torch.Tensor([0,0,1]).bool().to(device)
-
-            max_steps = batch['LENGTH'][batch_id] + max_layers
-
-            for n_step in range(max_steps):
-                if debug:
-                    print ("step:{}\n".format(n_step))
-                encoder_output = self._get_encoder_output(word, char, pos, gen_heads_onehot, mask=mask_)
-                arc, type = self._mlp(encoder_output)
-
-                # compute arc loss
-                arc_h, arc_c = arc
-                # [batch, seq_len, seq_len]
-                arc_logits = self.arc_attn(arc_c, arc_h)
-
-                # mask words that have heads, this only for tree parsing
-                #generated_mask = heads_pred[batch_id:batch_id+1,:].ne(0)
-                generated_mask = heads_mask[batch_id:batch_id+1,:]
-                # (1, seq_len, 1)
-                #logit_mask = (mask_.eq(0) + generated_mask).unsqueeze(2)
-                logit_mask = (root_mask * (1-generated_mask)).unsqueeze(2)
-                # (1, seq_len, seq_len)
-                minus_mask = (logit_mask * mask_.unsqueeze(1)).eq(0)
-                # mask invalid position to -inf for log_softmax
-                #minus_mask = logit_mask.unsqueeze(2)
-                arc_logits = arc_logits.masked_fill(minus_mask, float('-inf'))
-                
-                # (batch, seq_len, seq_len), (batch, 3)
-                arc_logp, recomp_logp = self._get_arc_logp(arc_logits, arc_c, arc_h, encoder_output)
-                
-                recomp_logp = recomp_logp.masked_fill(recomp_minus_mask, float('-inf'))
-                # (seq_len*seq_len+2), the last two are do_recomp and eos
-                overall_logp = torch.cat([arc_logp.view(-1),recomp_logp.view(-1)[1:]])
-                eos_id = overall_logp.size(0) - 1
-                do_recomp_id = eos_id - 1
-
-                if debug:
-                    print ("heads_pred:\n", heads_pred)
-                    print ("heads_mask:\n", heads_mask)
-                    print ("root_mask:\n", root_mask)
-                    print ("minus_mask:",minus_mask)
-                    print ("arc_logp:\n", arc_logp)
-                    print ("recomp_logp:\n", recomp_logp)
-
-                prediction = torch.argmax(overall_logp)
-                best_head_index = torch.argmax(arc_logp)
-                recomp_pred = prediction.cpu().numpy()
-                
-                dep = best_head_index // seq_len
-                head = best_head_index % seq_len
-                #dep_id = dep.cpu().numpy()
-                #head_id = head.cpu().numpy()
-                if debug:
-                    print ("best_head_index:",best_head_index)
-                    print ("dep:{}, head:{}".format(dep, head))
-                    #print ("recomp_mask:",recomp_minus_mask)
-                    print ("gold_heads:\n", gold_heads)
-                # if the predicted arc in gold, chose it as next prediction
-                if gold_heads[batch_id][dep] == head and dep != 0:
-                    next_list.append(np.copy(zero_mask))
-                    next_list[-1][dep] = 1
-                    generated_heads_list.append(np.copy(generated_heads))
-                    recomp_list.append(NO_RECOMP)
-                    # add one new head to the top layer of generated heads
-                    generated_heads[-1,dep] = 1
-
-                    # update states for input of next step
-                    heads_pred[batch_id,dep] = head
-                    heads_mask[batch_id,dep] = 1
-                    # update it to gen_heads by layer for encoder input
-                    gen_heads_onehot[-1,0,dep,head] = 1
-                # if all arcs have been generated
-                elif torch.equal(heads_mask[batch_id], root_mask[0].long()):
-                    next_list.append(np.copy(zero_mask))
-                    generated_heads_list.append(np.copy(generated_heads))
-                    recomp_list.append(DO_EOS)
-                    break
-                # in this case, we predict DO_RECOMP
-                else:
-                    if len(generated_heads) == max_layers:
-                        if use_whole_seq:
-                            dep, head = self._get_best_gold_head(gold_heads[batch_id:batch_id+1, :], arc_logp, device=device, debug=debug)
-                            next_list.append(np.copy(zero_mask))
-                            next_list[-1][dep] = 1
-                            generated_heads_list.append(np.copy(generated_heads))
-                            recomp_list.append(NO_RECOMP)
-                            # add one new head to the top layer of generated heads
-                            generated_heads[-1,dep] = 1
-
-                            # update states for input of next step
-                            heads_pred[batch_id,dep] = head
-                            heads_mask[batch_id,dep] = 1
-                            # update it to gen_heads by layer for encoder input
-                            gen_heads_onehot[-1,0,dep,head] = 1
-                            continue
-                        else:
-                            break
-                    next_list.append(np.copy(zero_mask))
-                    generated_heads_list.append(np.copy(generated_heads))
-                    recomp_list.append(DO_RECOMP)
-                    prev_layers = generated_heads_list[-1]
-                    # add a new layer
-                    generated_heads = np.concatenate([prev_layers,np.zeros([1,seq_len], dtype=int)], axis=0)
-                    # if the layer in next layer exceeds max_layers, break
-
-                    # update states for input of next step
-                    # add a new layer to gen_heads
-                    # (1, batch=1, seq_len, seq_len)
-                    gen_heads_new_layer = torch.zeros((1, 1, seq_len, seq_len), dtype=torch.int32, device=device)
-                    # (n_layers+1, batch=1, seq_len, seq_len)
-                    gen_heads_onehot = torch.cat([gen_heads_onehot, gen_heads_new_layer], dim=0)
-                    # update recomp_minus_mask, disable do_recomp action
-                    n_layers = gen_heads_onehot.size(0)
-                    if n_layers == max_layers:
-                        #recomp_minus_mask = torch.Tensor([0,1,0]).bool()
-                        recomp_minus_mask = torch.Tensor([0,1,1]).bool().to(device)
-                if debug:
-                    print ("generated_heads_list:\n", generated_heads_list)
-                    print ("next_list:\n",next_list)
-
-            # category steps by number of layers
-            for n_step in range(len(recomp_list)):
-                n_layers = len(generated_heads_list[n_step]) - 1
-                for key in easyfirst_keys:
-                    batch_by_layer[n_layers][key].append(batch[key][batch_id])
-                batch_by_layer[n_layers]['RECOMP'].append(recomp_list[n_step])
-                batch_by_layer[n_layers]['GEN_HEAD'].append(generated_heads_list[n_step])
-                batch_by_layer[n_layers]['NEXT_HEAD'].append(next_list[n_step])
-        if debug:
-            for i in batch_by_layer.keys():
-                print('-' * 50)
-                print ("layer-%d"%i)
-                for key in batch_by_layer[i].keys():
-                    print ("%s\n"%key, batch_by_layer[i][key])
-        # convert batches into torch tensor
-        for n_layers in batch_by_layer.keys():
-            for key in batch_by_layer[n_layers].keys():
-                if batch_by_layer[n_layers][key]:
-                    batch_by_layer[n_layers][key] = torch.from_numpy(np.stack(batch_by_layer[n_layers][key]))
-                else:
-                    batch_by_layer[n_layers][key] = None
-            if batch_by_layer[n_layers]['GEN_HEAD'] is not None:
-                # (batch, n_layers, seq_len) -> (n_layers, batch, seq_len)
-                batch_by_layer[n_layers]['GEN_HEAD'] = np.transpose(batch_by_layer[n_layers]['GEN_HEAD'], (1,0,2))
-
-        return batch_by_layer
+        # [batch, length - 1] -> [batch] remove the symbolic root.
+        return loss_arc, loss_rel, loss_recomp
+        

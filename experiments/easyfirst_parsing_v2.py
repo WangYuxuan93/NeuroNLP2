@@ -22,7 +22,8 @@ from torch.nn.utils import clip_grad_norm_
 from neuronlp2.nn.utils import total_grad_norm
 from neuronlp2.io import get_logger, conllx_data, iterate_data, iterate_data_and_sample, sample_from_model
 from neuronlp2.io import random_sample, from_model_sample
-from neuronlp2.models import EasyFirstV2
+from neuronlp2.io import get_order_mask
+from neuronlp2.models import EasyFirst, EasyFirstV2
 from neuronlp2.optim import ExponentialScheduler
 from neuronlp2 import utils
 from neuronlp2.io import CoNLLXWriter
@@ -292,7 +293,7 @@ def train(args):
     hyps = json.load(open(args.config, 'r'))
     json.dump(hyps, open(os.path.join(model_path, 'config.json'), 'w'), indent=2)
     model_type = hyps['model']
-    assert model_type in ['EasyFirst', 'DeepBiAffine', 'NeuroMST', 'StackPtr']
+    assert model_type in ['EasyFirst', 'EasyFirstV2']
     assert word_dim == hyps['word_dim']
     if char_dim is not None:
         assert char_dim == hyps['char_dim']
@@ -319,33 +320,59 @@ def train(args):
     hc_eps = hyps['hard_concrete_eps']
     apply_recomp_prob_first = hyps['apply_recomp_prob_first']
 
+    num_attention_heads = hyps['num_attention_heads']
+    intermediate_size = hyps['intermediate_size']
+    p_hid = hyps['hidden_dropout_prob']
+    p_att = hyps['attention_probs_dropout_prob']
+    p_graph_att = hyps['graph_attention_probs_dropout_prob']
+    recomp_att_dim = hyps['recomp_att_dim']
+    dep_prob_depend_on_head = hyps['dep_prob_depend_on_head']
+    use_top2_margin = hyps['use_top2_margin']
+    extra_self_attention_layer = hyps['extra_self_attention_layer']
+    input_self_attention_layer = hyps['input_self_attention_layer']
+    num_input_attention_layers = hyps['num_input_attention_layers']
+    num_attention_heads = hyps['num_attention_heads']
+    input_encoder = hyps['input_encoder']
+    num_layers = hyps['num_layers']
+    p_rnn = hyps['p_rnn']
+    maximize_unencoded_arcs_for_norc = hyps['maximize_unencoded_arcs_for_norc']
+    encode_all_arc_for_rel = hyps['encode_all_arc_for_rel']
+    use_input_encode_for_rel = hyps['use_input_encode_for_rel']
+    num_graph_attention_layers = hyps['num_graph_attention_layers']
+    share_params = hyps['share_params']
+
     if always_recompute:
         target_recomp_prob = 1
 
     num_gpu = torch.cuda.device_count()
 
     if model_type == 'EasyFirst':
-        num_attention_heads = hyps['num_attention_heads']
-        intermediate_size = hyps['intermediate_size']
-        p_hid = hyps['hidden_dropout_prob']
-        p_att = hyps['attention_probs_dropout_prob']
-        p_graph_att = hyps['graph_attention_probs_dropout_prob']
-        recomp_att_dim = hyps['recomp_att_dim']
-        dep_prob_depend_on_head = hyps['dep_prob_depend_on_head']
-        use_top2_margin = hyps['use_top2_margin']
-        extra_self_attention_layer = hyps['extra_self_attention_layer']
-        input_self_attention_layer = hyps['input_self_attention_layer']
-        num_input_attention_layers = hyps['num_input_attention_layers']
-        num_attention_heads = hyps['num_attention_heads']
-        input_encoder = hyps['input_encoder']
-        num_layers = hyps['num_layers']
-        p_rnn = hyps['p_rnn']
-        maximize_unencoded_arcs_for_norc = hyps['maximize_unencoded_arcs_for_norc']
-        encode_all_arc_for_rel = hyps['encode_all_arc_for_rel']
-        use_input_encode_for_rel = hyps['use_input_encode_for_rel']
-        num_graph_attention_layers = hyps['num_graph_attention_layers']
-        share_params = hyps['share_params']
-        
+        network = EasyFirst(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
+                           hidden_size, num_types, arc_space, type_space,
+                           intermediate_size,
+                           device=device, 
+                           hidden_dropout_prob=p_hid,
+                           attention_probs_dropout_prob=p_att,
+                           graph_attention_probs_dropout_prob=p_graph_att,
+                           embedd_word=word_table, embedd_char=char_table,
+                           p_in=p_in, p_out=p_out, pos=use_pos, use_char=use_char, 
+                           activation=activation, dep_prob_depend_on_head=dep_prob_depend_on_head, 
+                           use_top2_margin=use_top2_margin, target_recomp_prob=target_recomp_prob,
+                           extra_self_attention_layer=extra_self_attention_layer,
+                           num_attention_heads=num_attention_heads,
+                           input_encoder=input_encoder, num_layers=num_layers, p_rnn=p_rnn,
+                           input_self_attention_layer=input_self_attention_layer,
+                           num_input_attention_layers=num_input_attention_layers,
+                           maximize_unencoded_arcs_for_norc=maximize_unencoded_arcs_for_norc,
+                           encode_all_arc_for_rel=encode_all_arc_for_rel,
+                           use_input_encode_for_rel=use_input_encode_for_rel,
+                           always_recompute=always_recompute,
+                           use_hard_concrete_dist=use_hard_concrete_dist, 
+                           hard_concrete_temp=hc_temp, hard_concrete_eps=hc_eps,
+                           apply_recomp_prob_first=apply_recomp_prob_first,
+                           num_graph_attention_layers=num_graph_attention_layers,
+                           share_params=share_params)
+    elif model_type == 'EasyFirstV2':
         network = EasyFirstV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                            hidden_size, num_types, arc_space, type_space,
                            intermediate_size,
@@ -371,18 +398,19 @@ def train(args):
                            apply_recomp_prob_first=apply_recomp_prob_first,
                            num_graph_attention_layers=num_graph_attention_layers,
                            share_params=share_params)
-        if fine_tune:
-            logger.info("Fine-tuning: Loading model from %s" % model_name)
-            network.load_state_dict(torch.load(model_name))
-
-        logger.info("GPU Number: %d" % num_gpu)
-        if num_gpu > 1:
-            logger.info("Using Data Parallel")
-            network = torch.nn.DataParallel(network)
-            network.to(device)
-        single_network = network if num_gpu <= 1 else network.module
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
+
+    if fine_tune:
+        logger.info("Fine-tuning: Loading model from %s" % model_name)
+        network.load_state_dict(torch.load(model_name))
+
+    logger.info("GPU Number: %d" % num_gpu)
+    if num_gpu > 1:
+        logger.info("Using Data Parallel")
+        network = torch.nn.DataParallel(network)
+        network.to(device)
+    single_network = network if num_gpu <= 1 else network.module
 
     if freeze:
         freeze_embedding(network.word_embed)
@@ -484,89 +512,163 @@ def train(args):
         #if args.cuda:
         #    torch.cuda.empty_cache()
         gc.collect()
-        if sampler == 'random':
-            data_sampler = random_sample(data_train, batch_size, 
-                            step_batch_size=step_batch_size, unk_replace=unk_replace, 
-                            shuffle=False, target_recomp_prob=target_recomp_prob)
-        elif sampler == 'from_model':
-            data_sampler = from_model_sample(single_network, data_train, batch_size, 
-                              unk_replace=unk_replace, shuffle=False, device=device,
-                              explore=explore)
-        for step, data in enumerate(data_sampler):
-            #print ('number in batch:',len(sub_data['WORD']))
-            optimizer.zero_grad()
-            if num_gpu > 1:
-                words = data['WORD'].to(device)
-                chars = data['CHAR'].to(device)
-                postags = data['POS'].to(device)
-            else:
-                words = data['WORD']
-                chars = data['CHAR']
-                postags = data['POS']
-            heads = data['HEAD'].to(device)
-            nbatch = words.size(0)
+        if model_type == 'EasyFirst':
+            if sampler == 'random':
+                data_sampler = random_sample(data_train, batch_size, 
+                                step_batch_size=step_batch_size, unk_replace=unk_replace, 
+                                shuffle=False, target_recomp_prob=target_recomp_prob)
+            elif sampler == 'from_model':
+                data_sampler = from_model_sample(single_network, data_train, batch_size, 
+                                  unk_replace=unk_replace, shuffle=False, device=device,
+                                  explore=explore)
 
-            types = data['TYPE'].to(device)
-            masks = data['MASK'].to(device)
-            # (batch, seq_len)
-            recomp_gen_mask = data['RECOMP_GEN_MASK'].to(device)
-            # (batch, seq_len)
-            no_recmp_gen_mask = data['NO_RECOMP_GEN_MASK'].to(device)
-            ref_mask = data['REF_MASK'].to(device)
-            if use_chosen_head:
-                next_head_mask = data['NEXT_HEAD_MASK'].to(device)
-            else:
-                next_head_mask = None
-            nwords = masks.sum() - nbatch
-            network.train()
-            loss_arc, loss_rel, loss_recomp = network(words, chars, postags, heads, types, 
-                                                recomp_gen_mask, no_recmp_gen_mask, ref_mask, 
-                                                mask=masks, next_head_mask=next_head_mask, device=device)
-            loss_arc = loss_arc.mean()
-            loss_rel = loss_rel.mean()
-            loss_recomp = loss_recomp.mean()
-            loss = 0.5 *((1.0 - loss_interpolation) * loss_arc + loss_interpolation * loss_rel) + recomp_ratio * loss_recomp
-            #if loss_ty_token:
-            #    loss = loss_total.div(nwords)
-            #else:
-            #    loss = loss_total.div(nbatch)
-            loss.backward()
-            if grad_clip > 0:
-                grad_norm = clip_grad_norm_(network.parameters(), grad_clip)
-            else:
-                grad_norm = total_grad_norm(network.parameters())
+            for step, data in enumerate(data_sampler):
+                #print ('number in batch:',len(sub_data['WORD']))
+                optimizer.zero_grad()
+                if num_gpu > 1:
+                    words = data['WORD'].to(device)
+                    chars = data['CHAR'].to(device)
+                    postags = data['POS'].to(device)
+                else:
+                    words = data['WORD']
+                    chars = data['CHAR']
+                    postags = data['POS']
+                heads = data['HEAD'].to(device)
+                nbatch = words.size(0)
 
-            if math.isnan(grad_norm):
-                num_nans += 1
-            else:
-                optimizer.step()
-                scheduler.step()
+                types = data['TYPE'].to(device)
+                masks = data['MASK'].to(device)
+                # (batch, seq_len)
+                recomp_gen_mask = data['RECOMP_GEN_MASK'].to(device)
+                # (batch, seq_len)
+                no_recmp_gen_mask = data['NO_RECOMP_GEN_MASK'].to(device)
+                ref_mask = data['REF_MASK'].to(device)
+                if use_chosen_head:
+                    next_head_mask = data['NEXT_HEAD_MASK'].to(device)
+                else:
+                    next_head_mask = None
+                nwords = masks.sum() - nbatch
+                network.train()
+                loss_arc, loss_rel, loss_recomp = network(words, chars, postags, heads, types, 
+                                                    recomp_gen_mask, no_recmp_gen_mask, ref_mask, 
+                                                    mask=masks, next_head_mask=next_head_mask, device=device)
+                loss_arc = loss_arc.mean()
+                loss_rel = loss_rel.mean()
+                loss_recomp = loss_recomp.mean()
+                loss = 0.5 *((1.0 - loss_interpolation) * loss_arc + loss_interpolation * loss_rel) + recomp_ratio * loss_recomp
+                #if loss_ty_token:
+                #    loss = loss_total.div(nwords)
+                #else:
+                #    loss = loss_total.div(nbatch)
+                loss.backward()
+                if grad_clip > 0:
+                    grad_norm = clip_grad_norm_(network.parameters(), grad_clip)
+                else:
+                    grad_norm = total_grad_norm(network.parameters())
 
-                with torch.no_grad():
-                    num_insts += nbatch
-                    num_words += nwords
-                    num_steps += 1
-                    train_loss += loss.item()
-                    train_arc_loss += loss_arc.item()
-                    train_rel_loss += loss_rel.item()
-                    train_recomp_loss += loss_recomp.item()
-            #torch.cuda.empty_cache()
-            # update log
-            if step % 100 == 0:
-                if not noscreen: 
-                    sys.stdout.write("\b" * num_back)
-                    sys.stdout.write(" " * num_back)
-                    sys.stdout.write("\b" * num_back)
-                    curr_lr = scheduler.get_lr()[0]
-                    num_insts = max(num_insts, 1)
-                    num_words = max(num_words, 1)
-                    log_info = '[%d/%d (%.0f%%) lr=%.6f (%d)] loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f)' % (step, num_batches, 100. * step / num_batches, curr_lr, num_nans,
-                                                                                                                         train_loss / num_insts, train_loss / num_words,
-                                                                                                                         train_arc_loss / num_insts, train_arc_loss / num_words,
-                                                                                                                        train_rel_loss / num_insts, train_rel_loss / num_words)
-                    sys.stdout.write(log_info)
-                    sys.stdout.flush()
-                    num_back = len(log_info)
+                if math.isnan(grad_norm):
+                    num_nans += 1
+                else:
+                    optimizer.step()
+                    scheduler.step()
+
+                    with torch.no_grad():
+                        num_insts += nbatch
+                        num_words += nwords
+                        num_steps += 1
+                        train_loss += loss.item()
+                        train_arc_loss += loss_arc.item()
+                        train_rel_loss += loss_rel.item()
+                        train_recomp_loss += loss_recomp.item()
+                #torch.cuda.empty_cache()
+                # update log
+                if step % 100 == 0:
+                    if not noscreen: 
+                        sys.stdout.write("\b" * num_back)
+                        sys.stdout.write(" " * num_back)
+                        sys.stdout.write("\b" * num_back)
+                        curr_lr = scheduler.get_lr()[0]
+                        num_insts = max(num_insts, 1)
+                        num_words = max(num_words, 1)
+                        log_info = '[%d/%d (%.0f%%) lr=%.6f (%d)] loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f)' % (step, num_batches, 100. * step / num_batches, curr_lr, num_nans,
+                                                                                                                             train_loss / num_insts, train_loss / num_words,
+                                                                                                                             train_arc_loss / num_insts, train_arc_loss / num_words,
+                                                                                                                            train_rel_loss / num_insts, train_rel_loss / num_words)
+                        sys.stdout.write(log_info)
+                        sys.stdout.flush()
+                        num_back = len(log_info)
+
+        elif model_type == 'EasyFirstV2':
+            data_sampler = iterate_data(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True)
+            for step, data in enumerate(data_sampler):
+                #print ('number in batch:',len(sub_data['WORD']))
+                optimizer.zero_grad()
+                if num_gpu > 1:
+                    words = data['WORD'].to(device)
+                    chars = data['CHAR'].to(device)
+                    postags = data['POS'].to(device)
+                else:
+                    words = data['WORD']
+                    chars = data['CHAR']
+                    postags = data['POS']
+                heads = data['HEAD'].to(device)
+                types = data['TYPE'].to(device)
+                masks = data['MASK'].to(device)
+                order_masks = get_order_mask(data['LENGTH'], sampler=sampler).to(device)
+
+                nbatch = words.size(0)
+                nwords = masks.sum() - nbatch
+                network.train()
+                loss_arc, loss_rel, loss_recomp = network(words, chars, postags, heads, types, 
+                                                          order_masks, mask=masks)
+                #print ("errors: ", errs)
+                loss_arc = loss_arc.mean()
+                loss_rel = loss_rel.mean()
+                loss_recomp = loss_recomp.mean()
+                loss = 0.5 *((1.0 - loss_interpolation) * loss_arc + loss_interpolation * loss_rel) + recomp_ratio * loss_recomp
+                #if loss_ty_token:
+                #    loss = loss_total.div(nwords)
+                #else:
+                #    loss = loss_total.div(nbatch)
+
+                loss.backward()
+                if grad_clip > 0:
+                    grad_norm = clip_grad_norm_(network.parameters(), grad_clip)
+                else:
+                    grad_norm = total_grad_norm(network.parameters())
+
+                if math.isnan(grad_norm):
+                    num_nans += 1
+                else:
+                    optimizer.step()
+                    scheduler.step()
+
+                    with torch.no_grad():
+                        num_insts += nbatch
+                        num_words += nwords
+                        num_steps += 1
+                        train_loss += loss.item()
+                        train_arc_loss += loss_arc.item()
+                        train_rel_loss += loss_rel.item()
+                        train_recomp_loss += loss_recomp.item()
+                #torch.cuda.empty_cache()
+                # update log
+                if step % 100 == 0:
+                    if not noscreen: 
+                        sys.stdout.write("\b" * num_back)
+                        sys.stdout.write(" " * num_back)
+                        sys.stdout.write("\b" * num_back)
+                        curr_lr = scheduler.get_lr()[0]
+                        num_insts = max(num_insts, 1)
+                        num_words = max(num_words, 1)
+                        log_info = '[%d/%d (%.0f%%) lr=%.6f (%d)] loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f)' % (step, num_batches, 100. * step / num_batches, curr_lr, num_nans,
+                                                                                                                             train_loss / num_insts, train_loss / num_words,
+                                                                                                                             train_arc_loss / num_insts, train_arc_loss / num_words,
+                                                                                                                            train_rel_loss / num_insts, train_rel_loss / num_words)
+                        sys.stdout.write(log_info)
+                        sys.stdout.flush()
+                        num_back = len(log_info)
+        
         if not noscreen: 
             sys.stdout.write("\b" * num_back)
             sys.stdout.write(" " * num_back)
@@ -732,23 +834,24 @@ def parse(args):
     activation = hyps['activation']
     loss_interpolation = hyps['loss_interpolation']
 
+    num_attention_heads = hyps['num_attention_heads']
+    intermediate_size = hyps['intermediate_size']
+    p_hid = hyps['hidden_dropout_prob']
+    p_att = hyps['attention_probs_dropout_prob']
+    p_graph_att = hyps['graph_attention_probs_dropout_prob']
+    recomp_att_dim = hyps['recomp_att_dim']
+    dep_prob_depend_on_head = hyps['dep_prob_depend_on_head']
+    use_top2_margin = hyps['use_top2_margin']
+    extra_self_attention_layer = hyps['extra_self_attention_layer']
+    input_self_attention_layer = hyps['input_self_attention_layer']
+    num_input_attention_layers = hyps['num_input_attention_layers']
+    num_attention_heads = hyps['num_attention_heads']
+    input_encoder = hyps['input_encoder']
+    num_layers = hyps['num_layers']
+    p_rnn = hyps['p_rnn']
+
     if model_type == 'EasyFirst':
-        num_attention_heads = hyps['num_attention_heads']
-        intermediate_size = hyps['intermediate_size']
-        p_hid = hyps['hidden_dropout_prob']
-        p_att = hyps['attention_probs_dropout_prob']
-        p_graph_att = hyps['graph_attention_probs_dropout_prob']
-        recomp_att_dim = hyps['recomp_att_dim']
-        dep_prob_depend_on_head = hyps['dep_prob_depend_on_head']
-        use_top2_margin = hyps['use_top2_margin']
-        extra_self_attention_layer = hyps['extra_self_attention_layer']
-        input_self_attention_layer = hyps['input_self_attention_layer']
-        num_input_attention_layers = hyps['num_input_attention_layers']
-        num_attention_heads = hyps['num_attention_heads']
-        input_encoder = hyps['input_encoder']
-        num_layers = hyps['num_layers']
-        p_rnn = hyps['p_rnn']
-        network = EasyFirstV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
+        network = EasyFirst(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                            hidden_size, num_types, arc_space, type_space,
                            intermediate_size,
                            device=device, 
@@ -808,6 +911,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--output_filename', type=str, help='output filename for parse')
     args_parser.add_argument('--num_epochs', type=int, default=200, help='Number of training epochs')
     args_parser.add_argument('--batch_size', type=int, default=16, help='Number of sentences in each batch')
+    args_parser.add_argument('--update_batch', type=int, default=50, help='Number of errors needed to do one update')
     args_parser.add_argument('--step_batch_size', type=int, default=16, help='Number of steps in each batch (for easyfirst parsing)')
     args_parser.add_argument('--loss_type', choices=['sentence', 'token'], default='sentence', help='loss type (default: sentence)')
     args_parser.add_argument('--optim', choices=['sgd', 'adam'], help='type of optimizer')
