@@ -21,7 +21,7 @@ from torch.optim import SGD
 from torch.nn.utils import clip_grad_norm_
 from neuronlp2.nn.utils import total_grad_norm
 from neuronlp2.io import get_logger, conllx_data, iterate_data, iterate_data_and_sample, sample_from_model
-from neuronlp2.io import random_sample, from_model_sample
+from neuronlp2.io import random_sample, from_model_sample, iterate_bucketed_data
 from neuronlp2.io import get_order_mask
 from neuronlp2.models import EasyFirst, EasyFirstV2
 from neuronlp2.optim import ExponentialScheduler
@@ -446,6 +446,8 @@ def train(args):
 
     num_data = sum(data_train[1])
     logger.info("training: #training data: %d, batch: %d, unk replace: %.2f" % (num_data, batch_size, unk_replace))
+    if model_type == 'EasyFirstV2':
+        logger.info("Batch by arc: %s" % (args.batch_by_arc))
     if args.random_recomp:
         logger.info("Randomly sample recomputation with prob (for eval): %s" % args.recomp_prob)
 
@@ -599,9 +601,10 @@ def train(args):
                         num_back = len(log_info)
 
         elif model_type == 'EasyFirstV2':
-            data_sampler = iterate_data(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True)
+            data_sampler = iterate_bucketed_data(data_train, batch_size, unk_replace=unk_replace, 
+                            shuffle=True, batch_by_arc=args.batch_by_arc)
             for step, data in enumerate(data_sampler):
-                #print ('number in batch:',len(sub_data['WORD']))
+                #print ('number in batch:',data['WORD'].size())
                 optimizer.zero_grad()
                 if num_gpu > 1:
                     words = data['WORD'].to(device)
@@ -910,6 +913,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--output_filename', type=str, help='output filename for parse')
     args_parser.add_argument('--num_epochs', type=int, default=200, help='Number of training epochs')
     args_parser.add_argument('--batch_size', type=int, default=16, help='Number of sentences in each batch')
+    args_parser.add_argument('--batch_by_arc', action='store_true', default=False, help='Whether to count batch by number of arcs.')
     args_parser.add_argument('--update_batch', type=int, default=50, help='Number of errors needed to do one update')
     args_parser.add_argument('--step_batch_size', type=int, default=16, help='Number of steps in each batch (for easyfirst parsing)')
     args_parser.add_argument('--loss_type', choices=['sentence', 'token'], default='sentence', help='loss type (default: sentence)')

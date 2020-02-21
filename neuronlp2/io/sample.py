@@ -2,51 +2,6 @@ __author__ = 'max'
 
 import numpy as np
 import torch
-"""
-def random_sample_(data, batch_size, step_batch_size=None, unk_replace=0., shuffle=False, 
-                    target_recomp_prob=0.25):
-    data_tensor, bucket_sizes = data
-
-    bucket_indices = np.arange(len(bucket_sizes))
-    if shuffle:
-        np.random.shuffle((bucket_indices))
-
-    easyfirst_keys = ['WORD', 'MASK', 'POS', 'CHAR', 'HEAD', 'TYPE']
-    for bucket_id in bucket_indices:
-        data = data_tensor[bucket_id]
-        bucket_size = bucket_sizes[bucket_id]
-        if bucket_size == 0:
-            continue
-
-        words = data['WORD']
-        single = data['SINGLE']
-        bucket_length = words.size(1)
-        if unk_replace:
-            ones = single.new_ones(bucket_size, bucket_length)
-            noise = single.new_empty(bucket_size, bucket_length).bernoulli_(unk_replace).long()
-            words = words * (ones - single * noise)
-
-        indices = None
-        if shuffle:
-            indices = torch.randperm(bucket_size).long()
-            indices = indices.to(words.device)
-        for start_idx in range(0, bucket_size, batch_size):
-            if shuffle:
-                excerpt = indices[start_idx:start_idx + batch_size]
-            else:
-                excerpt = slice(start_idx, start_idx + batch_size)
-
-            lengths = data['LENGTH'][excerpt]
-            batch_length = lengths.max().item()
-            # [batch_size, batch_len]
-            heads = data['HEAD'][excerpt, :batch_length]
-            types = data['TYPE'][excerpt, :batch_length]
-            batch = {'WORD': words[excerpt, :batch_length], 'LENGTH': lengths}
-            batch.update({key: field[excerpt, :batch_length] for key, field in data.items() if key in easyfirst_keys})
-            
-            sampled_batch = sample_generate_order(batch, lengths, target_recomp_prob=target_recomp_prob)
-            yield sampled_batch
-"""
 
 def random_sample(data, batch_size, step_batch_size=None, unk_replace=0., shuffle=False, 
                     target_recomp_prob=0.25, debug=False, use_1d_mask=False):
@@ -353,6 +308,73 @@ def split_batch_by_layer(batch_by_layer, step_batch_size, shuffle=False, debug=F
                 print ("%s\n"%key, batch[key])
 
     return batches
+
+
+def iterate_bucketed_data(data, batch_size, unk_replace=0., shuffle=False, batch_by_arc=False):
+    data_tensor, bucket_sizes = data
+
+    bucket_indices = np.arange(len(bucket_sizes))
+    if shuffle:
+        np.random.shuffle((bucket_indices))
+
+    stack_keys = ['STACK_HEAD', 'CHILD', 'SIBLING', 'STACK_TYPE', 'SKIP_CONNECT', 'MASK_DEC']
+    exclude_keys = set(['SINGLE', 'WORD', 'LENGTH'] + stack_keys)
+    for bucket_id in bucket_indices:
+        data = data_tensor[bucket_id]
+        bucket_size = bucket_sizes[bucket_id]
+        if bucket_size == 0:
+            continue
+
+        words = data['WORD']
+        single = data['SINGLE']
+        bucket_length = words.size(1)
+        if unk_replace:
+            ones = single.new_ones(bucket_size, bucket_length)
+            noise = single.new_empty(bucket_size, bucket_length).bernoulli_(unk_replace).long()
+            words = words * (ones - single * noise)
+
+        indices = None
+        if shuffle:
+            indices = torch.randperm(bucket_size).long()
+            indices = indices.to(words.device)
+        if batch_by_arc:
+            if not shuffle:
+                indices = torch.arange(bucket_size).long()
+            start_idx = 0
+            cur_idx = 0
+            arc_num = 0
+            while cur_idx < bucket_size:
+                arc_num += data['LENGTH'][indices[cur_idx]]
+                if arc_num >= batch_size:
+                    excerpt = indices[start_idx:cur_idx+1]
+                    lengths = data['LENGTH'][excerpt]
+                    batch_length = lengths.max().item()
+                    batch = {'WORD': words[excerpt, :batch_length], 'LENGTH': lengths}
+                    batch.update({key: field[excerpt, :batch_length] for key, field in data.items() if key not in exclude_keys})
+                    start_idx = cur_idx + 1
+                    arc_num = 0
+                    yield batch
+                cur_idx += 1
+            if start_idx < cur_idx:
+                excerpt = indices[start_idx:]
+                lengths = data['LENGTH'][excerpt]
+                batch_length = lengths.max().item()
+                batch = {'WORD': words[excerpt, :batch_length], 'LENGTH': lengths}
+                batch.update({key: field[excerpt, :batch_length] for key, field in data.items() if key not in exclude_keys})
+                yield batch
+
+        else:
+            for start_idx in range(0, bucket_size, batch_size):
+                if shuffle:
+                    excerpt = indices[start_idx:start_idx + batch_size]
+                else:
+                    excerpt = slice(start_idx, start_idx + batch_size)
+
+                lengths = data['LENGTH'][excerpt]
+                batch_length = lengths.max().item()
+                batch = {'WORD': words[excerpt, :batch_length], 'LENGTH': lengths}
+                batch.update({key: field[excerpt, :batch_length] for key, field in data.items() if key not in exclude_keys})
+                yield batch
 
 
 if __name__ == '__main__':
