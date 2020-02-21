@@ -340,6 +340,20 @@ def iterate_bucketed_data(data, batch_size, unk_replace=0., shuffle=False, batch
         if batch_by_arc:
             if not shuffle:
                 indices = torch.arange(bucket_size).long()
+            batch_length = data['LENGTH'].max().item()
+            new_batch_size = batch_size // batch_length + 1
+            for start_idx in range(0, bucket_size, new_batch_size):
+                if shuffle:
+                    excerpt = indices[start_idx:start_idx + new_batch_size]
+                else:
+                    excerpt = slice(start_idx, start_idx + new_batch_size)
+
+                lengths = data['LENGTH'][excerpt]
+                batch_length = lengths.max().item()
+                batch = {'WORD': words[excerpt, :batch_length], 'LENGTH': lengths}
+                batch.update({key: field[excerpt, :batch_length] for key, field in data.items() if key not in exclude_keys})
+                yield batch
+            """
             start_idx = 0
             cur_idx = 0
             arc_num = 0
@@ -362,6 +376,7 @@ def iterate_bucketed_data(data, batch_size, unk_replace=0., shuffle=False, batch
                 batch = {'WORD': words[excerpt, :batch_length], 'LENGTH': lengths}
                 batch.update({key: field[excerpt, :batch_length] for key, field in data.items() if key not in exclude_keys})
                 yield batch
+            """
 
         else:
             for start_idx in range(0, bucket_size, batch_size):

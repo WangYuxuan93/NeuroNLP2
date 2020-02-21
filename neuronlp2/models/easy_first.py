@@ -1248,10 +1248,10 @@ class EasyFirstV2(EasyFirst):
                 losses_recomp.append(loss_recomp.unsqueeze(0))
                 if explore:
                     # update with max arcs among all
-                    gen_arcs_3D = gen_arcs_3D + general_max_tensor
+                    gen_arcs_3D = gen_arcs_3D + general_max_tensor.detach()
                 else:
                     # update with max gold arcs
-                    gen_arcs_3D = gen_arcs_3D + gold_max_tensor
+                    gen_arcs_3D = gen_arcs_3D + gold_max_tensor.detach()
             else:
                 print ("Not Implemented!")
         # (batch)
