@@ -621,55 +621,64 @@ def train(args):
                 nbatch = words.size(0)
                 nwords = masks.sum() - nbatch
                 network.train()
-                loss_arc, loss_rel, loss_recomp = network(words, chars, postags, heads, types, 
-                                                          order_masks, mask=masks)
-                #print ("errors: ", errs)
-                loss_arc = loss_arc.mean()
-                loss_rel = loss_rel.mean()
-                loss_recomp = loss_recomp.mean()
-                loss = 0.5 *((1.0 - loss_interpolation) * loss_arc + loss_interpolation * loss_rel) + recomp_ratio * loss_recomp
-                #if loss_ty_token:
-                #    loss = loss_total.div(nwords)
-                #else:
-                #    loss = loss_total.div(nbatch)
+                batch_size, seq_len = words.size()
+                # (batch, seq_len, seq_len)
+                gen_arcs_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
+                # (batch, seq_len, seq_len) => (seq_len, batch, seq_len)
+                order_masks = order_masks.permute(1,0,2)
+                # (batch, seq_len), 1 represent the token whose head is to be generated at this step
+                for order_mask in order_masks:
+                    # (batch, seq_len, hidden_size)
+                    input_encoder_output = network._get_input_encoder_output(words, chars, postags, masks)
+                    loss_arc, loss_rel, loss_recomp, gen_arcs_3D = network(input_encoder_output, 
+                            gen_arcs_3D, heads, types, order_mask, mask=masks, explore=explore)
+                    #print ("errors: ", errs)
+                    loss_arc = loss_arc.mean()
+                    loss_rel = loss_rel.mean()
+                    loss_recomp = loss_recomp.mean()
+                    loss = 0.5 *((1.0 - loss_interpolation) * loss_arc + loss_interpolation * loss_rel) + recomp_ratio * loss_recomp
+                    #if loss_ty_token:
+                    #    loss = loss_total.div(nwords)
+                    #else:
+                    #    loss = loss_total.div(nbatch)
 
-                loss.backward()
-                if grad_clip > 0:
-                    grad_norm = clip_grad_norm_(network.parameters(), grad_clip)
-                else:
-                    grad_norm = total_grad_norm(network.parameters())
+                    loss.backward()
+                    if grad_clip > 0:
+                        grad_norm = clip_grad_norm_(network.parameters(), grad_clip)
+                    else:
+                        grad_norm = total_grad_norm(network.parameters())
 
-                if math.isnan(grad_norm):
-                    num_nans += 1
-                else:
-                    optimizer.step()
-                    scheduler.step()
+                    if math.isnan(grad_norm):
+                        num_nans += 1
+                    else:
+                        optimizer.step()
+                        scheduler.step()
 
-                    with torch.no_grad():
-                        num_insts += nbatch
-                        num_words += nwords
-                        num_steps += 1
-                        train_loss += loss.item()
-                        train_arc_loss += loss_arc.item()
-                        train_rel_loss += loss_rel.item()
-                        train_recomp_loss += loss_recomp.item()
-                #torch.cuda.empty_cache()
-                # update log
-                if step % 100 == 0:
-                    if not noscreen: 
-                        sys.stdout.write("\b" * num_back)
-                        sys.stdout.write(" " * num_back)
-                        sys.stdout.write("\b" * num_back)
-                        curr_lr = scheduler.get_lr()[0]
-                        num_insts = max(num_insts, 1)
-                        num_words = max(num_words, 1)
-                        log_info = '[%d/%d (%.0f%%) lr=%.6f (%d)] loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f)' % (step, num_batches, 100. * step / num_batches, curr_lr, num_nans,
-                                                                                                                             train_loss / num_insts, train_loss / num_words,
-                                                                                                                             train_arc_loss / num_insts, train_arc_loss / num_words,
-                                                                                                                            train_rel_loss / num_insts, train_rel_loss / num_words)
-                        sys.stdout.write(log_info)
-                        sys.stdout.flush()
-                        num_back = len(log_info)
+                        with torch.no_grad():
+                            num_insts += nbatch
+                            num_words += nwords
+                            num_steps += 1
+                            train_loss += loss.item()
+                            train_arc_loss += loss_arc.item()
+                            train_rel_loss += loss_rel.item()
+                            train_recomp_loss += loss_recomp.item()
+                    #torch.cuda.empty_cache()
+                    # update log
+                    if step % 100 == 0:
+                        if not noscreen: 
+                            sys.stdout.write("\b" * num_back)
+                            sys.stdout.write(" " * num_back)
+                            sys.stdout.write("\b" * num_back)
+                            curr_lr = scheduler.get_lr()[0]
+                            num_insts = max(num_insts, 1)
+                            num_words = max(num_words, 1)
+                            log_info = '[%d/%d (%.0f%%) lr=%.6f (%d)] loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f)' % (step, num_batches, 100. * step / num_batches, curr_lr, num_nans,
+                                                                                                                                 train_loss / num_insts, train_loss / num_words,
+                                                                                                                                 train_arc_loss / num_insts, train_arc_loss / num_words,
+                                                                                                                                train_rel_loss / num_insts, train_rel_loss / num_words)
+                            sys.stdout.write(log_info)
+                            sys.stdout.flush()
+                            num_back = len(log_info)
         
         if not noscreen: 
             sys.stdout.write("\b" * num_back)

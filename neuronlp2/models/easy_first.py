@@ -1173,7 +1173,7 @@ class EasyFirstV2(EasyFirst):
 
 
     def _get_loss_arc_one_step(self, head_logp, gen_arcs_3D, gold_arcs_3D, order_mask, 
-                                mask_3D=None, margin=1):
+                                mask_3D=None, margin=1, debug=False):
 
         # (batch, seq_len, seq_len)
         neg_inf_tensor = torch.Tensor(head_logp.size()).fill_(-1e9).to(head_logp.device)
@@ -1194,18 +1194,85 @@ class EasyFirstV2(EasyFirst):
         loss_recomp = torch.zeros_like(loss_arc)
 
         # Select arcs with max scores
+        order_masked_head_logp = torch.where(order_mask.unsqueeze(-1).expand_as(head_logp)==1, head_logp, neg_inf_tensor)
         # (batch, seq_len, seq_len), only remained gold arcs are left
-        gold_head_logp = torch.where(ref_heads_mask==1, head_logp, neg_inf_tensor)
+        gold_head_logp = torch.where(ref_heads_mask==1, order_masked_head_logp, neg_inf_tensor)
         # (batch, seq_len, seq_len), false arcs are left
-        false_head_logp = torch.where(gold_arcs_3D==0, head_logp, neg_inf_tensor)
+        false_head_logp = torch.where(gold_arcs_3D==0, order_masked_head_logp, neg_inf_tensor)
 
         gold_max_val, gold_max_tensor, _ = self._max_3D(gold_head_logp)
         false_max_val, false_max_tensor, _ = self._max_3D(false_head_logp)
-        general_max_val, general_max_tensor, _ = self._max_3D(head_logp)
+        general_max_val, general_max_tensor, _ = self._max_3D(order_masked_head_logp)
+
+        if debug:
+            print ("gold_arcs_3D:\n", gold_arcs_3D)
+            print ("head_logp:\n", head_logp)
+            print ("order_mask:\n", order_mask)
+            print ("order_masked_head_logp:\n", order_masked_head_logp)
+            print ("gold_max_tensor:\n", gold_max_tensor)
+            print ("general_max_tensor:\n", general_max_tensor)
+            print ("false_max_tensor:\n", false_max_tensor)
 
         return loss_arc, loss_recomp, general_max_tensor, gold_max_tensor, false_max_tensor
 
+    def _get_input_encoder_output(self, input_word, input_char, input_pos, mask):
+        batch_size, seq_len = input_word.size()
+        # (batch, seq_len), seq mask, where at position 0 is 0
+        root_mask = torch.arange(seq_len, device=mask.device).gt(0).float().unsqueeze(0) * mask
+        # (batch, seq_len, hidden_size)
+        input_encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=root_mask, device=mask.device)
+        return input_encoder_output
 
+    def forward(self, input_encoder_output, gen_arcs_3D, heads, rels, order_mask, mask=None, explore=True):
+        # Pre-processing
+        batch_size, seq_len = heads.size()
+        # (batch, seq_len), seq mask, where at position 0 is 0
+        root_mask = torch.arange(seq_len, device=heads.device).gt(0).float().unsqueeze(0) * mask
+        # (batch, seq_len, seq_len)
+        mask_3D = (root_mask.unsqueeze(-1) * mask.unsqueeze(1))
+        # (batch, seq_len, seq_len)
+        gold_arcs_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
+        gold_arcs_3D.scatter_(-1, heads.unsqueeze(-1), 1)
+        gold_arcs_3D = gold_arcs_3D * mask_3D
+        # (batch, seq_len, seq_len)
+        rels_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.long, device=heads.device)
+        rels_3D.scatter_(-1, heads.unsqueeze(-1), rels.unsqueeze(-1))
+        
+        # Compute relation loss
+        if self.use_input_encode_for_rel:
+            # get vector for heads [batch, length, rel_space]     
+            rel_h, rel_c = self._rel_mlp(input_encoder_output)
+        else:
+            print ("Not Implemented!")
+        # (batch, n_rels, seq_len, seq_len)
+        rel_logits = self.rel_attn(rel_c, rel_h)
+        loss_rel = (self.criterion(rel_logits, rels_3D) * gold_arcs_3D).sum(-1)
+        if mask is not None:
+            loss_rel = loss_rel * mask
+        loss_rel = loss_rel[:, 1:].sum() / gold_arcs_3D.sum()
+
+        if self.always_recompute:
+            all_encoder_layers = self.graph_attention(input_encoder_output, gen_arcs_3D, root_mask)
+            # [batch, length, hidden_size]
+            encoder_output = all_encoder_layers[-1]
+            arc_h, arc_c = self._arc_mlp(encoder_output)
+            #arc_logits = self.arc_attn(arc_c, arc_h)
+            # (batch, seq_len, seq_len)
+            head_logp = self._get_head_logp(arc_c, arc_h, encoder_output)
+            # loss_arc: (batch)
+            loss_arc, loss_recomp, general_max_tensor, gold_max_tensor, false_max_tensor = self._get_loss_arc_one_step(head_logp, gen_arcs_3D, gold_arcs_3D, order_mask, mask_3D)
+            # (batch), count the number of error predictions
+            if explore:
+                # update with max arcs among all
+                gen_arcs_3D = gen_arcs_3D + general_max_tensor
+            else:
+                # update with max gold arcs
+                gen_arcs_3D = gen_arcs_3D + gold_max_tensor
+        else:
+            print ("Not Implemented!")
+        return loss_arc.unsqueeze(0), loss_rel.unsqueeze(0), loss_recomp.unsqueeze(0), gen_arcs_3D.detach()
+
+    """
     def forward(self, input_word, input_char, input_pos, heads, rels, order_masks,
                 mask=None, explore=True):
         # Pre-processing
@@ -1226,6 +1293,20 @@ class EasyFirstV2(EasyFirst):
         gen_arcs_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
         # arc_logits shape [batch, seq_len, hidden_size]
         input_encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=root_mask, device=heads.device)
+        
+        # Compute relation loss
+        if self.use_input_encode_for_rel:
+            # get vector for heads [batch, length, rel_space]     
+            rel_h, rel_c = self._rel_mlp(input_encoder_output)
+        else:
+            print ("Not Implemented!")
+        # (batch, n_rels, seq_len, seq_len)
+        rel_logits = self.rel_attn(rel_c, rel_h)
+        loss_rel = (self.criterion(rel_logits, rels_3D) * gold_arcs_3D).sum(-1)
+        if mask is not None:
+            loss_rel = loss_rel * mask
+        loss_rel = loss_rel[:, 1:].sum() / gold_arcs_3D.sum()
+
         losses_arc = []
         losses_recomp = []
         # (batch, seq_len, seq_len) => (seq_len, batch, seq_len)
@@ -1252,24 +1333,13 @@ class EasyFirstV2(EasyFirst):
                 else:
                     # update with max gold arcs
                     gen_arcs_3D = gen_arcs_3D + gold_max_tensor.detach()
+                yield loss_arc.unsqueeze(0), loss_rel.unsqueeze(0), loss_recomp.unsqueeze(0)
             else:
                 print ("Not Implemented!")
         # (batch)
         loss_arc = torch.cat(losses_arc).mean()
         loss_recomp = torch.cat(losses_recomp).mean()
 
-        if self.use_input_encode_for_rel:
-            # get vector for heads [batch, length, rel_space]     
-            rel_h, rel_c = self._rel_mlp(input_encoder_output)
-        else:
-            print ("Not Implemented!")
-        # (batch, n_rels, seq_len, seq_len)
-        rel_logits = self.rel_attn(rel_c, rel_h)
-        loss_rel = (self.criterion(rel_logits, rels_3D) * gold_arcs_3D).sum(-1)
-        if mask is not None:
-            loss_rel = loss_rel * mask
-        loss_rel = loss_rel[:, 1:].sum() / gold_arcs_3D.sum()
-
         # [batch, length - 1] -> [batch] remove the symbolic root.
-        return loss_arc.unsqueeze(0), loss_rel.unsqueeze(0), loss_recomp.unsqueeze(0)
-        
+        #return loss_arc.unsqueeze(0), loss_rel.unsqueeze(0), loss_recomp.unsqueeze(0)
+    """
