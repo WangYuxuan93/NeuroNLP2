@@ -628,8 +628,11 @@ def train(args):
                 order_masks = order_masks.permute(1,0,2)
                 # (batch, seq_len), 1 represent the token whose head is to be generated at this step
                 for order_mask in order_masks:
-                    # (batch, seq_len, hidden_size)
-                    input_encoder_output = network._get_input_encoder_output(words, chars, postags, masks)
+                    if num_gpu > 1: 
+                        # (batch, seq_len, hidden_size)
+                        input_encoder_output = network.module._get_input_encoder_output(words, chars, postags, masks)
+                    else:
+                        input_encoder_output = network._get_input_encoder_output(words, chars, postags, masks)
                     loss_arc, loss_rel, loss_recomp, gen_arcs_3D = network(input_encoder_output, 
                             gen_arcs_3D, heads, types, order_mask, mask=masks, explore=explore)
                     #print ("errors: ", errs)
