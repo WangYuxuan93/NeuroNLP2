@@ -1223,7 +1223,8 @@ class EasyFirstV2(EasyFirst):
         input_encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=root_mask, device=mask.device)
         return input_encoder_output
 
-    def forward(self, input_encoder_output, gen_arcs_3D, heads, rels, order_mask, mask=None, explore=True):
+    def forward(self, input_word, input_char, input_pos, gen_arcs_3D, heads, rels, order_mask, mask=None, explore=True):
+        input_encoder_output = self._get_input_encoder_output(input_word, input_char, input_pos, mask)
         # Pre-processing
         batch_size, seq_len = heads.size()
         # (batch, seq_len), seq mask, where at position 0 is 0

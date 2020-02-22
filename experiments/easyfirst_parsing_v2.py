@@ -627,14 +627,15 @@ def train(args):
                 # (batch, seq_len, seq_len) => (seq_len, batch, seq_len)
                 order_masks = order_masks.permute(1,0,2)
                 # (batch, seq_len), 1 represent the token whose head is to be generated at this step
-                for order_mask in order_masks:
+                for i in range(seq_len - 1):
+                    order_mask = order_masks[i]
                     optimizer.zero_grad()
-                    if num_gpu > 1: 
+                    #if num_gpu > 1: 
                         # (batch, seq_len, hidden_size)
-                        input_encoder_output = network.module._get_input_encoder_output(words, chars, postags, masks)
-                    else:
-                        input_encoder_output = network._get_input_encoder_output(words, chars, postags, masks)
-                    loss_arc, loss_rel, loss_recomp, gen_arcs_3D = network(input_encoder_output, 
+                    #    input_encoder_output = network.module._get_input_encoder_output(words, chars, postags, masks)
+                    #else:
+                    #    input_encoder_output = network._get_input_encoder_output(words, chars, postags, masks)
+                    loss_arc, loss_rel, loss_recomp, gen_arcs_3D = network(words, chars, postags, 
                             gen_arcs_3D, heads, types, order_mask, mask=masks, explore=explore)
                     #print ("errors: ", errs)
                     loss_arc = loss_arc.mean()
@@ -683,6 +684,7 @@ def train(args):
                             sys.stdout.write(log_info)
                             sys.stdout.flush()
                             num_back = len(log_info)
+                del gen_arcs_3D
         
         if not noscreen: 
             sys.stdout.write("\b" * num_back)
