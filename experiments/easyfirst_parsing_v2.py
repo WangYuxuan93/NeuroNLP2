@@ -621,9 +621,9 @@ def train(args):
                 nbatch = words.size(0)
                 nwords = masks.sum() - nbatch
                 network.train()
-                batch_size, seq_len = words.size()
+                cur_batch_size, seq_len = words.size()
                 # (batch, seq_len, seq_len)
-                gen_arcs_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
+                gen_arcs_3D = torch.zeros((cur_batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
                 # (batch, seq_len, seq_len) => (seq_len, batch, seq_len)
                 order_masks = order_masks.permute(1,0,2)
                 # (batch, seq_len), 1 represent the token whose head is to be generated at this step
