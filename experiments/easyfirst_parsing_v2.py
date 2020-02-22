@@ -605,7 +605,7 @@ def train(args):
                             shuffle=True, batch_by_arc=args.batch_by_arc)
             for step, data in enumerate(data_sampler):
                 #print ('number in batch:',data['WORD'].size())
-                optimizer.zero_grad()
+                
                 if num_gpu > 1:
                     words = data['WORD'].to(device)
                     chars = data['CHAR'].to(device)
@@ -628,6 +628,7 @@ def train(args):
                 order_masks = order_masks.permute(1,0,2)
                 # (batch, seq_len), 1 represent the token whose head is to be generated at this step
                 for order_mask in order_masks:
+                    optimizer.zero_grad()
                     if num_gpu > 1: 
                         # (batch, seq_len, hidden_size)
                         input_encoder_output = network.module._get_input_encoder_output(words, chars, postags, masks)
