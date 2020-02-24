@@ -19,8 +19,9 @@ class EasyFirst(nn.Module):
     def __init__(self, word_dim, num_words, char_dim, num_chars, pos_dim, num_pos, hidden_size, num_labels, arc_space, type_space,
                  intermediate_size,
                  device=torch.device('cpu'),
-                 hidden_dropout_prob=0.1,
-                 attention_probs_dropout_prob=0.1, graph_attention_probs_dropout_prob=0,
+                 hidden_dropout_prob=0.1, attention_probs_dropout_prob=0.1,
+                 graph_attention_hidden_dropout_prob=0.1,
+                 graph_attention_probs_dropout_prob=0,
                  embedd_word=None, embedd_char=None, embedd_pos=None, p_in=0.33, p_out=0.33, 
                  pos=True, use_char=False, activation='elu',
                  dep_prob_depend_on_head=False, use_top2_margin=False, target_recomp_prob=0.25,
@@ -32,7 +33,8 @@ class EasyFirst(nn.Module):
                  use_input_encode_for_rel=False,
                  always_recompute=False,
                  use_hard_concrete_dist=True, hard_concrete_temp=0.1, hard_concrete_eps=0.1,
-                 apply_recomp_prob_first=False, num_graph_attention_layers=1, share_params=False):
+                 apply_recomp_prob_first=False, num_graph_attention_layers=1, share_params=False,
+                 residual_from_input=False, transformer_drop_prob=0):
         super(EasyFirst, self).__init__()
         self.device = device
         self.dep_prob_depend_on_head = dep_prob_depend_on_head
@@ -44,6 +46,7 @@ class EasyFirst(nn.Module):
         self.target_recomp_prob = target_recomp_prob
         self.use_hard_concrete_dist = use_hard_concrete_dist
         self.apply_recomp_prob_first = apply_recomp_prob_first
+        self.residual_from_input = residual_from_input
 
         self.word_embed = nn.Embedding(num_words, word_dim, _weight=embedd_word, padding_idx=1)
         self.pos_embed = nn.Embedding(num_pos, pos_dim, _weight=embedd_pos, padding_idx=1) if pos else None
@@ -57,6 +60,8 @@ class EasyFirst(nn.Module):
         self.dropout_in = nn.Dropout2d(p=p_in)
         self.dropout_out = nn.Dropout2d(p=p_out)
         self.num_labels = num_labels
+        if self.residual_from_input:
+            self.transformer_dropout = nn.Dropout2d(p=transformer_drop_prob)
 
         dim_enc = word_dim
         if use_char:
@@ -80,6 +85,7 @@ class EasyFirst(nn.Module):
                                         num_attention_heads=num_attention_heads,
                                         intermediate_size=intermediate_size,
                                         hidden_act="gelu",
+                                        embedding_dropout_prob=0.1,
                                         hidden_dropout_prob=hidden_dropout_prob,
                                         attention_probs_dropout_prob=attention_probs_dropout_prob,
                                         max_position_embeddings=256,
@@ -101,8 +107,7 @@ class EasyFirst(nn.Module):
                                             share_params=share_params,
                                             intermediate_size=intermediate_size,
                                             hidden_act="gelu",
-                                            hidden_dropout_prob=hidden_dropout_prob,
-                                            attention_probs_dropout_prob=attention_probs_dropout_prob,
+                                            hidden_dropout_prob=graph_attention_hidden_dropout_prob,
                                             graph_attention_probs_dropout_prob=graph_attention_probs_dropout_prob,
                                             max_position_embeddings=256,
                                             initializer_range=0.02,
@@ -145,9 +150,12 @@ class EasyFirst(nn.Module):
                 self.char_cnn.to(device)
             self.dropout_in.to(device)
             self.dropout_out.to(device)
+            if self.residual_from_input:
+                self.transformer_dropout.to(device)
             if self.input_encoder is not None:
                 self.input_encoder.to(device)
-            self.position_embedding_layer.to(device)
+            if input_encoder == 'Linear':
+                self.position_embedding_layer.to(device)
             self.graph_attention.to(device)
             self.arc_h.to(device)
             self.arc_c.to(device)
@@ -231,9 +239,12 @@ class EasyFirst(nn.Module):
             elif self.input_encoder_type == 'FastLSTM':
                 input_encoder_output, _ = self.input_encoder(enc, mask)
             elif self.input_encoder_type == 'Transformer':
-                all_encoder_layers = self.input_encoder(enc, mask)
+                all_encoder_layers, positioned_input_embedding = self.input_encoder(enc, mask)
                 # [batch, length, hidden_size]
                 input_encoder_output = all_encoder_layers[-1]
+                if self.residual_from_input:
+                    dropped_output = self.transformer_dropout(input_encoder_output)
+                    input_encoder_output = dropped_output + positioned_input_embedding
         else:
             input_encoder_output = enc
         

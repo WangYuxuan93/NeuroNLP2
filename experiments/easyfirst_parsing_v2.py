@@ -324,6 +324,7 @@ def train(args):
     intermediate_size = hyps['intermediate_size']
     p_hid = hyps['hidden_dropout_prob']
     p_att = hyps['attention_probs_dropout_prob']
+    p_graph_hid = hyps['graph_attention_hidden_dropout_prob']
     p_graph_att = hyps['graph_attention_probs_dropout_prob']
     recomp_att_dim = hyps['recomp_att_dim']
     dep_prob_depend_on_head = hyps['dep_prob_depend_on_head']
@@ -340,6 +341,8 @@ def train(args):
     use_input_encode_for_rel = hyps['use_input_encode_for_rel']
     num_graph_attention_layers = hyps['num_graph_attention_layers']
     share_params = hyps['share_params']
+    residual_from_input = hyps['residual_from_input']
+    transformer_drop_prob = hyps['transformer_drop_prob']
 
     if always_recompute:
         target_recomp_prob = 1
@@ -353,6 +356,7 @@ def train(args):
                            device=device, 
                            hidden_dropout_prob=p_hid,
                            attention_probs_dropout_prob=p_att,
+                           graph_attention_hidden_dropout_prob=p_graph_hid,
                            graph_attention_probs_dropout_prob=p_graph_att,
                            embedd_word=word_table, embedd_char=char_table,
                            p_in=p_in, p_out=p_out, pos=use_pos, use_char=use_char, 
@@ -371,7 +375,8 @@ def train(args):
                            hard_concrete_temp=hc_temp, hard_concrete_eps=hc_eps,
                            apply_recomp_prob_first=apply_recomp_prob_first,
                            num_graph_attention_layers=num_graph_attention_layers,
-                           share_params=share_params)
+                           share_params=share_params, residual_from_input=residual_from_input,
+                           transformer_drop_prob=transformer_drop_prob)
     elif model_type == 'EasyFirstV2':
         network = EasyFirstV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                            hidden_size, num_types, arc_space, type_space,
@@ -379,6 +384,7 @@ def train(args):
                            device=device, 
                            hidden_dropout_prob=p_hid,
                            attention_probs_dropout_prob=p_att,
+                           graph_attention_hidden_dropout_prob=p_graph_hid,
                            graph_attention_probs_dropout_prob=p_graph_att,
                            embedd_word=word_table, embedd_char=char_table,
                            p_in=p_in, p_out=p_out, pos=use_pos, use_char=use_char, 
@@ -397,7 +403,8 @@ def train(args):
                            hard_concrete_temp=hc_temp, hard_concrete_eps=hc_eps,
                            apply_recomp_prob_first=apply_recomp_prob_first,
                            num_graph_attention_layers=num_graph_attention_layers,
-                           share_params=share_params)
+                           share_params=share_params, residual_from_input=residual_from_input,
+                           transformer_drop_prob=transformer_drop_prob)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -420,8 +427,9 @@ def train(args):
     logger.info("Network: %s, hidden=%d, act=%s, graph att layers:%s, share params:%s" % (model, 
                 hidden_size, activation, num_graph_attention_layers, share_params))
     logger.info("Sampler: %s (explore: %s)" % (sampler, explore))
-    logger.info("dropout(in, out, hidden, att, graph_att): %s(%.2f, %.2f, %.2f, %.2f, %.2f)" % ('variational', p_in, p_out, p_hid, p_att, p_graph_att))
+    logger.info("dropout(in, out, hidden, att, graph_hid, graph_att): %s(%.2f, %.2f, %.2f, %.2f, %.2f, %.2f)" % ('variational', p_in, p_out, p_hid, p_att, p_graph_hid, p_graph_att))
     logger.info("Input Encoder Type: %s (layer: %d)" % (input_encoder, num_layers))
+    logger.info("Residual From Input Layer: %s (transformer dropout: %.2f)" % (residual_from_input, transformer_drop_prob))
     logger.info("Use Input Self Attention Layer: %s (layer: %d)" % (input_self_attention_layer, num_input_attention_layers))
     logger.info("Use Top Self Attention Layer: %s" % extra_self_attention_layer)
     logger.info("Use Hard Concrete Distribution: %s (Temperature: %.2f, Epsilon: %.2f, Apply Prob First: %s)" % (use_hard_concrete_dist,
@@ -432,7 +440,6 @@ def train(args):
     logger.info("Only Use Input Encoder for Relation Prediction: %s" % use_input_encode_for_rel)
     logger.info("Use POS tag: %s" % use_pos)
     logger.info("Use Char: %s" % use_char)
-    logger.info("Input Encoder Type: %s" % input_encoder)
     logger.info('# of Parameters: %d' % (sum([param.numel() for param in network.parameters()])))
     logger.info("Reading Data")
 

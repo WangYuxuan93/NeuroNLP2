@@ -377,7 +377,6 @@ class GraphAttentionConfig(object):
                 intermediate_size=3072,
                 hidden_act="gelu",
                 hidden_dropout_prob=0.1,
-                attention_probs_dropout_prob=0.1,
                 graph_attention_probs_dropout_prob=0,
                 max_position_embeddings=512,
                 initializer_range=0.02,
@@ -414,8 +413,8 @@ class GraphAttentionConfig(object):
         self.num_graph_attention_layers = num_graph_attention_layers
         self.hidden_act = hidden_act
         self.intermediate_size = intermediate_size
+        self.embedding_dropout_prob = hidden_dropout_prob
         self.hidden_dropout_prob = hidden_dropout_prob
-        self.attention_probs_dropout_prob = attention_probs_dropout_prob
         self.graph_attention_probs_dropout_prob = graph_attention_probs_dropout_prob
         self.max_position_embeddings = max_position_embeddings
         self.initializer_range = initializer_range
@@ -461,7 +460,7 @@ class GraphAttentionEmbeddings(nn.Module):
         # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
         # any TensorFlow checkpoint file
         self.LayerNorm = BERTLayerNorm(config)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.dropout = nn.Dropout(config.embedding_dropout_prob)
 
     def forward(self, input_tensor):
         """
@@ -612,6 +611,7 @@ class SelfAttentionConfig(object):
                 num_attention_heads=12,
                 intermediate_size=3072,
                 hidden_act="gelu",
+                embedding_dropout_prob=0.1,
                 hidden_dropout_prob=0.1,
                 attention_probs_dropout_prob=0.1,
                 max_position_embeddings=512,
@@ -643,6 +643,7 @@ class SelfAttentionConfig(object):
         self.num_attention_heads = num_attention_heads
         self.hidden_act = hidden_act
         self.intermediate_size = intermediate_size
+        self.embedding_dropout_prob = embedding_dropout_prob
         self.hidden_dropout_prob = hidden_dropout_prob
         self.attention_probs_dropout_prob = attention_probs_dropout_prob
         self.max_position_embeddings = max_position_embeddings
@@ -702,7 +703,7 @@ class SelfAttentionModel(nn.Module):
         embedding_output = self.embeddings(input_tensor)
         all_encoder_layers = self.encoder(embedding_output, extended_attention_mask)
 
-        return all_encoder_layers
+        return all_encoder_layers, embedding_output
 
 class GraphAttentionV2(nn.Module):
     def __init__(self, config):
