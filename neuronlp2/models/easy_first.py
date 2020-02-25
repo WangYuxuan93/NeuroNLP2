@@ -1275,14 +1275,63 @@ class EasyFirstV2(EasyFirst):
             loss_arc, loss_recomp, general_max_tensor, gold_max_tensor, false_max_tensor = self._get_loss_arc_one_step(head_logp, gen_arcs_3D, gold_arcs_3D, order_mask, mask_3D)
             # (batch), count the number of error predictions
             if explore:
+                # * order_mask to remove out of length arcs
                 # update with max arcs among all
-                gen_arcs_3D = gen_arcs_3D + general_max_tensor
+                gen_arcs_3D = gen_arcs_3D + general_max_tensor * order_mask.unsqueeze(-1)
             else:
                 # update with max gold arcs
-                gen_arcs_3D = gen_arcs_3D + gold_max_tensor
+                gen_arcs_3D = gen_arcs_3D + gold_max_tensor * order_mask.unsqueeze(-1)
+            #print ("### gen_arcs_3D:\n",gen_arcs_3D)
         else:
             print ("Not Implemented!")
         return loss_arc.unsqueeze(0), loss_rel.unsqueeze(0), loss_recomp.unsqueeze(0), gen_arcs_3D.detach()
+
+
+    def inference(self, input_word, input_char, input_pos, heads, mask=None, explore=True):
+        # Pre-processing
+        batch_size, seq_len = input_word.size()
+        # (batch, seq_len), seq mask, where at position 0 is 0
+        root_mask = torch.arange(seq_len, device=heads.device).gt(0).float().unsqueeze(0) * mask
+        # (batch, seq_len, seq_len)
+        mask_3D = (root_mask.unsqueeze(-1) * mask.unsqueeze(1))
+        # (batch, seq_len, seq_len)
+        gold_arcs_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
+        gold_arcs_3D.scatter_(-1, heads.unsqueeze(-1), 1)
+        gold_arcs_3D = gold_arcs_3D * mask_3D
+
+        # (batch, seq_len, seq_len)
+        gen_arcs_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
+        # arc_logits shape [batch, seq_len, hidden_size]
+        input_encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=root_mask, device=heads.device)
+        
+        # (batch, seq_len), 1 represent the token whose head is to be generated at this step
+        order_masks = []
+        # (batch, seq_len)
+        ones = torch.ones_like(heads)
+        for i in range(seq_len-1):
+            if self.always_recompute:
+                all_encoder_layers = self.graph_attention(input_encoder_output, gen_arcs_3D, root_mask)
+                # [batch, length, hidden_size]
+                encoder_output = all_encoder_layers[-1]
+                arc_h, arc_c = self._arc_mlp(encoder_output)
+                #arc_logits = self.arc_attn(arc_c, arc_h)
+                # (batch, seq_len, seq_len)
+                head_logp = self._get_head_logp(arc_c, arc_h, encoder_output)
+                # loss_arc: (batch)
+                _, _, general_max_tensor, gold_max_tensor, false_max_tensor = self._get_loss_arc_one_step(head_logp, gen_arcs_3D, gold_arcs_3D, ones, mask_3D)
+                # (batch, seq_len)
+                order_mask = gold_max_tensor.sum(-1)
+                order_masks.append(order_mask.detach())
+                # update with max gold arcs
+                gen_arcs_3D = gen_arcs_3D + gold_max_tensor.detach()
+            else:
+                print ("Not Implemented!")
+        # (seq_len-1, batch, seq_len)
+        order_masks = torch.stack(order_masks)
+        trans_mask = root_mask.permute(1,0)[1:,:]
+        order_masks = order_masks * trans_mask.int().unsqueeze(-1)
+
+        return order_masks
 
     """
     def forward(self, input_word, input_char, input_pos, heads, rels, order_masks,

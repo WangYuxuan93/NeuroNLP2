@@ -395,7 +395,7 @@ def get_order_mask(lengths, sampler='random'):
             #print (order_mask)
             order_masks.append(np.expand_dims(order_mask, axis=1))
         # (seq_len, batch_size, seq_len) => (batch, seq_len, seq_len)
-        order_masks = torch.from_numpy(np.concatenate(order_masks, axis=1)).permute(1,0,2)
+        order_masks = torch.from_numpy(np.concatenate(order_masks, axis=1))#.permute(1,0,2)
         #print (order_masks)
     elif sampler == 'from_model':
         print ("Not Implemented")

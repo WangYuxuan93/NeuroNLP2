@@ -624,7 +624,13 @@ def train(args):
                 heads = data['HEAD'].to(device)
                 types = data['TYPE'].to(device)
                 masks = data['MASK'].to(device)
-                order_masks = get_order_mask(data['LENGTH'], sampler=sampler).to(device)
+                if sampler == 'random':
+                    order_masks = get_order_mask(data['LENGTH'], sampler=sampler).to(device)
+                elif sampler == 'from_model':
+                    if num_gpu > 1:
+                        order_masks = network.module.inference(words, chars, postags, heads, mask=masks)
+                    else:
+                        order_masks = network.inference(words, chars, postags, heads, mask=masks)
                 nbatch = words.size(0)
                 nwords = masks.sum() - nbatch
                 network.train()
@@ -632,7 +638,7 @@ def train(args):
                 # (batch, seq_len, seq_len)
                 gen_arcs_3D = torch.zeros((cur_batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
                 # (batch, seq_len, seq_len) => (seq_len, batch, seq_len)
-                order_masks = order_masks.permute(1,0,2)
+                order_masks = order_masks #.permute(1,0,2)
                 # (batch, seq_len), 1 represent the token whose head is to be generated at this step
                 for i in range(seq_len - 1):
                     order_mask = order_masks[i]
