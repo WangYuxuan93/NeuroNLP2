@@ -381,6 +381,7 @@ class GraphAttentionConfig(object):
                 max_position_embeddings=512,
                 initializer_range=0.02,
                 share_params=False,
+                only_value_weight=False,
                 extra_self_attention_layer=False,
                 input_self_attention_layer=False,
                 num_input_attention_layers=3):
@@ -419,6 +420,7 @@ class GraphAttentionConfig(object):
         self.max_position_embeddings = max_position_embeddings
         self.initializer_range = initializer_range
         self.share_params = share_params
+        self.only_value_weight = only_value_weight
         self.extra_self_attention_layer = extra_self_attention_layer
         self.input_self_attention_layer = input_self_attention_layer
         self.num_input_attention_layers = num_input_attention_layers
@@ -705,11 +707,113 @@ class SelfAttentionModel(nn.Module):
 
         return all_encoder_layers, embedding_output
 
+
+class GraphAttentionV2Config(object):
+    """Configuration class to store the configuration of a `GraphAttentionModel`.
+    """
+    def __init__(self,
+                input_size=100,
+                hidden_size=768,
+                arc_space=600,
+                num_graph_attention_layers=1,
+                num_attention_heads=1,
+                share_params=False,
+                only_value_weight=False,
+                intermediate_size=3072,
+                hidden_act="gelu",
+                hidden_dropout_prob=0.1,
+                graph_attention_probs_dropout_prob=0,
+                max_position_embeddings=512,
+                initializer_range=0.02,
+                extra_self_attention_layer=False,
+                input_self_attention_layer=False,
+                num_input_attention_layers=3):
+        """Constructs BertConfig.
+
+        Args:
+            hidden_size: Size of the encoder layers and the pooler layer.
+            num_attention_heads: Number of attention heads for each attention layer in
+                the Transformer encoder.
+            intermediate_size: The size of the "intermediate" (i.e., feed-forward)
+                layer in the Transformer encoder.
+            hidden_act: The non-linear activation function (function or string) in the
+                encoder and pooler.
+            hidden_dropout_prob: The dropout probabilitiy for all fully connected
+                layers in the embeddings, encoder, and pooler.
+            attention_probs_dropout_prob: The dropout ratio for the attention
+                probabilities.
+            max_position_embeddings: The maximum sequence length that this model might
+                ever be used with. Typically set this to something large just in case
+                (e.g., 512 or 1024 or 2048).
+            initializer_range: The sttdev of the truncated_normal_initializer for
+                initializing all weight matrices.
+            extra_self_attention_layer: whether to use a BERT self attention layer on top
+                of graph attention layer
+        """
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.arc_space = arc_space
+        self.num_attention_heads = num_attention_heads
+        self.num_graph_attention_layers = num_graph_attention_layers
+        self.hidden_act = hidden_act
+        self.intermediate_size = intermediate_size
+        self.embedding_dropout_prob = hidden_dropout_prob
+        self.hidden_dropout_prob = hidden_dropout_prob
+        self.graph_attention_probs_dropout_prob = graph_attention_probs_dropout_prob
+        self.max_position_embeddings = max_position_embeddings
+        self.initializer_range = initializer_range
+        self.share_params = share_params
+        self.only_value_weight = only_value_weight
+        self.extra_self_attention_layer = extra_self_attention_layer
+        self.input_self_attention_layer = input_self_attention_layer
+        self.num_input_attention_layers = num_input_attention_layers
+
+    @classmethod
+    def from_dict(cls, json_object):
+        """Constructs a `BertConfig` from a Python dictionary of parameters."""
+        config = BertConfig(vocab_size=None)
+        for (key, value) in six.iteritems(json_object):
+            config.__dict__[key] = value
+        return config
+
+    @classmethod
+    def from_json_file(cls, json_file):
+        """Constructs a `BertConfig` from a json file of parameters."""
+        with open(json_file, "r") as reader:
+            text = reader.read()
+        return cls.from_dict(json.loads(text))
+
+    def to_dict(self):
+        """Serializes this instance to a Python dictionary."""
+        output = copy.deepcopy(self.__dict__)
+        return output
+
+    def to_json_string(self):
+        """Serializes this instance to a JSON string."""
+        return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
+
+
 class GraphAttentionV2(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, hidden_size, num_attention_heads):
         super(GraphAttentionV2, self).__init__()
-        self.value = nn.Linear(config.hidden_size, config.hidden_size//2)
+        self.only_value_weight = config.only_value_weight
+        self.hidden_size = hidden_size
+        self.num_attention_heads = num_attention_heads
+        self.attention_head_size = int(self.hidden_size / self.num_attention_heads)
+        self.all_head_size = self.num_attention_heads * self.attention_head_size
+
+        self.value = nn.Linear(config.hidden_size, self.all_head_size)
         self.dropout = nn.Dropout(config.graph_attention_probs_dropout_prob)
+        if not self.only_value_weight:
+            self.query = nn.Linear(config.hidden_size, self.all_head_size)
+            self.key = nn.Linear(config.hidden_size, self.all_head_size)
+
+    def transpose_for_scores(self, x):
+        # (batch, seq_len, hidden_size) => (batch, seq_len, num_head, head_size)
+        new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
+        x = x.view(*new_x_shape)
+        # (batch, seq_len, num_head, head_size) => (batch, num_head, seq_len, head_size)
+        return x.permute(0, 2, 1, 3)
 
     def forward(self, input_tensor, graph_matrix):
         """
@@ -717,19 +821,57 @@ class GraphAttentionV2(nn.Module):
             input_tensor: (batch, seq_len, hidden_size)
             graph_matrix: (batch, seq_len, seq_len), adjacency matrix
         """
-        # input: (batch, seq_len, hidden_size//2)
-        #print ("input_tensor:\n",input_tensor)
-        value_layer = self.value(input_tensor)
-        #print ("value_layer:\n",value_layer)
-        #print ("graph_matrix:\n", graph_matrix)
-        # This is actually dropping out entire tokens to attend to, which might
-        # seem a bit unusual, but is taken from the original Transformer paper.
-        attention_probs = self.dropout(graph_matrix)
-        #smoothing_rate = 0.2
-        #attention_probs = attention_probs * (1-smoothing_rate) + 0.5 * smoothing_rate
-        # (batch, seq_len, seq_len) * (batch, seq_len, hidden_size//2) 
-        # => (batch, seq_len, hidden_size//2)
-        context_layer = torch.matmul(attention_probs.float(), value_layer)
+        if self.only_value_weight:
+            # input: (batch, seq_len, hidden_size//2)
+            value_layer = self.value(input_tensor)
+            # This is actually dropping out entire tokens to attend to, which might
+            # seem a bit unusual, but is taken from the original Transformer paper.
+            attention_probs = self.dropout(graph_matrix)
+            #smoothing_rate = 0.2
+            #attention_probs = attention_probs * (1-smoothing_rate) + 0.5 * smoothing_rate
+            # (batch, seq_len, seq_len) * (batch, seq_len, hidden_size//2) 
+            # => (batch, seq_len, hidden_size//2)
+            context_layer = torch.matmul(attention_probs.float(), value_layer)
+        else:
+            # (batch, seq_len, seq_len), mask out non-ajacency relations
+            neg_inf_mask = (1-graph_matrix) * -1e9
+            # input: (batch, seq_len, hidden_size//2)
+            mixed_query_layer = self.query(input_tensor)
+            mixed_key_layer = self.key(input_tensor)
+            mixed_value_layer = self.value(input_tensor)
+
+            # (batch, seq_len, num_head, head_size) => (batch, num_head, seq_len, head_size)
+            query_layer = self.transpose_for_scores(mixed_query_layer)
+            key_layer = self.transpose_for_scores(mixed_key_layer)
+            value_layer = self.transpose_for_scores(mixed_value_layer)
+
+            # Take the dot product between "query" and "key" to get the raw attention scores.
+            # (batch, num_head, seq_len, seq_len)
+            attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
+            attention_scores = attention_scores / math.sqrt(self.attention_head_size)
+
+            # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
+            attention_scores = attention_scores + neg_inf_mask.unsqueeze(1)
+
+            # Normalize the attention scores to probabilities.
+            # (batch, num_head, seq_len, seq_len)
+            attention_probs = nn.Softmax(dim=-1)(attention_scores)
+
+            #print ("graph_matrix:\n",graph_matrix)
+            #print ("attention_scores:\n", attention_scores)
+            #print ("attention_probs:\n", attention_probs)
+
+            # This is actually dropping out entire tokens to attend to, which might
+            # seem a bit unusual, but is taken from the original Transformer paper.
+            attention_probs = self.dropout(attention_probs)
+            # (batch, num_head, seq_len, seq_len) * (batch, num_head, seq_len, head_size) 
+            # => (batch, num_head, seq_len, head_size)
+            context_layer = torch.matmul(attention_probs, value_layer)
+            # (batch, num_head, seq_len, head_size) => (batch, seq_len, num_head, head_size)
+            context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
+            new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
+            # (batch, seq_len, num_head, head_size) => (batch, seq_len, hidden_size)
+            context_layer = context_layer.view(*new_context_layer_shape)
 
         return context_layer
 
@@ -781,8 +923,8 @@ class GraphAttentionLayerV2(nn.Module):
         if config.input_self_attention_layer:
             self.input_encoder = SelfAttentionEncoder(config, n_layers=config.num_input_attention_layers)
         # information flow in bidirection
-        self.fw_graph_attention = GraphAttentionV2(config)
-        self.bw_graph_attention = GraphAttentionV2(config)
+        self.fw_graph_attention = GraphAttentionV2(config, config.hidden_size//2, config.num_attention_heads)
+        self.bw_graph_attention = GraphAttentionV2(config, config.hidden_size//2, config.num_attention_heads)
         self.self_output = GraphAttentionSelfOutputV2(config)
         self.intermediate = GraphAttentionIntermediateV2(config)
         self.output = BERTOutput(config)

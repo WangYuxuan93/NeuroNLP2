@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from neuronlp2.nn import TreeCRF, VarGRU, VarRNN, VarLSTM, VarFastLSTM
 from neuronlp2.nn import BiAffine, BiAffine_v2, BiLinear, CharCNN
 from neuronlp2.tasks import parser
-from neuronlp2.nn.transformer import GraphAttentionConfig, GraphAttentionModel, GraphAttentionModelV2
+from neuronlp2.nn.transformer import GraphAttentionV2Config, GraphAttentionModelV2
 from neuronlp2.nn.transformer import SelfAttentionConfig, SelfAttentionModel
 from neuronlp2.models.parsing import PositionEmbeddingLayer
 from neuronlp2.nn.hard_concrete import HardConcreteDist
@@ -29,12 +29,12 @@ class EasyFirst(nn.Module):
                  input_encoder='Linear', num_layers=3, p_rnn=(0.33, 0.33),
                  input_self_attention_layer=False, num_input_attention_layers=3,
                  maximize_unencoded_arcs_for_norc=False,
-                 encode_all_arc_for_rel=False,
-                 use_input_encode_for_rel=False,
-                 always_recompute=False,
-                 use_hard_concrete_dist=True, hard_concrete_temp=0.1, hard_concrete_eps=0.1,
+                 encode_all_arc_for_rel=False, use_input_encode_for_rel=False,
+                 always_recompute=False, use_hard_concrete_dist=True, 
+                 hard_concrete_temp=0.1, hard_concrete_eps=0.1,
                  apply_recomp_prob_first=False, num_graph_attention_layers=1, share_params=False,
-                 residual_from_input=False, transformer_drop_prob=0):
+                 residual_from_input=False, transformer_drop_prob=0,
+                 num_graph_attention_heads=1, only_value_weight=False):
         super(EasyFirst, self).__init__()
         self.device = device
         self.dep_prob_depend_on_head = dep_prob_depend_on_head
@@ -99,12 +99,13 @@ class EasyFirst(nn.Module):
             self.input_encoder = None
             out_dim = dim_enc
 
-        self.config = GraphAttentionConfig(input_size=out_dim,
+        self.config = GraphAttentionV2Config(input_size=out_dim,
                                             hidden_size=hidden_size,
                                             arc_space=arc_space,
-                                            num_attention_heads=num_attention_heads,
+                                            num_attention_heads=num_graph_attention_heads,
                                             num_graph_attention_layers=num_graph_attention_layers,
                                             share_params=share_params,
+                                            only_value_weight=only_value_weight,
                                             intermediate_size=intermediate_size,
                                             hidden_act="gelu",
                                             hidden_dropout_prob=graph_attention_hidden_dropout_prob,
@@ -1331,7 +1332,7 @@ class EasyFirstV2(EasyFirst):
         trans_mask = root_mask.permute(1,0)[1:,:]
         order_masks = order_masks * trans_mask.int().unsqueeze(-1)
 
-        return order_masks
+        return order_masks.detach()
 
     """
     def forward(self, input_word, input_char, input_pos, heads, rels, order_masks,

@@ -343,6 +343,8 @@ def train(args):
     share_params = hyps['share_params']
     residual_from_input = hyps['residual_from_input']
     transformer_drop_prob = hyps['transformer_drop_prob']
+    num_graph_attention_heads = hyps['num_graph_attention_heads']
+    only_value_weight = hyps['only_value_weight']
 
     if always_recompute:
         target_recomp_prob = 1
@@ -376,7 +378,9 @@ def train(args):
                            apply_recomp_prob_first=apply_recomp_prob_first,
                            num_graph_attention_layers=num_graph_attention_layers,
                            share_params=share_params, residual_from_input=residual_from_input,
-                           transformer_drop_prob=transformer_drop_prob)
+                           transformer_drop_prob=transformer_drop_prob,
+                           num_graph_attention_heads=num_graph_attention_heads, 
+                           only_value_weight=only_value_weight)
     elif model_type == 'EasyFirstV2':
         network = EasyFirstV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                            hidden_size, num_types, arc_space, type_space,
@@ -404,7 +408,9 @@ def train(args):
                            apply_recomp_prob_first=apply_recomp_prob_first,
                            num_graph_attention_layers=num_graph_attention_layers,
                            share_params=share_params, residual_from_input=residual_from_input,
-                           transformer_drop_prob=transformer_drop_prob)
+                           transformer_drop_prob=transformer_drop_prob,
+                           num_graph_attention_heads=num_graph_attention_heads, 
+                           only_value_weight=only_value_weight)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -424,22 +430,25 @@ def train(args):
 
     #network = network.to(device)
     model = "{}-{}".format(model_type, mode)
-    logger.info("Network: %s, hidden=%d, act=%s, graph att layers:%s, share params:%s" % (model, 
-                hidden_size, activation, num_graph_attention_layers, share_params))
-    logger.info("Sampler: %s (explore: %s)" % (sampler, explore))
-    logger.info("dropout(in, out, hidden, att, graph_hid, graph_att): %s(%.2f, %.2f, %.2f, %.2f, %.2f, %.2f)" % ('variational', p_in, p_out, p_hid, p_att, p_graph_hid, p_graph_att))
-    logger.info("Input Encoder Type: %s (layer: %d)" % (input_encoder, num_layers))
+    logger.info("Network: %s, hidden=%d, act=%s" % (model, hidden_size, activation))
+    logger.info("Sampler: %s (Explore: %s)" % (sampler, explore))
+    logger.info("##### Input Encoder (Type: %s, Layer: %d) ###" % (input_encoder, num_layers))
+    logger.info("dropout(in, out, hidden, att): (%.2f, %.2f, %.2f, %.2f)" % (p_in, p_out, p_hid, p_att))
+    logger.info("Use POS tag: %s" % use_pos)
+    logger.info("Use Char: %s" % use_char)
     logger.info("Residual From Input Layer: %s (transformer dropout: %.2f)" % (residual_from_input, transformer_drop_prob))
-    logger.info("Use Input Self Attention Layer: %s (layer: %d)" % (input_self_attention_layer, num_input_attention_layers))
+    logger.info("##### Graph Encoder (Layers: %s, Share Params:%s) #####"% (num_graph_attention_layers, share_params))
+    logger.info("dropout(graph_hid, graph_att): (%.2f, %.2f)" % (p_graph_hid, p_graph_att))
+    logger.info("Only Use Value Weight: %s" % only_value_weight)
+    logger.info("Use Input Self Attention Layer: %s (Layer: %d)" % (input_self_attention_layer, num_input_attention_layers))
     logger.info("Use Top Self Attention Layer: %s" % extra_self_attention_layer)
     logger.info("Use Hard Concrete Distribution: %s (Temperature: %.2f, Epsilon: %.2f, Apply Prob First: %s)" % (use_hard_concrete_dist,
                                                                                         hc_temp, hc_eps, apply_recomp_prob_first))
+    logger.info("##### Parser #####")
     logger.info("Always Recompute after Generation: %s" % always_recompute)
     logger.info("Maximize All Unencoded Arcs for No Recompute: %s" % maximize_unencoded_arcs_for_norc)
     logger.info("Encode All Arcs for Relation Prediction: %s" % encode_all_arc_for_rel)
     logger.info("Only Use Input Encoder for Relation Prediction: %s" % use_input_encode_for_rel)
-    logger.info("Use POS tag: %s" % use_pos)
-    logger.info("Use Char: %s" % use_char)
     logger.info('# of Parameters: %d' % (sum([param.numel() for param in network.parameters()])))
     logger.info("Reading Data")
 
@@ -627,10 +636,13 @@ def train(args):
                 if sampler == 'random':
                     order_masks = get_order_mask(data['LENGTH'], sampler=sampler).to(device)
                 elif sampler == 'from_model':
+                    network.eval()
                     if num_gpu > 1:
                         order_masks = network.module.inference(words, chars, postags, heads, mask=masks)
                     else:
                         order_masks = network.inference(words, chars, postags, heads, mask=masks)
+                    order_masks.to(device)
+                    network.train()
                 nbatch = words.size(0)
                 nwords = masks.sum() - nbatch
                 network.train()

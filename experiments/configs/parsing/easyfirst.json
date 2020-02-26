@@ -24,6 +24,8 @@
   "num_layers": 1,
   "num_graph_attention_layers": 1,
   "share_params": false,
+  "num_graph_attention_heads": 1,
+  "only_value_weight": false,
   "residual_from_input": false,
   "transformer_drop_prob": 0.1,
   "pos_dim": 100,
