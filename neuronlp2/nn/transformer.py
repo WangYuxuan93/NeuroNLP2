@@ -866,7 +866,7 @@ class GraphAttentionV2(nn.Module):
             attention_probs = self.dropout(attention_probs)
             # (batch, num_head, seq_len, seq_len) * (batch, num_head, seq_len, head_size) 
             # => (batch, num_head, seq_len, head_size)
-            context_layer = torch.matmul(attention_probs, value_layer)
+            context_layer = torch.matmul(attention_probs.float(), value_layer)
             # (batch, num_head, seq_len, head_size) => (batch, seq_len, num_head, head_size)
             context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
             new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
