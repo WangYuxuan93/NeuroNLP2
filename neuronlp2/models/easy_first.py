@@ -1317,19 +1317,20 @@ class EasyFirstV2(EasyFirst):
             # (batch_size, seq_len, seq_len)
             rel_ids = reformed_rel_logits.argmax(-1)
         else:
-            rel_embeddings = None
-
+            rel_ids = None
+        rel_embeddings = None
         if self.always_recompute:
-            # (batch, seq_len, seq_len)
-            masked_rel_ids = rel_ids * gen_arcs_3D
-            # (batch, seq_len, seq_len, rel_dim)
-            rel_embeddings = self.rel_embed(masked_rel_ids)
+            if self.do_encode_rel:
+                # (batch, seq_len, seq_len)
+                masked_rel_ids = rel_ids * gen_arcs_3D
+                # (batch, seq_len, seq_len, rel_dim)
+                rel_embeddings = self.rel_embed(masked_rel_ids)
             if debug:
                 np.set_printoptions(threshold=np.inf)
                 print ("rel_ids:\n", rel_ids)
                 print ("masked_rel_ids:\n", masked_rel_ids)
                 print ("rel_embeddings:\n", rel_embeddings.detach().numpy())
-
+            
             all_encoder_layers = self.graph_attention(input_encoder_output, gen_arcs_3D, root_mask, 
                                                         rel_embeddings=rel_embeddings)
             # [batch, length, hidden_size]
