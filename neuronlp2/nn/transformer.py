@@ -727,7 +727,8 @@ class GraphAttentionV2Config(object):
                 initializer_range=0.02,
                 extra_self_attention_layer=False,
                 input_self_attention_layer=False,
-                num_input_attention_layers=3):
+                num_input_attention_layers=3,
+                rel_dim=100, do_encode_rel=False):
         """Constructs BertConfig.
 
         Args:
@@ -767,6 +768,8 @@ class GraphAttentionV2Config(object):
         self.extra_self_attention_layer = extra_self_attention_layer
         self.input_self_attention_layer = input_self_attention_layer
         self.num_input_attention_layers = num_input_attention_layers
+        self.rel_dim = rel_dim
+        self.do_encode_rel = do_encode_rel
 
     @classmethod
     def from_dict(cls, json_object):
@@ -793,10 +796,36 @@ class GraphAttentionV2Config(object):
         return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
 
 
+def matmul_rel(x, y, z=None):
+    """
+    x: (batch_size, num_heads, seq_len, head_size)
+    y: (batch_size, num_heads, seq_len, head_size)
+    z: (batch_size, num_heads, seq_len, seq_len, head_size)
+    """
+    sizes = list(x.size())
+    seq_len, hidden_size = sizes[-2:]
+    #print (seq_len, hidden_size)
+    new_sizes = sizes[:-2] + [seq_len] + sizes[-2:]
+    if z is not None:
+        assert list(z.size()) == new_sizes
+    #print (new_sizes)
+    x_ = x.unsqueeze(-2).expand(new_sizes)
+    y_ = y.unsqueeze(-3).expand(new_sizes)
+    #print ("x_:\n", x_)
+    #print ("y_:\n", y_)
+    if z is not None:
+        y_ = y_ + z
+        #print ("y_+z:\n", y_)
+    out = (x_ * y_).sum(-1).squeeze(-1)
+
+    return out
+
+
 class GraphAttentionV2(nn.Module):
     def __init__(self, config, hidden_size, num_attention_heads):
         super(GraphAttentionV2, self).__init__()
         self.only_value_weight = config.only_value_weight
+        self.do_encode_rel = config.do_encode_rel
         self.hidden_size = hidden_size
         self.num_attention_heads = num_attention_heads
         self.attention_head_size = int(self.hidden_size / self.num_attention_heads)
@@ -807,6 +836,8 @@ class GraphAttentionV2(nn.Module):
         if not self.only_value_weight:
             self.query = nn.Linear(config.hidden_size, self.all_head_size)
             self.key = nn.Linear(config.hidden_size, self.all_head_size)
+        if self.do_encode_rel:
+            self.rel_to_hidden = nn.Linear(config.rel_dim, self.attention_head_size)
 
     def transpose_for_scores(self, x):
         # (batch, seq_len, hidden_size) => (batch, seq_len, num_head, head_size)
@@ -815,11 +846,12 @@ class GraphAttentionV2(nn.Module):
         # (batch, seq_len, num_head, head_size) => (batch, num_head, seq_len, head_size)
         return x.permute(0, 2, 1, 3)
 
-    def forward(self, input_tensor, graph_matrix):
+    def forward(self, input_tensor, graph_matrix, rel_embeddings=None):
         """
         Inputs:
             input_tensor: (batch, seq_len, hidden_size)
             graph_matrix: (batch, seq_len, seq_len), adjacency matrix
+            rel_embeddings: optional (batch, seq_len, seq_len, rel_dim)
         """
         if self.only_value_weight:
             # input: (batch, seq_len, hidden_size//2)
@@ -845,9 +877,19 @@ class GraphAttentionV2(nn.Module):
             key_layer = self.transpose_for_scores(mixed_key_layer)
             value_layer = self.transpose_for_scores(mixed_value_layer)
 
+            if self.do_encode_rel and rel_embeddings is not None:
+                # (batch, seq_len, seq_len, head_size)
+                rel_layer = self.rel_to_hidden(rel_embeddings)
+                size = list(rel_layer.size())
+                new_size = size[:1] + [self.num_attention_heads] + size[1:]
+                # (batch, num_head, seq_len, seq_len, head_size)
+                rel_layer = rel_layer.unsqueeze(1).expand(new_size)
+                # (batch, num_head, seq_len, seq_len)
+                attention_scores = matmul_rel(query_layer, key_layer, rel_layer)
             # Take the dot product between "query" and "key" to get the raw attention scores.
-            # (batch, num_head, seq_len, seq_len)
-            attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
+            else:
+                # (batch, num_head, seq_len, seq_len)
+                attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
             attention_scores = attention_scores / math.sqrt(self.attention_head_size)
 
             # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
@@ -932,12 +974,16 @@ class GraphAttentionLayerV2(nn.Module):
         if config.extra_self_attention_layer:
             self.self_attention = BERTAttention(config)
 
-    def forward(self, hidden_states, graph_matrix, attention_mask):
+    def forward(self, hidden_states, graph_matrix, attention_mask, rel_embeddings=None):
         if self.input_encoder is not None:
             hidden_states = self.input_encoder(hidden_states, attention_mask)
         # (batch, seq_len, hidden_size/2)
-        fw_ga_output = self.fw_graph_attention(hidden_states, graph_matrix)
-        bw_ga_output = self.bw_graph_attention(hidden_states, graph_matrix.transpose(-1,-2))
+        fw_ga_output = self.fw_graph_attention(hidden_states, graph_matrix, rel_embeddings)
+        if rel_embeddings is not None:
+            bw_rel_embeddings = rel_embeddings.permute(0,2,1,3)
+        else:
+            bw_rel_embeddings = None
+        bw_ga_output = self.bw_graph_attention(hidden_states, graph_matrix.transpose(-1,-2), bw_rel_embeddings)
         #print ("graph_matrix:\n", graph_matrix)
         # (batch, seq_len, hidden_size)
         concat_output = torch.cat([fw_ga_output,fw_ga_output], dim=-1)
@@ -964,15 +1010,15 @@ class GraphAttentionEncoderV2(nn.Module):
         else:
             self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.num_graph_attention_layers)])
 
-    def forward(self, hidden_states, graph_matrix, attention_mask):
+    def forward(self, hidden_states, graph_matrix, attention_mask, rel_embeddings=None):
         all_encoder_layers = []
         if self.share_params:
             for _ in range(self.num_graph_attention_layers):
-                hidden_states = self.layer(hidden_states, graph_matrix, attention_mask)
+                hidden_states = self.layer(hidden_states, graph_matrix, attention_mask, rel_embeddings)
                 all_encoder_layers.append(hidden_states)
         else:
             for layer_module in self.layer:
-                hidden_states = layer_module(hidden_states, graph_matrix, attention_mask)
+                hidden_states = layer_module(hidden_states, graph_matrix, attention_mask, rel_embeddings)
                 all_encoder_layers.append(hidden_states)
         return all_encoder_layers
 
@@ -988,7 +1034,7 @@ class GraphAttentionModelV2(nn.Module):
         self.embeddings = GraphAttentionEmbeddings(config)
         self.encoder = GraphAttentionEncoderV2(config)
 
-    def forward(self, input_tensor, graph_matrix, attention_mask=None):
+    def forward(self, input_tensor, graph_matrix, attention_mask=None, rel_embeddings=None):
         """
         Input:
             input_tensor: (batch, seq_len, input_size)
@@ -1016,6 +1062,7 @@ class GraphAttentionModelV2(nn.Module):
         extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
 
         embedding_output = self.embeddings(input_tensor)
-        all_encoder_layers = self.encoder(embedding_output, graph_matrix, extended_attention_mask)
+        all_encoder_layers = self.encoder(embedding_output, graph_matrix, extended_attention_mask,
+                                        rel_embeddings=rel_embeddings)
 
         return all_encoder_layers

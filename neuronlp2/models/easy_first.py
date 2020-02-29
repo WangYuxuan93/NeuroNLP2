@@ -34,7 +34,8 @@ class EasyFirst(nn.Module):
                  hard_concrete_temp=0.1, hard_concrete_eps=0.1,
                  apply_recomp_prob_first=False, num_graph_attention_layers=1, share_params=False,
                  residual_from_input=False, transformer_drop_prob=0,
-                 num_graph_attention_heads=1, only_value_weight=False):
+                 num_graph_attention_heads=1, only_value_weight=False,
+                 encode_rel_type='gold', rel_dim=100):
         super(EasyFirst, self).__init__()
         self.device = device
         self.dep_prob_depend_on_head = dep_prob_depend_on_head
@@ -47,6 +48,11 @@ class EasyFirst(nn.Module):
         self.use_hard_concrete_dist = use_hard_concrete_dist
         self.apply_recomp_prob_first = apply_recomp_prob_first
         self.residual_from_input = residual_from_input
+        self.encode_rel_type = encode_rel_type
+        if self.encode_rel_type == 'gold' or self.encode_rel_type == 'pred':
+            self.do_encode_rel = True
+        else:
+            self.do_encode_rel = False
 
         self.word_embed = nn.Embedding(num_words, word_dim, _weight=embedd_word, padding_idx=1)
         self.pos_embed = nn.Embedding(num_pos, pos_dim, _weight=embedd_pos, padding_idx=1) if pos else None
@@ -56,6 +62,8 @@ class EasyFirst(nn.Module):
         else:
             self.char_embed = None
             self.char_cnn = None
+        if self.do_encode_rel:
+            self.rel_embed = nn.Embedding(num_labels, rel_dim, padding_idx=0)
 
         self.dropout_in = nn.Dropout2d(p=p_in)
         self.dropout_out = nn.Dropout2d(p=p_out)
@@ -114,7 +122,8 @@ class EasyFirst(nn.Module):
                                             initializer_range=0.02,
                                             extra_self_attention_layer=extra_self_attention_layer,
                                             input_self_attention_layer=input_self_attention_layer,
-                                            num_input_attention_layers=num_input_attention_layers)
+                                            num_input_attention_layers=num_input_attention_layers,
+                                            rel_dim=rel_dim, do_encode_rel=self.do_encode_rel)
 
         self.graph_attention = GraphAttentionModelV2(self.config)
 
@@ -179,6 +188,8 @@ class EasyFirst(nn.Module):
             nn.init.uniform_(self.char_embed.weight, -0.1, 0.1)
         if embedd_pos is None and self.pos_embed is not None:
             nn.init.uniform_(self.pos_embed.weight, -0.1, 0.1)
+        if self.do_encode_rel:
+            nn.init.uniform_(self.rel_embed.weight, -0.1, 0.1)
 
         with torch.no_grad():
             self.word_embed.weight[self.word_embed.padding_idx].fill_(0)
@@ -186,6 +197,8 @@ class EasyFirst(nn.Module):
                 self.char_embed.weight[self.char_embed.padding_idx].fill_(0)
             if self.pos_embed is not None:
                 self.pos_embed.weight[self.pos_embed.padding_idx].fill_(0)
+            if self.do_encode_rel:
+                self.rel_embed.weight[self.rel_embed.padding_idx].fill_(0)
 
         nn.init.xavier_uniform_(self.arc_h.weight)
         nn.init.constant_(self.arc_h.bias, 0.)
@@ -888,11 +901,37 @@ class EasyFirst(nn.Module):
         heads_by_layer = []
         # (batch, seq_len, hidden_size)
         input_encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=root_mask, device=device)
+        
+        # compute arc logp for no recompute generate mask
+        if self.use_input_encode_for_rel:
+            rel_h, rel_c = self._rel_mlp(input_encoder_output)
+            # (batch_size, seq_len, seq_len, n_rels)
+            rel_logits = self.rel_attn(rel_c, rel_h).permute(0, 2, 3, 1)
+            # (batch_size, seq_len, seq_len)
+            rel_ids = rel_logits.argmax(-1)
+            # (batch_size, seq_len)
+            masked_heads_pred = heads_pred * root_mask
+            # (batch_size, seq_len)
+            rels_pred = rel_ids.gather(dim=-1, index=masked_heads_pred.unsqueeze(-1).long()).squeeze(-1)
+
+        rel_embeddings = None
+
         while True:
             # ----- encoding -----
+            if self.do_encode_rel:
+                # (batch, seq_len, seq_len)
+                masked_rel_ids = rel_ids * gen_heads_onehot
+                # (batch, seq_len, seq_len, rel_dim)
+                rel_embeddings = self.rel_embed(masked_rel_ids)
+                if debug:
+                    np.set_printoptions(threshold=np.inf)
+                    print ("rel_ids:\n", rel_ids)
+                    print ("masked_rel_ids:\n", masked_rel_ids)
+                    print ("rel_embeddings:\n", rel_embeddings.detach().numpy())
             # (batch, seq_len, hidden_size)
             #input_encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=root_mask, device=device)
-            all_encoder_layers = self.graph_attention(input_encoder_output, gen_heads_onehot, root_mask)
+            all_encoder_layers = self.graph_attention(input_encoder_output, gen_heads_onehot, root_mask,
+                                                        rel_embeddings=rel_embeddings)
             encoder_output = all_encoder_layers[-1]
             # ----- compute arc probs -----
             # compute arc logp for no recompute generate mask
@@ -1235,7 +1274,11 @@ class EasyFirstV2(EasyFirst):
         input_encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=root_mask, device=mask.device)
         return input_encoder_output
 
-    def forward(self, input_word, input_char, input_pos, gen_arcs_3D, heads, rels, order_mask, mask=None, explore=True):
+    def forward(self, input_word, input_char, input_pos, gen_arcs_3D, heads, rels, order_mask, 
+                mask=None, explore=True, debug=False):
+        if explore and self.encode_rel_type == 'gold':
+            print ("### Error: Training with explore but encoding gold relation! ###")
+            exit()
         input_encoder_output = self._get_input_encoder_output(input_word, input_char, input_pos, mask)
         # Pre-processing
         batch_size, seq_len = heads.size()
@@ -1249,6 +1292,7 @@ class EasyFirstV2(EasyFirst):
         gold_arcs_3D = gold_arcs_3D * mask_3D
         # (batch, seq_len, seq_len)
         rels_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.long, device=heads.device)
+        rels[:,0] = 0
         rels_3D.scatter_(-1, heads.unsqueeze(-1), rels.unsqueeze(-1))
         
         # Compute relation loss
@@ -1264,8 +1308,30 @@ class EasyFirstV2(EasyFirst):
             loss_rel = loss_rel * mask
         loss_rel = loss_rel[:, 1:].sum() / gold_arcs_3D.sum()
 
+
+        if self.encode_rel_type == "gold":
+            rel_ids = rels_3D
+        elif self.encode_rel_type == "pred":
+            # (batch, n_rels, seq_len, seq_len) => (batch, seq_len, seq_len, n_rels)
+            reformed_rel_logits = rel_logits.permute(0, 2, 3, 1)
+            # (batch_size, seq_len, seq_len)
+            rel_ids = reformed_rel_logits.argmax(-1)
+        else:
+            rel_embeddings = None
+
         if self.always_recompute:
-            all_encoder_layers = self.graph_attention(input_encoder_output, gen_arcs_3D, root_mask)
+            # (batch, seq_len, seq_len)
+            masked_rel_ids = rel_ids * gen_arcs_3D
+            # (batch, seq_len, seq_len, rel_dim)
+            rel_embeddings = self.rel_embed(masked_rel_ids)
+            if debug:
+                np.set_printoptions(threshold=np.inf)
+                print ("rel_ids:\n", rel_ids)
+                print ("masked_rel_ids:\n", masked_rel_ids)
+                print ("rel_embeddings:\n", rel_embeddings.detach().numpy())
+
+            all_encoder_layers = self.graph_attention(input_encoder_output, gen_arcs_3D, root_mask, 
+                                                        rel_embeddings=rel_embeddings)
             # [batch, length, hidden_size]
             encoder_output = all_encoder_layers[-1]
             arc_h, arc_c = self._arc_mlp(encoder_output)
@@ -1278,10 +1344,10 @@ class EasyFirstV2(EasyFirst):
             if explore:
                 # * order_mask to remove out of length arcs
                 # update with max arcs among all
-                gen_arcs_3D = gen_arcs_3D + general_max_tensor * order_mask.unsqueeze(-1)
+                gen_arcs_3D = gen_arcs_3D + (general_max_tensor * order_mask.unsqueeze(-1)).int()
             else:
                 # update with max gold arcs
-                gen_arcs_3D = gen_arcs_3D + gold_max_tensor * order_mask.unsqueeze(-1)
+                gen_arcs_3D = gen_arcs_3D + (gold_max_tensor * order_mask.unsqueeze(-1)).int()
             #print ("### gen_arcs_3D:\n",gen_arcs_3D)
         else:
             print ("Not Implemented!")

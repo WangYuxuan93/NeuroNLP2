@@ -345,6 +345,8 @@ def train(args):
     transformer_drop_prob = hyps['transformer_drop_prob']
     num_graph_attention_heads = hyps['num_graph_attention_heads']
     only_value_weight = hyps['only_value_weight']
+    encode_rel_type = hyps['encode_rel_type']
+    rel_dim = hyps['rel_dim']
 
     if always_recompute:
         target_recomp_prob = 1
@@ -380,7 +382,8 @@ def train(args):
                            share_params=share_params, residual_from_input=residual_from_input,
                            transformer_drop_prob=transformer_drop_prob,
                            num_graph_attention_heads=num_graph_attention_heads, 
-                           only_value_weight=only_value_weight)
+                           only_value_weight=only_value_weight,
+                           encode_rel_type=encode_rel_type, rel_dim=rel_dim)
     elif model_type == 'EasyFirstV2':
         network = EasyFirstV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                            hidden_size, num_types, arc_space, type_space,
@@ -410,7 +413,8 @@ def train(args):
                            share_params=share_params, residual_from_input=residual_from_input,
                            transformer_drop_prob=transformer_drop_prob,
                            num_graph_attention_heads=num_graph_attention_heads, 
-                           only_value_weight=only_value_weight)
+                           only_value_weight=only_value_weight,
+                           encode_rel_type=encode_rel_type, rel_dim=rel_dim)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -440,6 +444,7 @@ def train(args):
     logger.info("##### Graph Encoder (Layers: %s, Share Params:%s) #####"% (num_graph_attention_layers, share_params))
     logger.info("dropout(graph_hid, graph_att): (%.2f, %.2f)" % (p_graph_hid, p_graph_att))
     logger.info("Only Use Value Weight: %s" % only_value_weight)
+    logger.info("Encode Relation Type: %s (rel embed dim: %d)" % (encode_rel_type, rel_dim))
     logger.info("Use Input Self Attention Layer: %s (Layer: %d)" % (input_self_attention_layer, num_input_attention_layers))
     logger.info("Use Top Self Attention Layer: %s" % extra_self_attention_layer)
     logger.info("Use Hard Concrete Distribution: %s (Temperature: %.2f, Epsilon: %.2f, Apply Prob First: %s)" % (use_hard_concrete_dist,
