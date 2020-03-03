@@ -125,7 +125,8 @@ class DeepBiAffine(nn.Module):
         #self.bilinear = BiLinear(type_space, type_space, self.num_labels)
         self.bilinear = BiAffine_v2(type_space, n_out=self.num_labels, bias_x=True, bias_y=True)
 
-        self.dep_dense = nn.Linear(out_dim, 1)
+        if self.minimize_logp:
+            self.dep_dense = nn.Linear(out_dim, 1)
 
         assert activation in ['elu', 'tanh']
         if activation == 'elu':
@@ -160,8 +161,9 @@ class DeepBiAffine(nn.Module):
         nn.init.xavier_uniform_(self.type_c.weight)
         nn.init.constant_(self.type_c.bias, 0.)
 
-        nn.init.xavier_uniform_(self.dep_dense.weight)
-        nn.init.constant_(self.dep_dense.bias, 0.)
+        if self.minimize_logp:
+            nn.init.xavier_uniform_(self.dep_dense.weight)
+            nn.init.constant_(self.dep_dense.bias, 0.)
 
         if self.input_encoder_type == 'Linear':
             nn.init.xavier_uniform_(self.input_encoder.weight)

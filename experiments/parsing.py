@@ -578,9 +578,14 @@ def parse(args):
     alg = 'transition' if model_type == 'StackPtr' else 'graph'
     if model_type == 'DeepBiAffine':
         num_layers = hyps['num_layers']
+        num_attention_heads = hyps['num_attention_heads']
+        intermediate_size = hyps['intermediate_size']
+        minimize_logp = hyps['minimize_logp']
         network = DeepBiAffine(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                                mode, hidden_size, num_layers, num_types, arc_space, type_space,
-                               p_in=p_in, p_out=p_out, p_rnn=p_rnn, pos=use_pos, activation=activation)
+                               p_in=p_in, p_out=p_out, p_rnn=p_rnn, pos=use_pos, activation=activation,
+                               activation=activation, num_attention_heads=num_attention_heads,
+                               intermediate_size=intermediate_size, minimize_logp=minimize_logp)                            
     elif model_type == 'NeuroMST':
         num_layers = hyps['num_layers']
         network = NeuroMST(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
