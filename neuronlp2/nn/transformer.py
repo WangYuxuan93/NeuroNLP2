@@ -666,7 +666,7 @@ class SelfAttentionEncoder(nn.Module):
 
 
 class SelfAttentionModel(nn.Module):
-    def __init__(self, config: BertConfig):
+    def __init__(self, config: SelfAttentionConfig):
         """Constructor for BertModel.
 
         Args:
@@ -675,6 +675,7 @@ class SelfAttentionModel(nn.Module):
         super(SelfAttentionModel, self).__init__()
         self.embeddings = GraphAttentionEmbeddings(config)
         self.encoder = BERTEncoder(config)
+        self.embedding_output = None
 
     def forward(self, input_tensor, attention_mask=None):
         """
@@ -703,9 +704,13 @@ class SelfAttentionModel(nn.Module):
         extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
 
         embedding_output = self.embeddings(input_tensor)
+        self.embedding_output = embedding_output
         all_encoder_layers = self.encoder(embedding_output, extended_attention_mask)
 
-        return all_encoder_layers, embedding_output
+        return all_encoder_layers
+
+    def get_embedding(self):
+        return self.embedding_output
 
 
 class GraphAttentionV2Config(object):

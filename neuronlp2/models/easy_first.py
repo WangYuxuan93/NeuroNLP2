@@ -253,7 +253,8 @@ class EasyFirst(nn.Module):
             elif self.input_encoder_type == 'FastLSTM':
                 input_encoder_output, _ = self.input_encoder(enc, mask)
             elif self.input_encoder_type == 'Transformer':
-                all_encoder_layers, positioned_input_embedding = self.input_encoder(enc, mask)
+                all_encoder_layers = self.input_encoder(enc, mask)
+                positioned_input_embedding = self.input_encoder.get_embedding()
                 # [batch, length, hidden_size]
                 input_encoder_output = all_encoder_layers[-1]
                 if self.residual_from_input:
@@ -1330,7 +1331,7 @@ class EasyFirstV2(EasyFirst):
                 print ("rel_ids:\n", rel_ids)
                 print ("masked_rel_ids:\n", masked_rel_ids)
                 print ("rel_embeddings:\n", rel_embeddings.detach().numpy())
-            
+
             all_encoder_layers = self.graph_attention(input_encoder_output, gen_arcs_3D, root_mask, 
                                                         rel_embeddings=rel_embeddings)
             # [batch, length, hidden_size]
