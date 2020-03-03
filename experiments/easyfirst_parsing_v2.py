@@ -863,7 +863,7 @@ def parse(args):
     logger.info("loading network...")
     hyps = json.load(open(os.path.join(model_path, 'config.json'), 'r'))
     model_type = hyps['model']
-    assert model_type in ['EasyFirst', 'DeepBiAffine', 'NeuroMST', 'StackPtr']
+    assert model_type in ['EasyFirst', 'EasyFirstV2']
     word_dim = hyps['word_dim']
     char_dim = hyps['char_dim']
     mode = hyps['transformer_mode']
@@ -880,11 +880,18 @@ def parse(args):
     p_out = hyps['p_out']
     activation = hyps['activation']
     loss_interpolation = hyps['loss_interpolation']
+    recomp_ratio = hyps['recomp_ratio']
+    always_recompute = hyps['always_recompute']
+    use_hard_concrete_dist = hyps['use_hard_concrete_dist']
+    hc_temp = hyps['hard_concrete_temp']
+    hc_eps = hyps['hard_concrete_eps']
+    apply_recomp_prob_first = hyps['apply_recomp_prob_first']
 
     num_attention_heads = hyps['num_attention_heads']
     intermediate_size = hyps['intermediate_size']
     p_hid = hyps['hidden_dropout_prob']
     p_att = hyps['attention_probs_dropout_prob']
+    p_graph_hid = hyps['graph_attention_hidden_dropout_prob']
     p_graph_att = hyps['graph_attention_probs_dropout_prob']
     recomp_att_dim = hyps['recomp_att_dim']
     dep_prob_depend_on_head = hyps['dep_prob_depend_on_head']
@@ -897,6 +904,21 @@ def parse(args):
     num_layers = hyps['num_layers']
     p_rnn = hyps['p_rnn']
 
+    maximize_unencoded_arcs_for_norc = hyps['maximize_unencoded_arcs_for_norc']
+    encode_all_arc_for_rel = hyps['encode_all_arc_for_rel']
+    use_input_encode_for_rel = hyps['use_input_encode_for_rel']
+    num_graph_attention_layers = hyps['num_graph_attention_layers']
+    share_params = hyps['share_params']
+    residual_from_input = hyps['residual_from_input']
+    transformer_drop_prob = hyps['transformer_drop_prob']
+    num_graph_attention_heads = hyps['num_graph_attention_heads']
+    only_value_weight = hyps['only_value_weight']
+    encode_rel_type = hyps['encode_rel_type']
+    rel_dim = hyps['rel_dim']
+
+    if always_recompute:
+        target_recomp_prob = 1
+
     if model_type == 'EasyFirst':
         network = EasyFirst(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                            hidden_size, num_types, arc_space, type_space,
@@ -904,6 +926,7 @@ def parse(args):
                            device=device, 
                            hidden_dropout_prob=p_hid,
                            attention_probs_dropout_prob=p_att,
+                           graph_attention_hidden_dropout_prob=p_graph_hid,
                            graph_attention_probs_dropout_prob=p_graph_att,
                            p_in=p_in, p_out=p_out, pos=use_pos, use_char=use_char, 
                            activation=activation, dep_prob_depend_on_head=dep_prob_depend_on_head, 
@@ -912,14 +935,57 @@ def parse(args):
                            num_attention_heads=num_attention_heads,
                            input_encoder=input_encoder, num_layers=num_layers, p_rnn=p_rnn,
                            input_self_attention_layer=input_self_attention_layer,
-                           num_input_attention_layers=num_input_attention_layers)
+                           num_input_attention_layers=num_input_attention_layers,
+                           maximize_unencoded_arcs_for_norc=maximize_unencoded_arcs_for_norc,
+                           encode_all_arc_for_rel=encode_all_arc_for_rel,
+                           use_input_encode_for_rel=use_input_encode_for_rel,
+                           always_recompute=always_recompute,
+                           use_hard_concrete_dist=use_hard_concrete_dist, 
+                           hard_concrete_temp=hc_temp, hard_concrete_eps=hc_eps,
+                           apply_recomp_prob_first=apply_recomp_prob_first,
+                           num_graph_attention_layers=num_graph_attention_layers,
+                           share_params=share_params, residual_from_input=residual_from_input,
+                           transformer_drop_prob=transformer_drop_prob,
+                           num_graph_attention_heads=num_graph_attention_heads, 
+                           only_value_weight=only_value_weight,
+                           encode_rel_type=encode_rel_type, rel_dim=rel_dim)
+    elif model_type == 'EasyFirstV2':
+        network = EasyFirstV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
+                           hidden_size, num_types, arc_space, type_space,
+                           intermediate_size,
+                           device=device, 
+                           hidden_dropout_prob=p_hid,
+                           attention_probs_dropout_prob=p_att,
+                           graph_attention_hidden_dropout_prob=p_graph_hid,
+                           graph_attention_probs_dropout_prob=p_graph_att,
+                           p_in=p_in, p_out=p_out, pos=use_pos, use_char=use_char, 
+                           activation=activation, dep_prob_depend_on_head=dep_prob_depend_on_head, 
+                           use_top2_margin=use_top2_margin, target_recomp_prob=target_recomp_prob,
+                           extra_self_attention_layer=extra_self_attention_layer,
+                           num_attention_heads=num_attention_heads,
+                           input_encoder=input_encoder, num_layers=num_layers, p_rnn=p_rnn,
+                           input_self_attention_layer=input_self_attention_layer,
+                           num_input_attention_layers=num_input_attention_layers,
+                           maximize_unencoded_arcs_for_norc=maximize_unencoded_arcs_for_norc,
+                           encode_all_arc_for_rel=encode_all_arc_for_rel,
+                           use_input_encode_for_rel=use_input_encode_for_rel,
+                           always_recompute=always_recompute,
+                           use_hard_concrete_dist=use_hard_concrete_dist, 
+                           hard_concrete_temp=hc_temp, hard_concrete_eps=hc_eps,
+                           apply_recomp_prob_first=apply_recomp_prob_first,
+                           num_graph_attention_layers=num_graph_attention_layers,
+                           share_params=share_params, residual_from_input=residual_from_input,
+                           transformer_drop_prob=transformer_drop_prob,
+                           num_graph_attention_heads=num_graph_attention_heads, 
+                           only_value_weight=only_value_weight,
+                           encode_rel_type=encode_rel_type, rel_dim=rel_dim)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
     network = network.to(device)
     network.load_state_dict(torch.load(model_name, map_location=device))
     model = "{}-{}".format(model_type, mode)
-    print ("Recompute Features Weight: [logp(max), sent_lens, new_arcs, (top margin)] ",network.recomp_dense.weight)
+    #print ("Recompute Features Weight: [logp(max), sent_lens, new_arcs, (top margin)] ",network.recomp_dense.weight)
     logger.info("Network: %s, hidden=%d, act=%s" % (model, hidden_size, activation))
     
     logger.info("Reading Data")
