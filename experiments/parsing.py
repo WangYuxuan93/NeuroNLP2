@@ -584,7 +584,7 @@ def parse(args):
         network = DeepBiAffine(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                                mode, hidden_size, num_layers, num_types, arc_space, type_space,
                                p_in=p_in, p_out=p_out, p_rnn=p_rnn, pos=use_pos, activation=activation,
-                               activation=activation, num_attention_heads=num_attention_heads,
+                               num_attention_heads=num_attention_heads,
                                intermediate_size=intermediate_size, minimize_logp=minimize_logp)                            
     elif model_type == 'NeuroMST':
         num_layers = hyps['num_layers']
