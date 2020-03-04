@@ -254,10 +254,10 @@ class EasyFirst(nn.Module):
                 input_encoder_output, _ = self.input_encoder(enc, mask)
             elif self.input_encoder_type == 'Transformer':
                 all_encoder_layers = self.input_encoder(enc, mask)
-                positioned_input_embedding = self.input_encoder.get_embedding()
                 # [batch, length, hidden_size]
                 input_encoder_output = all_encoder_layers[-1]
                 if self.residual_from_input:
+                    positioned_input_embedding = self.input_encoder.get_embedding()
                     dropped_output = self.transformer_dropout(input_encoder_output)
                     input_encoder_output = dropped_output + positioned_input_embedding
         else:
@@ -910,10 +910,6 @@ class EasyFirst(nn.Module):
             rel_logits = self.rel_attn(rel_c, rel_h).permute(0, 2, 3, 1)
             # (batch_size, seq_len, seq_len)
             rel_ids = rel_logits.argmax(-1)
-            # (batch_size, seq_len)
-            masked_heads_pred = heads_pred * root_mask
-            # (batch_size, seq_len)
-            rels_pred = rel_ids.gather(dim=-1, index=masked_heads_pred.unsqueeze(-1).long()).squeeze(-1)
 
         rel_embeddings = None
 
@@ -989,15 +985,12 @@ class EasyFirst(nn.Module):
             #input_encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=root_mask)
             all_encoder_layers = self.graph_attention(input_encoder_output, gen_heads_onehot, root_mask)
             encoder_output = all_encoder_layers[-1]
-        # compute arc logp for no recompute generate mask
-        if self.use_input_encode_for_rel:
-            rel_h, rel_c = self._rel_mlp(input_encoder_output)
-        else:
+            # compute arc logp for no recompute generate mask
             rel_h, rel_c = self._rel_mlp(encoder_output)
-        # (batch_size, seq_len, seq_len, n_rels)
-        rel_logits = self.rel_attn(rel_c, rel_h).permute(0, 2, 3, 1)
-        # (batch_size, seq_len, seq_len)
-        rel_ids = rel_logits.argmax(-1)
+            # (batch_size, seq_len, seq_len, n_rels)
+            rel_logits = self.rel_attn(rel_c, rel_h).permute(0, 2, 3, 1)
+            # (batch_size, seq_len, seq_len)
+            rel_ids = rel_logits.argmax(-1)
         # (batch_size, seq_len)
         masked_heads_pred = heads_pred * root_mask
         # (batch_size, seq_len)
