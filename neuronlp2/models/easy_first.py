@@ -1286,7 +1286,7 @@ class EasyFirstV2(EasyFirst):
         gold_arcs_3D = gold_arcs_3D * mask_3D
         # (batch, seq_len, seq_len)
         rels_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.long, device=heads.device)
-        rels[:,0] = 0
+        #rels[:,0] = 0
         rels_3D.scatter_(-1, heads.unsqueeze(-1), rels.unsqueeze(-1))
         
         # Compute relation loss
