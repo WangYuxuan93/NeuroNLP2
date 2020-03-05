@@ -44,7 +44,7 @@ def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgra
 def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, 
         device, beam=1, batch_size=256, get_head_by_layer=False, random_recomp=False, 
         recomp_prob=0.25, is_parse=False, write_to_tmp=True, prev_best_lcorr=0, prev_best_ucorr=0,
-        pred_filename=None):
+        pred_filename=None, symbolic_end=True):
     network.eval()
     accum_ucorr = 0.0
     accum_lcorr = 0.0
@@ -96,7 +96,7 @@ def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_
 
         if write_to_tmp:
             pred_writer.write(words, postags, heads_pred, types_pred, lengths, symbolic_root=True, src_words=data['SRC'], 
-                            heads_by_layer=heads_by_layer)
+                            heads_by_layer=heads_by_layer, symbolic_end=symbolic_end)
         else:
             all_words.append(words)
             all_postags.append(postags)
@@ -110,7 +110,8 @@ def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_
         #gold_writer.write(words, postags, heads, types, lengths, symbolic_root=True)
 
         stats, stats_nopunc, stats_root, num_inst = parser.eval(words, postags, heads_pred, types_pred, heads, types,
-                                                                word_alphabet, pos_alphabet, lengths, punct_set=punct_set, symbolic_root=True)
+                                                                word_alphabet, pos_alphabet, lengths, punct_set=punct_set, 
+                                                                symbolic_root=True, symbolic_end=symbolic_end)
         ucorr, lcorr, total, ucm, lcm = stats
         ucorr_nopunc, lcorr_nopunc, total_nopunc, ucm_nopunc, lcm_nopunc = stats_nopunc
         corr_root, total_root = stats_root
@@ -163,7 +164,7 @@ def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_
                     heads_by_layer = None
                 pred_writer.write(all_words[i], all_postags[i], all_heads_pred[i], all_types_pred[i], 
                                 all_lengths[i], symbolic_root=True, src_words=all_src_words[i],
-                                heads_by_layer=heads_by_layer)
+                                heads_by_layer=heads_by_layer, symbolic_end=symbolic_end)
             pred_writer.close()
 
     return (accum_ucorr, accum_lcorr, accum_ucomlpete, accum_lcomplete, accum_total, accum_recomp_freq/n_step), \
@@ -355,6 +356,7 @@ def train(args):
     only_value_weight = hyps['only_value_weight']
     encode_rel_type = hyps['encode_rel_type']
     rel_dim = hyps['rel_dim']
+    use_null_att_pos = hyps['use_null_att_pos']
 
     if always_recompute:
         target_recomp_prob = 1
@@ -391,7 +393,8 @@ def train(args):
                            transformer_drop_prob=transformer_drop_prob,
                            num_graph_attention_heads=num_graph_attention_heads, 
                            only_value_weight=only_value_weight,
-                           encode_rel_type=encode_rel_type, rel_dim=rel_dim)
+                           encode_rel_type=encode_rel_type, rel_dim=rel_dim,
+                           use_null_att_pos=use_null_att_pos)
     elif model_type == 'EasyFirstV2':
         network = EasyFirstV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                            hidden_size, num_types, arc_space, type_space,
@@ -422,7 +425,8 @@ def train(args):
                            transformer_drop_prob=transformer_drop_prob,
                            num_graph_attention_heads=num_graph_attention_heads, 
                            only_value_weight=only_value_weight,
-                           encode_rel_type=encode_rel_type, rel_dim=rel_dim)
+                           encode_rel_type=encode_rel_type, rel_dim=rel_dim,
+                           use_null_att_pos=use_null_att_pos)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -463,14 +467,16 @@ def train(args):
     logger.info("Encode All Arcs for Relation Prediction: %s" % encode_all_arc_for_rel)
     logger.info("Only Use Input Encoder for Relation Prediction: %s" % use_input_encode_for_rel)
     logger.info('# of Parameters: %d' % (sum([param.numel() for param in network.parameters()])))
-    logger.info("Reading Data")
-
+    
+    symbolic_end = args.symbolic_end
+    logger.info("Reading Data (symbolic end: %s)" % symbolic_end)
+    
     data_train = conllx_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
-                                                mask_out_root=False)
+                                                mask_out_root=False, symbolic_end=symbolic_end)
     data_dev = conllx_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
-                                        mask_out_root=False)
+                                        mask_out_root=False, symbolic_end=symbolic_end)
     data_test = conllx_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
-                                        mask_out_root=False)
+                                        mask_out_root=False, symbolic_end=symbolic_end)
     
 
     num_data = sum(data_train[1])
@@ -748,7 +754,8 @@ def train(args):
                                                                     beam=beam, get_head_by_layer=args.get_head_by_layer,
                                                                     random_recomp=args.random_recomp, recomp_prob=args.recomp_prob,
                                                                     write_to_tmp=False, prev_best_lcorr=best_lcorrect_nopunc,
-                                                                    prev_best_ucorr=best_ucorrect_nopunc, pred_filename=pred_filename)
+                                                                    prev_best_ucorr=best_ucorrect_nopunc, pred_filename=pred_filename,
+                                                                    symbolic_end=symbolic_end)
 
                 #gold_writer.close()
 
@@ -789,7 +796,8 @@ def train(args):
                     print('Evaluating test:')
                     test_stats, test_stats_nopunct, test_stats_root = eval(data_test, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, 
                                                                         beam=beam, get_head_by_layer=args.get_head_by_layer,
-                                                                        random_recomp=args.random_recomp, recomp_prob=args.recomp_prob)
+                                                                        random_recomp=args.random_recomp, recomp_prob=args.recomp_prob,
+                                                                        symbolic_end=symbolic_end)
 
                     test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total, test_recomp_freq = test_stats
                     test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
@@ -923,6 +931,7 @@ def parse(args):
     only_value_weight = hyps['only_value_weight']
     encode_rel_type = hyps['encode_rel_type']
     rel_dim = hyps['rel_dim']
+    use_null_att_pos = hyps['use_null_att_pos']
 
     if always_recompute:
         target_recomp_prob = 1
@@ -956,7 +965,8 @@ def parse(args):
                            transformer_drop_prob=transformer_drop_prob,
                            num_graph_attention_heads=num_graph_attention_heads, 
                            only_value_weight=only_value_weight,
-                           encode_rel_type=encode_rel_type, rel_dim=rel_dim)
+                           encode_rel_type=encode_rel_type, rel_dim=rel_dim,
+                           use_null_att_pos=use_null_att_pos)
     elif model_type == 'EasyFirstV2':
         network = EasyFirstV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                            hidden_size, num_types, arc_space, type_space,
@@ -986,7 +996,8 @@ def parse(args):
                            transformer_drop_prob=transformer_drop_prob,
                            num_graph_attention_heads=num_graph_attention_heads, 
                            only_value_weight=only_value_weight,
-                           encode_rel_type=encode_rel_type, rel_dim=rel_dim)
+                           encode_rel_type=encode_rel_type, rel_dim=rel_dim,
+                           use_null_att_pos=use_null_att_pos)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -998,7 +1009,7 @@ def parse(args):
     
     logger.info("Reading Data")
     data_test = conllx_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
-                                        mask_out_root=False)
+                                        mask_out_root=False, symbolic_end=args.symbolic_end)
 
     beam = args.beam
     pred_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, type_alphabet)
@@ -1016,7 +1027,8 @@ def parse(args):
         start_time = time.time()
         eval(data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, 
                 device, beam, batch_size=args.batch_size, get_head_by_layer=args.get_head_by_layer,
-                random_recomp=args.random_recomp, recomp_prob=args.recomp_prob, is_parse=True)
+                random_recomp=args.random_recomp, recomp_prob=args.recomp_prob, is_parse=True,
+                symbolic_end=symbolic_end)
         print('Time: %.2fs' % (time.time() - start_time))
 
     pred_writer.close()
@@ -1027,6 +1039,7 @@ if __name__ == '__main__':
     args_parser = argparse.ArgumentParser(description='Tuning with graph-based parsing')
     args_parser.add_argument('--mode', choices=['train', 'parse'], required=True, help='processing mode')
     args_parser.add_argument('--seed', type=int, default=-1, help='Random seed for torch and numpy (-1 for random)')
+    args_parser.add_argument('--symbolic_end', choices=['True', 'False'], default='True', help='Whether to add END symbol')
     args_parser.add_argument('--fine_tune', action='store_true', default=False, help='Whether to fine_tune?')
     args_parser.add_argument('--explore', action='store_true', default=False, help='Whether to explore (encode wrong prediction) while sampling from model?')
     args_parser.add_argument('--config', type=str, help='config file')
@@ -1068,6 +1081,10 @@ if __name__ == '__main__':
     args_parser.add_argument('--model_path', help='path for saving model file.', required=True)
 
     args = args_parser.parse_args()
+    if args.symbolic_end == 'True':
+        args.symbolic_end = True
+    else:
+        args.symbolic_end = False
     if args.mode == 'train':
         train(args)
     else:

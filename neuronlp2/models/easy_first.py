@@ -35,7 +35,7 @@ class EasyFirst(nn.Module):
                  apply_recomp_prob_first=False, num_graph_attention_layers=1, share_params=False,
                  residual_from_input=False, transformer_drop_prob=0,
                  num_graph_attention_heads=1, only_value_weight=False,
-                 encode_rel_type='gold', rel_dim=100):
+                 encode_rel_type='gold', rel_dim=100, use_null_att_pos=True):
         super(EasyFirst, self).__init__()
         self.device = device
         self.dep_prob_depend_on_head = dep_prob_depend_on_head
@@ -123,7 +123,8 @@ class EasyFirst(nn.Module):
                                             extra_self_attention_layer=extra_self_attention_layer,
                                             input_self_attention_layer=input_self_attention_layer,
                                             num_input_attention_layers=num_input_attention_layers,
-                                            rel_dim=rel_dim, do_encode_rel=self.do_encode_rel)
+                                            rel_dim=rel_dim, do_encode_rel=self.do_encode_rel,
+                                            use_null_att_pos=use_null_att_pos)
 
         self.graph_attention = GraphAttentionModelV2(self.config)
 
