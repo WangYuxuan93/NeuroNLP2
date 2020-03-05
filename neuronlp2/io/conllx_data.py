@@ -152,6 +152,7 @@ def read_data(source_path: str, word_alphabet: Alphabet, char_alphabet: Alphabet
             print("reading data: %d" % counter)
 
         sent = inst.sentence
+        #print (inst.sentence.words)
         data.append([sent.word_ids, sent.char_id_seqs, inst.pos_ids, inst.heads, inst.type_ids])
         src_words.append(sent.words)
         max_len = max([len(char_seq) for char_seq in sent.char_seqs])

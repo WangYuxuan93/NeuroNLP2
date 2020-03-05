@@ -382,13 +382,15 @@ def split_batch_by_layer(batch_by_layer, step_batch_size, shuffle=False, debug=F
     return batches
 
 
-def get_order_mask(lengths, sampler='random'):
+def get_order_mask(lengths, sampler='random',seed=None):
     batch_length = max(lengths)
     order_masks = []
     if sampler == 'random':
         for i in range(len(lengths)):
             seq_len = lengths[i]
             new_order = np.arange(1,seq_len)
+            if seed is not None:
+                np.random.seed(seed)
             np.random.shuffle(new_order)
             order_mask = np.eye(batch_length)[new_order]
             order_mask = np.pad(order_mask, ((0,batch_length-seq_len),(0,0)), 'constant', constant_values=(0,0))

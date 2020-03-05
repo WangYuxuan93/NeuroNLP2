@@ -176,6 +176,7 @@ def train(args):
 
     args.cuda = torch.cuda.is_available()
     device = torch.device('cuda', 0) if args.cuda else torch.device('cpu')
+
     train_path = args.train
     dev_path = args.dev
     test_path = args.test
@@ -288,7 +289,14 @@ def train(args):
         word_table = construct_word_embedding_table()
         char_table = construct_char_embedding_table()
 
-    logger.info("constructing network...")
+    logger.info("Constructing Network...")
+    random_seed = args.seed
+    if random_seed == -1:
+        random_seed = np.random.randint(1e8)
+        logger.info("Random Seed (rand): %d" % random_seed)
+    else:
+        logger.info("Random Seed (set): %d" % random_seed)
+    torch.manual_seed(random_seed)
 
     hyps = json.load(open(args.config, 'r'))
     json.dump(hyps, open(os.path.join(model_path, 'config.json'), 'w'), indent=2)
@@ -639,7 +647,7 @@ def train(args):
                 types = data['TYPE'].to(device)
                 masks = data['MASK'].to(device)
                 if sampler == 'random':
-                    order_masks = get_order_mask(data['LENGTH'], sampler=sampler).to(device)
+                    order_masks = get_order_mask(data['LENGTH']).to(device)
                 elif sampler == 'from_model':
                     network.eval()
                     if num_gpu > 1:
@@ -1018,6 +1026,7 @@ def parse(args):
 if __name__ == '__main__':
     args_parser = argparse.ArgumentParser(description='Tuning with graph-based parsing')
     args_parser.add_argument('--mode', choices=['train', 'parse'], required=True, help='processing mode')
+    args_parser.add_argument('--seed', type=int, default=-1, help='Random seed for torch and numpy (-1 for random)')
     args_parser.add_argument('--fine_tune', action='store_true', default=False, help='Whether to fine_tune?')
     args_parser.add_argument('--explore', action='store_true', default=False, help='Whether to explore (encode wrong prediction) while sampling from model?')
     args_parser.add_argument('--config', type=str, help='config file')

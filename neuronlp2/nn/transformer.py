@@ -733,7 +733,8 @@ class GraphAttentionV2Config(object):
                 extra_self_attention_layer=False,
                 input_self_attention_layer=False,
                 num_input_attention_layers=3,
-                rel_dim=100, do_encode_rel=False):
+                rel_dim=100, do_encode_rel=False,
+                use_null_att_pos=False):
         """Constructs BertConfig.
 
         Args:
@@ -755,6 +756,8 @@ class GraphAttentionV2Config(object):
                 initializing all weight matrices.
             extra_self_attention_layer: whether to use a BERT self attention layer on top
                 of graph attention layer
+            use_null_att_pos: Whether to enable null attention position at index-0, so that 
+                the model learns to attend to it when there is no head yet 
         """
         self.input_size = input_size
         self.hidden_size = hidden_size
@@ -775,6 +778,7 @@ class GraphAttentionV2Config(object):
         self.num_input_attention_layers = num_input_attention_layers
         self.rel_dim = rel_dim
         self.do_encode_rel = do_encode_rel
+        self.use_null_att_pos = use_null_att_pos
 
     @classmethod
     def from_dict(cls, json_object):
