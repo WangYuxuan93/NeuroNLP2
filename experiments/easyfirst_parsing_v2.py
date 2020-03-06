@@ -29,7 +29,7 @@ from neuronlp2 import utils
 from neuronlp2.io import CoNLLXWriter
 from neuronlp2.tasks import parser
 from neuronlp2.nn.utils import freeze_embedding
-
+from neuronlp2.io.common import END
 
 def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgrad, weight_decay, warmup_steps):
     if optim == 'sgd':
@@ -357,6 +357,10 @@ def train(args):
     encode_rel_type = hyps['encode_rel_type']
     rel_dim = hyps['rel_dim']
     use_null_att_pos = hyps['use_null_att_pos']
+    if use_null_att_pos:
+        end_word_id = word_alphabet.get_index(END)
+    else:
+        end_word_id = None
 
     if always_recompute:
         target_recomp_prob = 1
@@ -394,7 +398,7 @@ def train(args):
                            num_graph_attention_heads=num_graph_attention_heads, 
                            only_value_weight=only_value_weight,
                            encode_rel_type=encode_rel_type, rel_dim=rel_dim,
-                           use_null_att_pos=use_null_att_pos)
+                           use_null_att_pos=use_null_att_pos, end_word_id=end_word_id)
     elif model_type == 'EasyFirstV2':
         network = EasyFirstV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                            hidden_size, num_types, arc_space, type_space,
@@ -426,7 +430,7 @@ def train(args):
                            num_graph_attention_heads=num_graph_attention_heads, 
                            only_value_weight=only_value_weight,
                            encode_rel_type=encode_rel_type, rel_dim=rel_dim,
-                           use_null_att_pos=use_null_att_pos)
+                           use_null_att_pos=use_null_att_pos, end_word_id=end_word_id)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -456,6 +460,7 @@ def train(args):
     logger.info("##### Graph Encoder (Layers: %s, Share Params:%s) #####"% (num_graph_attention_layers, share_params))
     logger.info("dropout(graph_hid, graph_att): (%.2f, %.2f)" % (p_graph_hid, p_graph_att))
     logger.info("Only Use Value Weight: %s" % only_value_weight)
+    logger.info("Attend to END if no head: %s" % use_null_att_pos)
     logger.info("Encode Relation Type: %s (rel embed dim: %d)" % (encode_rel_type, rel_dim))
     logger.info("Use Input Self Attention Layer: %s (Layer: %d)" % (input_self_attention_layer, num_input_attention_layers))
     logger.info("Use Top Self Attention Layer: %s" % extra_self_attention_layer)
@@ -470,6 +475,9 @@ def train(args):
     
     symbolic_end = args.symbolic_end
     logger.info("Reading Data (symbolic end: %s)" % symbolic_end)
+    if use_null_att_pos and not symbolic_end:
+        raise ValueError("Must set symbolic_end to True for use_null_att_pos to work!")
+        exit()
     
     data_train = conllx_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
                                                 mask_out_root=False, symbolic_end=symbolic_end)
@@ -653,7 +661,8 @@ def train(args):
                 types = data['TYPE'].to(device)
                 masks = data['MASK'].to(device)
                 if sampler == 'random':
-                    order_masks = get_order_mask(data['LENGTH']).to(device)
+                    # (seq_len, batch, seq_len)
+                    order_masks = get_order_mask(data['LENGTH'], symbolic_end=symbolic_end).to(device)
                 elif sampler == 'from_model':
                     network.eval()
                     if num_gpu > 1:
@@ -668,10 +677,8 @@ def train(args):
                 cur_batch_size, seq_len = words.size()
                 # (batch, seq_len, seq_len)
                 gen_arcs_3D = torch.zeros((cur_batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
-                # (batch, seq_len, seq_len) => (seq_len, batch, seq_len)
-                order_masks = order_masks #.permute(1,0,2)
                 # (batch, seq_len), 1 represent the token whose head is to be generated at this step
-                for i in range(seq_len - 1):
+                for i in range(len(order_masks)):
                     order_mask = order_masks[i]
                     optimizer.zero_grad()
                     #if num_gpu > 1: 
@@ -933,6 +940,11 @@ def parse(args):
     rel_dim = hyps['rel_dim']
     use_null_att_pos = hyps['use_null_att_pos']
 
+    if use_null_att_pos:
+        end_word_id = word_alphabet.get_index(END)
+    else:
+        end_word_id = None
+
     if always_recompute:
         target_recomp_prob = 1
 
@@ -966,7 +978,7 @@ def parse(args):
                            num_graph_attention_heads=num_graph_attention_heads, 
                            only_value_weight=only_value_weight,
                            encode_rel_type=encode_rel_type, rel_dim=rel_dim,
-                           use_null_att_pos=use_null_att_pos)
+                           use_null_att_pos=use_null_att_pos, end_word_id=end_word_id)
     elif model_type == 'EasyFirstV2':
         network = EasyFirstV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                            hidden_size, num_types, arc_space, type_space,
@@ -997,7 +1009,7 @@ def parse(args):
                            num_graph_attention_heads=num_graph_attention_heads, 
                            only_value_weight=only_value_weight,
                            encode_rel_type=encode_rel_type, rel_dim=rel_dim,
-                           use_null_att_pos=use_null_att_pos)
+                           use_null_att_pos=use_null_att_pos, end_word_id=end_word_id)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 

@@ -382,13 +382,16 @@ def split_batch_by_layer(batch_by_layer, step_batch_size, shuffle=False, debug=F
     return batches
 
 
-def get_order_mask(lengths, sampler='random',seed=None):
+def get_order_mask(lengths, sampler='random',seed=None, symbolic_end=True):
     batch_length = max(lengths)
     order_masks = []
     if sampler == 'random':
         for i in range(len(lengths)):
             seq_len = lengths[i]
-            new_order = np.arange(1,seq_len)
+            if symbolic_end:
+                new_order = np.arange(1,seq_len-1)
+            else:
+                new_order = np.arange(1,seq_len)
             if seed is not None:
                 np.random.seed(seed)
             np.random.shuffle(new_order)
@@ -396,7 +399,7 @@ def get_order_mask(lengths, sampler='random',seed=None):
             order_mask = np.pad(order_mask, ((0,batch_length-seq_len),(0,0)), 'constant', constant_values=(0,0))
             #print (order_mask)
             order_masks.append(np.expand_dims(order_mask, axis=1))
-        # (seq_len, batch_size, seq_len) => (batch, seq_len, seq_len)
+        # (seq_len, batch_size, seq_len)
         order_masks = torch.from_numpy(np.concatenate(order_masks, axis=1))#.permute(1,0,2)
         #print (order_masks)
     elif sampler == 'from_model':

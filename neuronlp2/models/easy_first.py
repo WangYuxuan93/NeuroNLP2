@@ -14,7 +14,6 @@ from neuronlp2.nn.transformer import SelfAttentionConfig, SelfAttentionModel
 from neuronlp2.models.parsing import PositionEmbeddingLayer
 from neuronlp2.nn.hard_concrete import HardConcreteDist
 
-
 class EasyFirst(nn.Module):
     def __init__(self, word_dim, num_words, char_dim, num_chars, pos_dim, num_pos, hidden_size, num_labels, arc_space, type_space,
                  intermediate_size,
@@ -35,7 +34,7 @@ class EasyFirst(nn.Module):
                  apply_recomp_prob_first=False, num_graph_attention_layers=1, share_params=False,
                  residual_from_input=False, transformer_drop_prob=0,
                  num_graph_attention_heads=1, only_value_weight=False,
-                 encode_rel_type='gold', rel_dim=100, use_null_att_pos=True):
+                 encode_rel_type='gold', rel_dim=100, use_null_att_pos=True, end_word_id=3):
         super(EasyFirst, self).__init__()
         self.device = device
         self.dep_prob_depend_on_head = dep_prob_depend_on_head
@@ -49,6 +48,8 @@ class EasyFirst(nn.Module):
         self.apply_recomp_prob_first = apply_recomp_prob_first
         self.residual_from_input = residual_from_input
         self.encode_rel_type = encode_rel_type
+        self.use_null_att_pos = use_null_att_pos
+        self.end_word_id = end_word_id
         if self.encode_rel_type == 'gold' or self.encode_rel_type == 'pred':
             self.do_encode_rel = True
         else:
@@ -873,6 +874,17 @@ class EasyFirst(nn.Module):
             
         return rc_probs_list, new_heads_onehot, order_mask
 
+    def get_mask(self, input_word, target=3):
+        """
+        Get the onehot mask for the target token
+        Input:
+            input_word: (batch, seq_len)
+        """
+        ones = torch.ones_like(input_word)
+        zeros = torch.zeros_like(input_word)
+        mask = torch.where(input_word == target, ones, zeros)
+
+        return mask
 
     def decode(self, input_word, input_char, input_pos, mask=None, debug=False, device=torch.device('cpu'),
                 get_head_by_layer=False, random_recomp=False, recomp_prob=0.25):
@@ -912,6 +924,12 @@ class EasyFirst(nn.Module):
             # (batch_size, seq_len, seq_len)
             rel_ids = rel_logits.argmax(-1)
 
+        if self.use_null_att_pos:
+            end_mask = self.get_mask(input_word, target=self.end_word_id)
+            #print ("end_mask:\n", end_mask)
+        else:
+            end_mask = None
+
         rel_embeddings = None
 
         while True:
@@ -929,7 +947,7 @@ class EasyFirst(nn.Module):
             # (batch, seq_len, hidden_size)
             #input_encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=root_mask, device=device)
             all_encoder_layers = self.graph_attention(input_encoder_output, gen_heads_onehot, root_mask,
-                                                        rel_embeddings=rel_embeddings)
+                                                        rel_embeddings=rel_embeddings, end_mask=end_mask)
             encoder_output = all_encoder_layers[-1]
             # ----- compute arc probs -----
             # compute arc logp for no recompute generate mask
@@ -1313,7 +1331,14 @@ class EasyFirstV2(EasyFirst):
             rel_ids = reformed_rel_logits.argmax(-1)
         else:
             rel_ids = None
-        rel_embeddings = None
+            rel_embeddings = None
+
+        if self.use_null_att_pos:
+            end_mask = self.get_mask(input_word, target=self.end_word_id)
+            #print ("end_mask:\n", end_mask)
+        else:
+            end_mask = None
+
         if self.always_recompute:
             if self.do_encode_rel:
                 # (batch, seq_len, seq_len)
@@ -1327,7 +1352,7 @@ class EasyFirstV2(EasyFirst):
                 print ("rel_embeddings:\n", rel_embeddings.detach().numpy())
 
             all_encoder_layers = self.graph_attention(input_encoder_output, gen_arcs_3D, root_mask, 
-                                                        rel_embeddings=rel_embeddings)
+                                                    rel_embeddings=rel_embeddings, end_mask=end_mask)
             # [batch, length, hidden_size]
             encoder_output = all_encoder_layers[-1]
             arc_h, arc_c = self._arc_mlp(encoder_output)

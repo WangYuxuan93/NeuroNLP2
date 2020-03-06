@@ -835,6 +835,7 @@ class GraphAttentionV2(nn.Module):
         super(GraphAttentionV2, self).__init__()
         self.only_value_weight = config.only_value_weight
         self.do_encode_rel = config.do_encode_rel
+        self.use_null_att_pos = config.use_null_att_pos
         self.hidden_size = hidden_size
         self.num_attention_heads = num_attention_heads
         self.attention_head_size = int(self.hidden_size / self.num_attention_heads)
@@ -855,12 +856,13 @@ class GraphAttentionV2(nn.Module):
         # (batch, seq_len, num_head, head_size) => (batch, num_head, seq_len, head_size)
         return x.permute(0, 2, 1, 3)
 
-    def forward(self, input_tensor, graph_matrix, rel_embeddings=None):
+    def forward(self, input_tensor, graph_matrix, rel_embeddings=None, end_mask=None):
         """
         Inputs:
             input_tensor: (batch, seq_len, hidden_size)
             graph_matrix: (batch, seq_len, seq_len), adjacency matrix
             rel_embeddings: optional (batch, seq_len, seq_len, rel_dim)
+            end_mask: (batch, seq_len)
         """
         if self.only_value_weight:
             # input: (batch, seq_len, hidden_size//2)
@@ -874,6 +876,9 @@ class GraphAttentionV2(nn.Module):
             # => (batch, seq_len, hidden_size//2)
             context_layer = torch.matmul(attention_probs.float(), value_layer)
         else:
+            if self.use_null_att_pos:
+                graph_matrix = graph_matrix + end_mask.unsqueeze(1)
+                #print ("aug matrix:\n", graph_matrix)
             # (batch, seq_len, seq_len), mask out non-ajacency relations
             neg_inf_mask = (1-graph_matrix) * -1e9
             # input: (batch, seq_len, hidden_size//2)
@@ -983,16 +988,19 @@ class GraphAttentionLayerV2(nn.Module):
         if config.extra_self_attention_layer:
             self.self_attention = BERTAttention(config)
 
-    def forward(self, hidden_states, graph_matrix, attention_mask, rel_embeddings=None):
+    def forward(self, hidden_states, graph_matrix, attention_mask, rel_embeddings=None, 
+                end_mask=None):
         if self.input_encoder is not None:
             hidden_states = self.input_encoder(hidden_states, attention_mask)
         # (batch, seq_len, hidden_size/2)
-        fw_ga_output = self.fw_graph_attention(hidden_states, graph_matrix, rel_embeddings)
+        fw_ga_output = self.fw_graph_attention(hidden_states, graph_matrix, rel_embeddings=rel_embeddings, 
+                                                end_mask=end_mask)
         if rel_embeddings is not None:
             bw_rel_embeddings = rel_embeddings.permute(0,2,1,3)
         else:
             bw_rel_embeddings = None
-        bw_ga_output = self.bw_graph_attention(hidden_states, graph_matrix.transpose(-1,-2), bw_rel_embeddings)
+        bw_ga_output = self.bw_graph_attention(hidden_states, graph_matrix.transpose(-1,-2), 
+                                            rel_embeddings=bw_rel_embeddings, end_mask=end_mask)
         #print ("graph_matrix:\n", graph_matrix)
         # (batch, seq_len, hidden_size)
         concat_output = torch.cat([fw_ga_output,fw_ga_output], dim=-1)
@@ -1019,15 +1027,18 @@ class GraphAttentionEncoderV2(nn.Module):
         else:
             self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.num_graph_attention_layers)])
 
-    def forward(self, hidden_states, graph_matrix, attention_mask, rel_embeddings=None):
+    def forward(self, hidden_states, graph_matrix, attention_mask, rel_embeddings=None,
+                end_mask=None):
         all_encoder_layers = []
         if self.share_params:
             for _ in range(self.num_graph_attention_layers):
-                hidden_states = self.layer(hidden_states, graph_matrix, attention_mask, rel_embeddings)
+                hidden_states = self.layer(hidden_states, graph_matrix, attention_mask, 
+                                    rel_embeddings=rel_embeddings, end_mask=end_mask)
                 all_encoder_layers.append(hidden_states)
         else:
             for layer_module in self.layer:
-                hidden_states = layer_module(hidden_states, graph_matrix, attention_mask, rel_embeddings)
+                hidden_states = layer_module(hidden_states, graph_matrix, attention_mask, 
+                                    rel_embeddings=rel_embeddings, end_mask=end_mask)
                 all_encoder_layers.append(hidden_states)
         return all_encoder_layers
 
@@ -1043,12 +1054,15 @@ class GraphAttentionModelV2(nn.Module):
         self.embeddings = GraphAttentionEmbeddings(config)
         self.encoder = GraphAttentionEncoderV2(config)
 
-    def forward(self, input_tensor, graph_matrix, attention_mask=None, rel_embeddings=None):
+    def forward(self, input_tensor, graph_matrix, attention_mask=None, rel_embeddings=None,
+                end_mask=None):
         """
         Input:
             input_tensor: (batch, seq_len, input_size)
             graph_matrix: (batch, seq_len, seq_len)
             attention_mask: (batch, seq_len)
+            rel_embeddings: (batch, seq_len, seq_len, rel_dim)
+            end_mask: (batch, seq_len)
         """
         if attention_mask is None:
             #attention_mask = torch.ones_like(input_ids)
@@ -1069,9 +1083,8 @@ class GraphAttentionModelV2(nn.Module):
         # effectively the same as removing these entirely.
         extended_attention_mask = extended_attention_mask.float()
         extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
-
         embedding_output = self.embeddings(input_tensor)
         all_encoder_layers = self.encoder(embedding_output, graph_matrix, extended_attention_mask,
-                                        rel_embeddings=rel_embeddings)
+                                        rel_embeddings=rel_embeddings, end_mask=end_mask)
 
         return all_encoder_layers

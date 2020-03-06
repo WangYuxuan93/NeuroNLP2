@@ -197,7 +197,11 @@ def read_data(source_path: str, word_alphabet: Alphabet, char_alphabet: Alphabet
         hid_inputs[i, :inst_size] = hids
         hid_inputs[i, inst_size:] = PAD_ID_TAG
         # masks
-        masks[i, :inst_size] = 1.0
+        if symbolic_end:
+            # mask out the end token
+            masks[i, :inst_size-1] = 1.0
+        else:
+            masks[i, :inst_size] = 1.0
         for j, wid in enumerate(wids):
             if word_alphabet.is_singleton(wid):
                 single[i, j] = 1
@@ -287,7 +291,11 @@ def read_bucketed_data(source_path: str, word_alphabet: Alphabet, char_alphabet:
             hid_inputs[i, :inst_size] = hids
             hid_inputs[i, inst_size:] = PAD_ID_TAG
             # masks
-            masks[i, :inst_size] = 1.0
+            if symbolic_end:
+                # mask out the end token
+                masks[i, :inst_size-1] = 1.0
+            else:
+                masks[i, :inst_size] = 1.0
             for j, wid in enumerate(wids):
                 if word_alphabet.is_singleton(wid):
                     single[i, j] = 1
