@@ -34,7 +34,8 @@ class EasyFirst(nn.Module):
                  apply_recomp_prob_first=False, num_graph_attention_layers=1, share_params=False,
                  residual_from_input=False, transformer_drop_prob=0,
                  num_graph_attention_heads=1, only_value_weight=False,
-                 encode_rel_type='gold', rel_dim=100, use_null_att_pos=True, end_word_id=3):
+                 encode_rel_type='gold', rel_dim=100, use_null_att_pos=True, end_word_id=3,
+                 num_arcs_per_pred=1):
         super(EasyFirst, self).__init__()
         self.device = device
         self.dep_prob_depend_on_head = dep_prob_depend_on_head
@@ -50,6 +51,7 @@ class EasyFirst(nn.Module):
         self.encode_rel_type = encode_rel_type
         self.use_null_att_pos = use_null_att_pos
         self.end_word_id = end_word_id
+        self.num_arcs_per_pred = num_arcs_per_pred
         if self.encode_rel_type == 'gold' or self.encode_rel_type == 'pred':
             self.do_encode_rel = True
         else:
@@ -908,6 +910,7 @@ class EasyFirst(nn.Module):
         rels_pred = torch.zeros_like(heads_pred, device=device)
         # (batch, seq_len, seq_len)
         gen_heads_onehot = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=device)
+        encode_heads_onehot = torch.zeros_like(gen_heads_onehot)
         # (batch, seq_len), seq mask, where at position 0 is 0
         root_mask = torch.arange(seq_len, device=device).gt(0).float().unsqueeze(0) * mask
         # (batch, seq_len, seq_len)
@@ -931,7 +934,7 @@ class EasyFirst(nn.Module):
             end_mask = None
 
         rel_embeddings = None
-
+        n_state_step = -1
         while True:
             # ----- encoding -----
             if self.do_encode_rel:
@@ -944,9 +947,15 @@ class EasyFirst(nn.Module):
                     print ("rel_ids:\n", rel_ids)
                     print ("masked_rel_ids:\n", masked_rel_ids)
                     print ("rel_embeddings:\n", rel_embeddings.detach().numpy())
+            # if has predicted k arcs, update the arcs to be encoded with GAT
+            n_state_step += 1
+            if n_state_step == self.num_arcs_per_pred:
+                encode_heads_onehot = gen_heads_onehot
+                n_state_step = 0
+            #print ("encode_heads_onehot:\n",encode_heads_onehot)
             # (batch, seq_len, hidden_size)
             #input_encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=root_mask, device=device)
-            all_encoder_layers = self.graph_attention(input_encoder_output, gen_heads_onehot, root_mask,
+            all_encoder_layers = self.graph_attention(input_encoder_output, encode_heads_onehot, root_mask,
                                                         rel_embeddings=rel_embeddings, end_mask=end_mask)
             encoder_output = all_encoder_layers[-1]
             # ----- compute arc probs -----
@@ -1236,13 +1245,13 @@ class EasyFirstV2(EasyFirst):
         return max_val, max_tensor_3D, max_heads_2D
 
 
-    def _get_loss_arc_one_step(self, head_logp, gen_arcs_3D, gold_arcs_3D, order_mask, 
+    def _get_loss_arc_one_step(self, head_logp, gen_heads_onehot, gold_arcs_3D, order_mask, 
                                 mask_3D=None, margin=1, debug=False):
 
         # (batch, seq_len, seq_len)
         neg_inf_tensor = torch.Tensor(head_logp.size()).fill_(-1e9).to(head_logp.device)
         # (batch, seq_len)
-        unfinished_token_mask_2D = (1 - gen_arcs_3D.sum(-1))
+        unfinished_token_mask_2D = (1 - gen_heads_onehot.sum(-1))
         # (batch, seq_len, seq_len), the gold arcs not generated
         ref_heads_mask = unfinished_token_mask_2D.unsqueeze(-1) * gold_arcs_3D
         # (batch, seq_len, seq_len), mask out all rows whose heads are found
@@ -1287,8 +1296,14 @@ class EasyFirstV2(EasyFirst):
         input_encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=root_mask, device=mask.device)
         return input_encoder_output
 
-    def forward(self, input_word, input_char, input_pos, gen_arcs_3D, heads, rels, order_mask, 
-                mask=None, explore=True, debug=False):
+    def forward(self, input_word, input_char, input_pos, gen_heads_onehot, encode_heads_onehot, 
+                heads, rels, order_mask, mask=None, explore=True, debug=False):
+        """
+        Input:
+            gen_heads_onehot: (batch, seq_len, seq_len), store the generated arcs
+            encode_heads_onehot: (batch, seq_len, seq_len), store the arcs to be encoded with GAT
+        """
+        #print ("encode_heads_onehot:\n", encode_heads_onehot)
         if explore and self.encode_rel_type == 'gold':
             print ("### Error: Training with explore but encoding gold relation! ###")
             exit()
@@ -1342,7 +1357,7 @@ class EasyFirstV2(EasyFirst):
         if self.always_recompute:
             if self.do_encode_rel:
                 # (batch, seq_len, seq_len)
-                masked_rel_ids = rel_ids * gen_arcs_3D
+                masked_rel_ids = rel_ids * gen_heads_onehot
                 # (batch, seq_len, seq_len, rel_dim)
                 rel_embeddings = self.rel_embed(masked_rel_ids)
             if debug:
@@ -1351,7 +1366,7 @@ class EasyFirstV2(EasyFirst):
                 print ("masked_rel_ids:\n", masked_rel_ids)
                 print ("rel_embeddings:\n", rel_embeddings.detach().numpy())
 
-            all_encoder_layers = self.graph_attention(input_encoder_output, gen_arcs_3D, root_mask, 
+            all_encoder_layers = self.graph_attention(input_encoder_output, encode_heads_onehot, root_mask, 
                                                     rel_embeddings=rel_embeddings, end_mask=end_mask)
             # [batch, length, hidden_size]
             encoder_output = all_encoder_layers[-1]
@@ -1360,19 +1375,19 @@ class EasyFirstV2(EasyFirst):
             # (batch, seq_len, seq_len)
             head_logp = self._get_head_logp(arc_c, arc_h, encoder_output)
             # loss_arc: (batch)
-            loss_arc, loss_recomp, general_max_tensor, gold_max_tensor, false_max_tensor = self._get_loss_arc_one_step(head_logp, gen_arcs_3D, gold_arcs_3D, order_mask, mask_3D)
+            loss_arc, loss_recomp, general_max_tensor, gold_max_tensor, false_max_tensor = self._get_loss_arc_one_step(head_logp, gen_heads_onehot, gold_arcs_3D, order_mask, mask_3D)
             # (batch), count the number of error predictions
             if explore:
                 # * order_mask to remove out of length arcs
                 # update with max arcs among all
-                gen_arcs_3D = gen_arcs_3D + (general_max_tensor * order_mask.unsqueeze(-1)).int()
+                gen_heads_onehot = gen_heads_onehot + (general_max_tensor * order_mask.unsqueeze(-1)).int()
             else:
                 # update with max gold arcs
-                gen_arcs_3D = gen_arcs_3D + (gold_max_tensor * order_mask.unsqueeze(-1)).int()
-            #print ("### gen_arcs_3D:\n",gen_arcs_3D)
+                gen_heads_onehot = gen_heads_onehot + (gold_max_tensor * order_mask.unsqueeze(-1)).int()
+            #print ("### gen_heads_onehot:\n",gen_heads_onehot)
         else:
             print ("Not Implemented!")
-        return loss_arc.unsqueeze(0), loss_rel.unsqueeze(0), loss_recomp.unsqueeze(0), gen_arcs_3D.detach()
+        return loss_arc.unsqueeze(0), loss_rel.unsqueeze(0), loss_recomp.unsqueeze(0), gen_heads_onehot.detach()
 
 
     def inference(self, input_word, input_char, input_pos, heads, mask=None, explore=True):
@@ -1388,7 +1403,8 @@ class EasyFirstV2(EasyFirst):
         gold_arcs_3D = gold_arcs_3D * mask_3D
 
         # (batch, seq_len, seq_len)
-        gen_arcs_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
+        gen_heads_onehot = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
+        encode_heads_onehot = torch.zeros_like(gen_heads_onehot)
         # arc_logits shape [batch, seq_len, hidden_size]
         input_encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=root_mask, device=heads.device)
         
@@ -1398,7 +1414,7 @@ class EasyFirstV2(EasyFirst):
         ones = torch.ones_like(heads)
         for i in range(seq_len-1):
             if self.always_recompute:
-                all_encoder_layers = self.graph_attention(input_encoder_output, gen_arcs_3D, root_mask)
+                all_encoder_layers = self.graph_attention(input_encoder_output, gen_heads_onehot, root_mask)
                 # [batch, length, hidden_size]
                 encoder_output = all_encoder_layers[-1]
                 arc_h, arc_c = self._arc_mlp(encoder_output)
@@ -1406,12 +1422,12 @@ class EasyFirstV2(EasyFirst):
                 # (batch, seq_len, seq_len)
                 head_logp = self._get_head_logp(arc_c, arc_h, encoder_output)
                 # loss_arc: (batch)
-                _, _, general_max_tensor, gold_max_tensor, false_max_tensor = self._get_loss_arc_one_step(head_logp, gen_arcs_3D, gold_arcs_3D, ones, mask_3D)
+                _, _, general_max_tensor, gold_max_tensor, false_max_tensor = self._get_loss_arc_one_step(head_logp, gen_heads_onehot, gold_arcs_3D, ones, mask_3D)
                 # (batch, seq_len)
                 order_mask = gold_max_tensor.sum(-1)
                 order_masks.append(order_mask.detach())
                 # update with max gold arcs
-                gen_arcs_3D = gen_arcs_3D + gold_max_tensor.detach()
+                gen_heads_onehot = gen_heads_onehot + gold_max_tensor.detach()
             else:
                 print ("Not Implemented!")
         # (seq_len-1, batch, seq_len)
@@ -1439,7 +1455,7 @@ class EasyFirstV2(EasyFirst):
         rels_3D.scatter_(-1, heads.unsqueeze(-1), rels.unsqueeze(-1))
 
         # (batch, seq_len, seq_len)
-        gen_arcs_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
+        gen_heads_onehot = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
         # arc_logits shape [batch, seq_len, hidden_size]
         input_encoder_output = self._input_encoder(input_word, input_char, input_pos, mask=root_mask, device=heads.device)
         
@@ -1464,7 +1480,7 @@ class EasyFirstV2(EasyFirst):
             # (batch, seq_len), 1 represent the token whose head is to be generated at this step
             order_mask = order_masks[i]
             if self.always_recompute:
-                all_encoder_layers = self.graph_attention(input_encoder_output, gen_arcs_3D, root_mask)
+                all_encoder_layers = self.graph_attention(input_encoder_output, gen_heads_onehot, root_mask)
                 # [batch, length, hidden_size]
                 encoder_output = all_encoder_layers[-1]
                 arc_h, arc_c = self._arc_mlp(encoder_output)
@@ -1472,16 +1488,16 @@ class EasyFirstV2(EasyFirst):
                 # (batch, seq_len, seq_len)
                 head_logp = self._get_head_logp(arc_c, arc_h, encoder_output)
                 # loss_arc: (batch)
-                loss_arc, loss_recomp, general_max_tensor, gold_max_tensor, false_max_tensor = self._get_loss_arc_one_step(head_logp, gen_arcs_3D, gold_arcs_3D, order_mask, mask_3D)
+                loss_arc, loss_recomp, general_max_tensor, gold_max_tensor, false_max_tensor = self._get_loss_arc_one_step(head_logp, gen_heads_onehot, gold_arcs_3D, order_mask, mask_3D)
                 # (batch), count the number of error predictions
                 losses_arc.append(loss_arc.unsqueeze(0))
                 losses_recomp.append(loss_recomp.unsqueeze(0))
                 if explore:
                     # update with max arcs among all
-                    gen_arcs_3D = gen_arcs_3D + general_max_tensor.detach()
+                    gen_heads_onehot = gen_heads_onehot + general_max_tensor.detach()
                 else:
                     # update with max gold arcs
-                    gen_arcs_3D = gen_arcs_3D + gold_max_tensor.detach()
+                    gen_heads_onehot = gen_heads_onehot + gold_max_tensor.detach()
                 yield loss_arc.unsqueeze(0), loss_rel.unsqueeze(0), loss_recomp.unsqueeze(0)
             else:
                 print ("Not Implemented!")

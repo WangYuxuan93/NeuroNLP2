@@ -357,6 +357,7 @@ def train(args):
     encode_rel_type = hyps['encode_rel_type']
     rel_dim = hyps['rel_dim']
     use_null_att_pos = hyps['use_null_att_pos']
+    num_arcs_per_pred = hyps['num_arcs_per_pred']
     if use_null_att_pos:
         end_word_id = word_alphabet.get_index(END)
     else:
@@ -398,7 +399,8 @@ def train(args):
                            num_graph_attention_heads=num_graph_attention_heads, 
                            only_value_weight=only_value_weight,
                            encode_rel_type=encode_rel_type, rel_dim=rel_dim,
-                           use_null_att_pos=use_null_att_pos, end_word_id=end_word_id)
+                           use_null_att_pos=use_null_att_pos, end_word_id=end_word_id,
+                           num_arcs_per_pred=num_arcs_per_pred)
     elif model_type == 'EasyFirstV2':
         network = EasyFirstV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                            hidden_size, num_types, arc_space, type_space,
@@ -430,7 +432,8 @@ def train(args):
                            num_graph_attention_heads=num_graph_attention_heads, 
                            only_value_weight=only_value_weight,
                            encode_rel_type=encode_rel_type, rel_dim=rel_dim,
-                           use_null_att_pos=use_null_att_pos, end_word_id=end_word_id)
+                           use_null_att_pos=use_null_att_pos, end_word_id=end_word_id,
+                           num_arcs_per_pred=num_arcs_per_pred)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -459,6 +462,7 @@ def train(args):
     logger.info("Residual From Input Layer: %s (transformer dropout: %.2f)" % (residual_from_input, transformer_drop_prob))
     logger.info("##### Graph Encoder (Layers: %s, Share Params:%s) #####"% (num_graph_attention_layers, share_params))
     logger.info("dropout(graph_hid, graph_att): (%.2f, %.2f)" % (p_graph_hid, p_graph_att))
+    logger.info("Number of Arcs per Prediction: %d" % num_arcs_per_pred)
     logger.info("Only Use Value Weight: %s" % only_value_weight)
     logger.info("Attend to END if no head: %s" % use_null_att_pos)
     logger.info("Encode Relation Type: %s (rel embed dim: %d)" % (encode_rel_type, rel_dim))
@@ -676,9 +680,17 @@ def train(args):
                 network.train()
                 cur_batch_size, seq_len = words.size()
                 # (batch, seq_len, seq_len)
-                gen_arcs_3D = torch.zeros((cur_batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
+                gen_heads_onehot = torch.zeros((cur_batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
+                encode_heads_onehot = torch.zeros_like(gen_heads_onehot)
+                n_state_step = -1
                 # (batch, seq_len), 1 represent the token whose head is to be generated at this step
                 for i in range(len(order_masks)):
+                    # if has predicted k arcs, update the arcs to be encoded with GAT
+                    n_state_step += 1
+                    if n_state_step == num_arcs_per_pred:
+                        encode_heads_onehot = gen_heads_onehot
+                        n_state_step = 0
+                    
                     order_mask = order_masks[i]
                     optimizer.zero_grad()
                     #if num_gpu > 1: 
@@ -686,8 +698,8 @@ def train(args):
                     #    input_encoder_output = network.module._get_input_encoder_output(words, chars, postags, masks)
                     #else:
                     #    input_encoder_output = network._get_input_encoder_output(words, chars, postags, masks)
-                    loss_arc, loss_rel, loss_recomp, gen_arcs_3D = network(words, chars, postags, 
-                            gen_arcs_3D, heads, types, order_mask, mask=masks, explore=explore)
+                    loss_arc, loss_rel, loss_recomp, gen_heads_onehot = network(words, chars, postags, 
+                            gen_heads_onehot, encode_heads_onehot, heads, types, order_mask, mask=masks, explore=explore)
                     #print ("errors: ", errs)
                     loss_arc = loss_arc.mean()
                     loss_rel = loss_rel.mean()
@@ -735,7 +747,7 @@ def train(args):
                             sys.stdout.write(log_info)
                             sys.stdout.flush()
                             num_back = len(log_info)
-                del gen_arcs_3D
+                del gen_heads_onehot
         
         if not noscreen: 
             sys.stdout.write("\b" * num_back)
@@ -939,6 +951,7 @@ def parse(args):
     encode_rel_type = hyps['encode_rel_type']
     rel_dim = hyps['rel_dim']
     use_null_att_pos = hyps['use_null_att_pos']
+    num_arcs_per_pred = hyps['num_arcs_per_pred']
 
     if use_null_att_pos:
         end_word_id = word_alphabet.get_index(END)
@@ -978,7 +991,8 @@ def parse(args):
                            num_graph_attention_heads=num_graph_attention_heads, 
                            only_value_weight=only_value_weight,
                            encode_rel_type=encode_rel_type, rel_dim=rel_dim,
-                           use_null_att_pos=use_null_att_pos, end_word_id=end_word_id)
+                           use_null_att_pos=use_null_att_pos, end_word_id=end_word_id,
+                           num_arcs_per_pred=num_arcs_per_pred)
     elif model_type == 'EasyFirstV2':
         network = EasyFirstV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                            hidden_size, num_types, arc_space, type_space,
@@ -1009,7 +1023,8 @@ def parse(args):
                            num_graph_attention_heads=num_graph_attention_heads, 
                            only_value_weight=only_value_weight,
                            encode_rel_type=encode_rel_type, rel_dim=rel_dim,
-                           use_null_att_pos=use_null_att_pos, end_word_id=end_word_id)
+                           use_null_att_pos=use_null_att_pos, end_word_id=end_word_id,
+                           num_arcs_per_pred=num_arcs_per_pred)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
