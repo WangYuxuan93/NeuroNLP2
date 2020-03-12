@@ -355,8 +355,8 @@ def train(args):
         network.train()
         lr = scheduler.get_lr()[0]
         print('Epoch %d (%s, lr=%.6f, lr decay=%.6f, grad clip=%.1f, l2=%.1e): ' % (epoch, opt_info, lr, lr_decay, grad_clip, weight_decay))
-        if args.cuda:
-            torch.cuda.empty_cache()
+        #if args.cuda:
+        #    torch.cuda.empty_cache()
         gc.collect()
         for step, data in enumerate(iterate_data(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True)):
             optimizer.zero_grad()
@@ -408,7 +408,7 @@ def train(args):
 
             # update log
             if step % 100 == 0:
-                torch.cuda.empty_cache()
+                #torch.cuda.empty_cache()
                 if not noscreen: 
                     sys.stdout.write("\b" * num_back)
                     sys.stdout.write(" " * num_back)
