@@ -358,6 +358,8 @@ def train(args):
     rel_dim = hyps['rel_dim']
     use_null_att_pos = hyps['use_null_att_pos']
     num_arcs_per_pred = hyps['num_arcs_per_pred']
+    use_input_layer = hyps['use_input_layer']
+    use_sin_position_embedding = hyps['use_sin_position_embedding']
     if use_null_att_pos:
         end_word_id = word_alphabet.get_index(END)
     else:
@@ -400,7 +402,8 @@ def train(args):
                            only_value_weight=only_value_weight,
                            encode_rel_type=encode_rel_type, rel_dim=rel_dim,
                            use_null_att_pos=use_null_att_pos, end_word_id=end_word_id,
-                           num_arcs_per_pred=num_arcs_per_pred)
+                           num_arcs_per_pred=num_arcs_per_pred, use_input_layer=use_input_layer, 
+                           use_sin_position_embedding=use_sin_position_embedding)
     elif model_type == 'EasyFirstV2':
         network = EasyFirstV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                            hidden_size, num_types, arc_space, type_space,
@@ -433,7 +436,8 @@ def train(args):
                            only_value_weight=only_value_weight,
                            encode_rel_type=encode_rel_type, rel_dim=rel_dim,
                            use_null_att_pos=use_null_att_pos, end_word_id=end_word_id,
-                           num_arcs_per_pred=num_arcs_per_pred)
+                           num_arcs_per_pred=num_arcs_per_pred, use_input_layer=use_input_layer, 
+                           use_sin_position_embedding=use_sin_position_embedding)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -459,6 +463,8 @@ def train(args):
     logger.info("dropout(in, out, hidden, att): (%.2f, %.2f, %.2f, %.2f)" % (p_in, p_out, p_hid, p_att))
     logger.info("Use POS tag: %s" % use_pos)
     logger.info("Use Char: %s" % use_char)
+    logger.info("Use Sin Position Embedding: %s" % use_sin_position_embedding)
+    logger.info("Use Input Layer: %s" % use_input_layer)
     logger.info("Residual From Input Layer: %s (transformer dropout: %.2f)" % (residual_from_input, transformer_drop_prob))
     logger.info("##### Graph Encoder (Layers: %s, Share Params:%s) #####"% (num_graph_attention_layers, share_params))
     logger.info("dropout(graph_hid, graph_att): (%.2f, %.2f)" % (p_graph_hid, p_graph_att))
@@ -690,7 +696,7 @@ def train(args):
                     if n_state_step == num_arcs_per_pred:
                         encode_heads_onehot = gen_heads_onehot
                         n_state_step = 0
-                    
+
                     order_mask = order_masks[i]
                     optimizer.zero_grad()
                     #if num_gpu > 1: 
@@ -952,6 +958,8 @@ def parse(args):
     rel_dim = hyps['rel_dim']
     use_null_att_pos = hyps['use_null_att_pos']
     num_arcs_per_pred = hyps['num_arcs_per_pred']
+    use_input_layer = hyps['use_input_layer']
+    use_sin_position_embedding = hyps['use_sin_position_embedding']
 
     if use_null_att_pos:
         end_word_id = word_alphabet.get_index(END)
@@ -992,7 +1000,8 @@ def parse(args):
                            only_value_weight=only_value_weight,
                            encode_rel_type=encode_rel_type, rel_dim=rel_dim,
                            use_null_att_pos=use_null_att_pos, end_word_id=end_word_id,
-                           num_arcs_per_pred=num_arcs_per_pred)
+                           num_arcs_per_pred=num_arcs_per_pred, use_input_layer=use_input_layer, 
+                           use_sin_position_embedding=use_sin_position_embedding)
     elif model_type == 'EasyFirstV2':
         network = EasyFirstV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                            hidden_size, num_types, arc_space, type_space,
@@ -1024,7 +1033,8 @@ def parse(args):
                            only_value_weight=only_value_weight,
                            encode_rel_type=encode_rel_type, rel_dim=rel_dim,
                            use_null_att_pos=use_null_att_pos, end_word_id=end_word_id,
-                           num_arcs_per_pred=num_arcs_per_pred)
+                           num_arcs_per_pred=num_arcs_per_pred, use_input_layer=use_input_layer, 
+                           use_sin_position_embedding=use_sin_position_embedding)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 

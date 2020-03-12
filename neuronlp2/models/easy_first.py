@@ -35,7 +35,7 @@ class EasyFirst(nn.Module):
                  residual_from_input=False, transformer_drop_prob=0,
                  num_graph_attention_heads=1, only_value_weight=False,
                  encode_rel_type='gold', rel_dim=100, use_null_att_pos=True, end_word_id=3,
-                 num_arcs_per_pred=1):
+                 num_arcs_per_pred=1, use_input_layer=True, use_sin_position_embedding=False):
         super(EasyFirst, self).__init__()
         self.device = device
         self.dep_prob_depend_on_head = dep_prob_depend_on_head
@@ -90,6 +90,9 @@ class EasyFirst(nn.Module):
             self.input_encoder = VarFastLSTM(dim_enc, hidden_size, num_layers=num_layers, batch_first=True, bidirectional=True, dropout=p_rnn)
             out_dim = hidden_size * 2
         elif input_encoder == 'Transformer':
+            if not use_input_layer and not dim_enc == hidden_size:
+                print ("dim_enc ({}) does not match hidden_size ({}) with no input layer!".format(dim_enc, hidden_size))
+                exit()
             self.config = SelfAttentionConfig(input_size=dim_enc,
                                         hidden_size=hidden_size,
                                         num_hidden_layers=num_layers,
@@ -99,6 +102,8 @@ class EasyFirst(nn.Module):
                                         embedding_dropout_prob=0.1,
                                         hidden_dropout_prob=hidden_dropout_prob,
                                         attention_probs_dropout_prob=attention_probs_dropout_prob,
+                                        use_input_layer=use_input_layer,
+                                        use_sin_position_embedding=use_sin_position_embedding,
                                         max_position_embeddings=256,
                                         initializer_range=0.02)
             self.input_encoder = SelfAttentionModel(self.config)
@@ -121,6 +126,8 @@ class EasyFirst(nn.Module):
                                             hidden_act="gelu",
                                             hidden_dropout_prob=graph_attention_hidden_dropout_prob,
                                             graph_attention_probs_dropout_prob=graph_attention_probs_dropout_prob,
+                                            use_input_layer=use_input_layer,
+                                            use_sin_position_embedding=use_sin_position_embedding,
                                             max_position_embeddings=256,
                                             initializer_range=0.02,
                                             extra_self_attention_layer=extra_self_attention_layer,

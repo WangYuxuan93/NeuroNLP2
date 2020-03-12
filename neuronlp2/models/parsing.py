@@ -50,7 +50,8 @@ class DeepBiAffine(nn.Module):
                  hidden_size, num_layers, num_labels, arc_space, type_space,
                  embedd_word=None, embedd_char=None, embedd_pos=None, p_in=0.33, p_out=0.33, 
                  p_rnn=(0.33, 0.33), pos=True, use_char=False, activation='elu',
-                 num_attention_heads=8, intermediate_size=1024, minimize_logp=False):
+                 num_attention_heads=8, intermediate_size=1024, minimize_logp=False,
+                 use_input_layer=True, use_sin_position_embedding=False):
         super(DeepBiAffine, self).__init__()
 
         self.minimize_logp = minimize_logp
@@ -107,6 +108,8 @@ class DeepBiAffine(nn.Module):
                                         hidden_act="gelu",
                                         hidden_dropout_prob=0.1,
                                         attention_probs_dropout_prob=0.1,
+                                        use_input_layer=use_input_layer,
+                                        use_sin_position_embedding=use_sin_position_embedding,
                                         max_position_embeddings=256,
                                         initializer_range=0.02)
             self.input_encoder = SelfAttentionModel(self.config)

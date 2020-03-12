@@ -25,6 +25,7 @@ import six
 import torch
 import torch.nn as nn
 from torch.nn import CrossEntropyLoss
+import numpy as np
 
 def gelu(x):
     """Implementation of the gelu activation function.
@@ -109,6 +110,33 @@ class BertConfig(object):
         """Serializes this instance to a JSON string."""
         return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
 
+class SinPositionalEmbedding(nn.Module):
+
+    def __init__(self, hidden_size, max_position_embeddings=512):
+        super(SinPositionalEmbedding, self).__init__()
+
+        # Not a parameter
+        self.register_buffer('pos_table', self._get_sinusoid_encoding_table(max_position_embeddings, hidden_size))
+
+    def _get_sinusoid_encoding_table(self, max_position_embeddings, hidden_size):
+        ''' Sinusoid position encoding table '''
+        # TODO: make it with torch instead of numpy
+
+        def get_position_angle_vec(position):
+            return [position / np.power(10000, 2 * (hid_j // 2) / hidden_size) for hid_j in range(hidden_size)]
+
+        sinusoid_table = np.array([get_position_angle_vec(pos_i) for pos_i in range(max_position_embeddings)])
+        sinusoid_table[:, 0::2] = np.sin(sinusoid_table[:, 0::2])  # dim 2i
+        sinusoid_table[:, 1::2] = np.cos(sinusoid_table[:, 1::2])  # dim 2i+1
+
+        return torch.FloatTensor(sinusoid_table).unsqueeze(0)
+
+    def forward(self, x):
+        """
+        Input:
+            x: (batch, seq_len, hidden_size)
+        """
+        return x + self.pos_table[:, :x.size(1)].detach()
 
 class BERTLayerNorm(nn.Module):
     def __init__(self, config, variance_epsilon=1e-12):
@@ -378,6 +406,8 @@ class GraphAttentionConfig(object):
                 hidden_act="gelu",
                 hidden_dropout_prob=0.1,
                 graph_attention_probs_dropout_prob=0,
+                use_input_layer=False,
+                use_sin_position_embedding=False,
                 max_position_embeddings=512,
                 initializer_range=0.02,
                 share_params=False,
@@ -417,6 +447,8 @@ class GraphAttentionConfig(object):
         self.embedding_dropout_prob = hidden_dropout_prob
         self.hidden_dropout_prob = hidden_dropout_prob
         self.graph_attention_probs_dropout_prob = graph_attention_probs_dropout_prob
+        self.use_input_layer = use_input_layer
+        self.use_sin_position_embedding = use_sin_position_embedding
         self.max_position_embeddings = max_position_embeddings
         self.initializer_range = initializer_range
         self.share_params = share_params
@@ -456,8 +488,15 @@ class GraphAttentionEmbeddings(nn.Module):
         """Construct the embedding module from word, position and token_type embeddings.
         """
         #self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size)
-        self.input_layer = nn.Linear(config.input_size, config.hidden_size)
-        self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
+        if config.use_input_layer:
+            self.input_layer = nn.Linear(config.input_size, config.hidden_size)
+        else:
+            self.input_layer = None
+        self.use_sin_position_embedding = config.use_sin_position_embedding
+        if config.use_sin_position_embedding:
+            self.position_embeddings = SinPositionalEmbedding(config.hidden_size, config.max_position_embeddings)
+        else:
+            self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
 
         # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
         # any TensorFlow checkpoint file
@@ -470,12 +509,16 @@ class GraphAttentionEmbeddings(nn.Module):
         """
         seq_length = input_tensor.size(1)
         batch_size = input_tensor.size(0)
-        input_tensor = self.input_layer(input_tensor)
-        position_ids = torch.arange(seq_length, dtype=torch.long, device=input_tensor.device)
-        position_ids = position_ids.unsqueeze(0).expand(batch_size,-1)
-        position_embeddings = self.position_embeddings(position_ids)
+        if self.input_layer is not None:
+            input_tensor = self.input_layer(input_tensor)
+        if self.use_sin_position_embedding:
+            embeddings = self.position_embeddings(input_tensor)
+        else:
+            position_ids = torch.arange(seq_length, dtype=torch.long, device=input_tensor.device)
+            position_ids = position_ids.unsqueeze(0).expand(batch_size,-1)
+            position_embeddings = self.position_embeddings(position_ids)
+            embeddings = input_tensor + position_embeddings
 
-        embeddings = input_tensor + position_embeddings
         embeddings = self.LayerNorm(embeddings)
         embeddings = self.dropout(embeddings)
         return embeddings
@@ -616,6 +659,8 @@ class SelfAttentionConfig(object):
                 embedding_dropout_prob=0.1,
                 hidden_dropout_prob=0.1,
                 attention_probs_dropout_prob=0.1,
+                use_input_layer=False,
+                use_sin_position_embedding=False,
                 max_position_embeddings=512,
                 initializer_range=0.02):
         """Constructs BertConfig.
@@ -648,6 +693,8 @@ class SelfAttentionConfig(object):
         self.embedding_dropout_prob = embedding_dropout_prob
         self.hidden_dropout_prob = hidden_dropout_prob
         self.attention_probs_dropout_prob = attention_probs_dropout_prob
+        self.use_input_layer = use_input_layer
+        self.use_sin_position_embedding = use_sin_position_embedding
         self.max_position_embeddings = max_position_embeddings
         self.initializer_range = initializer_range
 
@@ -728,6 +775,8 @@ class GraphAttentionV2Config(object):
                 hidden_act="gelu",
                 hidden_dropout_prob=0.1,
                 graph_attention_probs_dropout_prob=0,
+                use_input_layer=False,
+                use_sin_position_embedding=False,
                 max_position_embeddings=512,
                 initializer_range=0.02,
                 extra_self_attention_layer=False,
@@ -769,6 +818,8 @@ class GraphAttentionV2Config(object):
         self.embedding_dropout_prob = hidden_dropout_prob
         self.hidden_dropout_prob = hidden_dropout_prob
         self.graph_attention_probs_dropout_prob = graph_attention_probs_dropout_prob
+        self.use_input_layer = use_input_layer
+        self.use_sin_position_embedding = use_sin_position_embedding
         self.max_position_embeddings = max_position_embeddings
         self.initializer_range = initializer_range
         self.share_params = share_params
