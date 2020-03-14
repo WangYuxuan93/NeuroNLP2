@@ -159,6 +159,24 @@ class LayerNorm(nn.Module):
         x = (x - u) / torch.sqrt(s + self.variance_epsilon)
         return self.gamma * x + self.beta
 
+def reset_bias_with_orthogonal(bias):
+    bias_temp = torch.nn.Parameter(torch.FloatTensor(bias.size()[0], 1))
+    nn.init.orthogonal_(bias_temp)
+    bias_temp = bias_temp.view(-1)
+    bias.data = bias_temp.data
+
+class Linear(nn.Module):
+    def __init__(self,d_in,d_out,bias=True):
+        super(Linear,self).__init__()
+        self.linear = nn.Linear(d_in,d_out,bias=bias)
+        #nn.init.xavier_normal_(self.linear.weight)
+        #nn.init.kaiming_uniform_(self.linear.weight, nonlinearity='relu')
+        nn.init.orthogonal_(self.linear.weight)
+        if bias:
+            reset_bias_with_orthogonal(self.linear.bias)
+
+    def forward(self,x):
+        return self.linear(x)
 
 class SelfAttentionLayer(nn.Module):
     def __init__(self, config):
@@ -171,15 +189,11 @@ class SelfAttentionLayer(nn.Module):
         self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
         self.all_head_size = self.num_attention_heads * self.attention_head_size
 
-        self.query = nn.Linear(config.hidden_size, self.all_head_size)
-        self.key = nn.Linear(config.hidden_size, self.all_head_size)
-        self.value = nn.Linear(config.hidden_size, self.all_head_size)
+        self.query = Linear(config.hidden_size, self.all_head_size, bias=False)
+        self.key = Linear(config.hidden_size, self.all_head_size, bias=False)
+        self.value = Linear(config.hidden_size, self.all_head_size, bias=False)
 
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
-
-        nn.init.orthogonal_(self.query.weight)
-        nn.init.orthogonal_(self.key.weight)
-        nn.init.orthogonal_(self.value.weight)
 
     def transpose_for_scores(self, x):
         # (batch, seq_len, hidden_size) => (batch, seq_len, num_head, head_size)
@@ -225,7 +239,7 @@ class SelfAttentionLayer(nn.Module):
 class SelfOutput(nn.Module):
     def __init__(self, config):
         super(SelfOutput, self).__init__()
-        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
+        self.dense = Linear(config.hidden_size, config.hidden_size, bias=False)
         self.LayerNorm = LayerNorm(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
@@ -251,8 +265,13 @@ class AttentionLayer(nn.Module):
 class IntermediateLayer(nn.Module):
     def __init__(self, config):
         super(IntermediateLayer, self).__init__()
-        self.dense = nn.Linear(config.hidden_size, config.intermediate_size)
-        self.intermediate_act_fn = gelu
+        self.dense = Linear(config.hidden_size, config.intermediate_size)
+        if config.hidden_act == 'gelu':
+            self.intermediate_act_fn = gelu
+        elif config.hidden_act == 'relu':
+            self.intermediate_act_fn = nn.ReLU()
+        elif config.hidden_act == 'leaky_relu':
+            self.intermediate_act_fn = nn.LeakyReLU(0.1)
 
     def forward(self, hidden_states):
         hidden_states = self.dense(hidden_states)
@@ -263,7 +282,7 @@ class IntermediateLayer(nn.Module):
 class OutputLayer(nn.Module):
     def __init__(self, config):
         super(OutputLayer, self).__init__()
-        self.dense = nn.Linear(config.intermediate_size, config.hidden_size)
+        self.dense = Linear(config.intermediate_size, config.hidden_size)
         self.LayerNorm = LayerNorm(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
@@ -323,7 +342,7 @@ class AttentionEmbeddings(nn.Module):
         self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
         if config.use_sin_position_embedding:
             #self.position_embeddings = SinPositionalEmbedding(config.hidden_size, config.max_position_embeddings)        
-            self.position_embeddings.data = position_encoding_init(config.max_position_embeddings, config.hidden_size)
+            self.position_embeddings.weight.data = position_encoding_init(config.max_position_embeddings, config.hidden_size)
         if config.freeze_position_embedding:
             if not config.use_sin_position_embedding:
                 print ("### Freeze Position Embedding should use with Sin Position Embedding ###")

@@ -136,7 +136,7 @@ class DeepBiAffine(nn.Module):
                                         num_hidden_layers=num_layers,
                                         num_attention_heads=num_attention_heads,
                                         intermediate_size=intermediate_size,
-                                        hidden_act="gelu",
+                                        hidden_act="relu",
                                         hidden_dropout_prob=0.1,
                                         attention_probs_dropout_prob=0.1,
                                         use_input_layer=use_input_layer,
