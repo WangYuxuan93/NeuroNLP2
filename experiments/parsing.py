@@ -118,6 +118,7 @@ def train(args):
     dev_path = args.dev
     test_path = args.test
 
+    basic_word_embedding = args.basic_word_embedding
     num_epochs = args.num_epochs
     batch_size = args.batch_size
     optim = args.optim
@@ -250,13 +251,16 @@ def train(args):
         minimize_logp = hyps['minimize_logp']
         use_input_layer = hyps['use_input_layer']
         use_sin_position_embedding = hyps['use_sin_position_embedding']
+        freeze_position_embedding = hyps['freeze_position_embedding']
         network = DeepBiAffine(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                                mode, hidden_size, num_layers, num_types, arc_space, type_space,
+                               basic_word_embedding=basic_word_embedding,
                                embedd_word=word_table, embedd_char=char_table,
                                p_in=p_in, p_out=p_out, p_rnn=p_rnn, pos=use_pos, use_char=use_char,
                                activation=activation, num_attention_heads=num_attention_heads,
                                intermediate_size=intermediate_size, minimize_logp=minimize_logp,
-                               use_input_layer=use_input_layer, use_sin_position_embedding=use_sin_position_embedding)
+                               use_input_layer=use_input_layer, use_sin_position_embedding=use_sin_position_embedding,
+                               freeze_position_embedding=freeze_position_embedding)
     elif model_type == 'NeuroMST':
         num_layers = hyps['num_layers']
         network = NeuroMST(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
@@ -288,7 +292,8 @@ def train(args):
     logger.info("dropout(in, out, rnn): %s(%.2f, %.2f, %s)" % ('variational', p_in, p_out, p_rnn))
     if model_type == 'DeepBiAffine':
         logger.info("##### Input Encoder (Type: %s, Layer: %d) ###" % (mode, num_layers))
-        logger.info("Use Sin Position Embedding: %s" % use_sin_position_embedding)
+        logger.info("Use Randomly Init Word Emb: %s (Freeze Pre-trained Emb: %s)" % (basic_word_embedding, freeze))
+        logger.info("Use Sin Position Emb: %s (Freeze Position Emb: %s)" % (use_sin_position_embedding, freeze_position_embedding))
         logger.info("Use Input Layer: %s" % use_input_layer)
         logger.info("Minimize logp: %s" % minimize_logp)
     logger.info('# of Parameters: %d' % (sum([param.numel() for param in network.parameters()])))
@@ -345,8 +350,8 @@ def train(args):
     beam = args.beam
     reset = args.reset
     num_batches = num_data // batch_size + 1
-    if optim == 'adam':
-        opt_info = 'adam, betas=(%.1f, %.3f), eps=%.1e, amsgrad=%s' % (betas[0], betas[1], eps, amsgrad)
+    if optim == 'adamw':
+        opt_info = 'adamw, betas=(%.1f, %.3f), eps=%.1e, amsgrad=%s' % (betas[0], betas[1], eps, amsgrad)
     else:
         opt_info = 'sgd, momentum=0.9, nesterov=True'
     for epoch in range(1, num_epochs + 1):
@@ -589,12 +594,15 @@ def parse(args):
         minimize_logp = hyps['minimize_logp']
         use_input_layer = hyps['use_input_layer']
         use_sin_position_embedding = hyps['use_sin_position_embedding']
+        freeze_position_embedding = hyps['freeze_position_embedding']
         network = DeepBiAffine(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                                mode, hidden_size, num_layers, num_types, arc_space, type_space,
+                               basic_word_embedding=args.basic_word_embedding,
                                p_in=p_in, p_out=p_out, p_rnn=p_rnn, pos=use_pos, activation=activation,
                                num_attention_heads=num_attention_heads,
                                intermediate_size=intermediate_size, minimize_logp=minimize_logp,
-                               use_input_layer=use_input_layer, use_sin_position_embedding=use_sin_position_embedding)                            
+                               use_input_layer=use_input_layer, use_sin_position_embedding=use_sin_position_embedding,
+                               freeze_position_embedding=freeze_position_embedding)                            
     elif model_type == 'NeuroMST':
         num_layers = hyps['num_layers']
         network = NeuroMST(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
@@ -650,7 +658,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--num_epochs', type=int, default=200, help='Number of training epochs')
     args_parser.add_argument('--batch_size', type=int, default=16, help='Number of sentences in each batch')
     args_parser.add_argument('--loss_type', choices=['sentence', 'token'], default='sentence', help='loss type (default: sentence)')
-    args_parser.add_argument('--optim', choices=['sgd', 'adam'], help='type of optimizer')
+    args_parser.add_argument('--optim', choices=['sgd', 'adamw'], help='type of optimizer')
     args_parser.add_argument('--learning_rate', type=float, default=0.1, help='Learning rate')
     args_parser.add_argument('--beta1', type=float, default=0.9, help='beta1 of Adam')
     args_parser.add_argument('--beta2', type=float, default=0.999, help='beta2 of Adam')
@@ -667,6 +675,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--freeze', action='store_true', help='frozen the word embedding (disable fine-tuning).')
     args_parser.add_argument('--punctuation', nargs='+', type=str, help='List of punctuations')
     args_parser.add_argument('--beam', type=int, default=1, help='Beam size for decoding')
+    args_parser.add_argument('--basic_word_embedding', action='store_true', help='Whether to use extra randomly initialized trainable word embedding.')
     args_parser.add_argument('--word_embedding', choices=['glove', 'senna', 'sskip', 'polyglot'], help='Embedding for words')
     args_parser.add_argument('--word_path', help='path for word embedding dict')
     args_parser.add_argument('--char_embedding', choices=['random', 'polyglot'], help='Embedding for characters')

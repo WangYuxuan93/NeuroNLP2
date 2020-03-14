@@ -7,9 +7,10 @@
   "minimize_logp": false,
   "pos_dim": 100,
   "rnn_mode": "Transformer",
-  "num_layers": 3,
+  "num_layers": 2,
   "use_input_layer": false,
   "use_sin_position_embedding": true,
+  "freeze_position_embedding": false,
   "num_attention_heads": 8,
   "intermediate_size": 800,
   "hidden_size": 200,
@@ -18,5 +19,5 @@
   "p_in": 0.33,
   "p_out": 0.33,
   "p_rnn": [0.33, 0.33],
-  "activation": "elu"
+  "activation": "leaky_relu"
 }

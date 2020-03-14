@@ -10,8 +10,9 @@ from neuronlp2.io import get_logger
 from neuronlp2.nn import TreeCRF, VarGRU, VarRNN, VarLSTM, VarFastLSTM
 from neuronlp2.nn import BiAffine, BiLinear, CharCNN, BiAffine_v2
 from neuronlp2.tasks import parser
-from neuronlp2.nn.transformer import SelfAttentionConfig, SelfAttentionModel
-
+#from neuronlp2.nn.transformer import SelfAttentionConfig, SelfAttentionModel
+from neuronlp2.nn.self_attention import AttentionEncoderConfig, AttentionEncoder
+from torch.autograd import Variable
 
 class PriorOrder(Enum):
     DEPTH = 0
@@ -45,16 +46,46 @@ class PositionEmbeddingLayer(nn.Module):
         return embeddings
 
 
+def drop_input_independent(word_embeddings, tag_embeddings, dropout_emb):
+    batch_size, seq_length, _ = word_embeddings.size()
+    word_masks = word_embeddings.data.new(batch_size, seq_length).fill_(1 - dropout_emb)#6*98 ;0.67
+    #print(word_masks)
+    word_masks = Variable(torch.bernoulli(word_masks), requires_grad=False)#6*78 ;0,1
+    #print(word_masks)
+    tag_masks = tag_embeddings.data.new(batch_size, seq_length).fill_(1 - dropout_emb)
+    tag_masks = Variable(torch.bernoulli(tag_masks), requires_grad=False)
+    scale = 3.0 / (2.0 * word_masks + tag_masks + 1e-12)#batch_size*seq_length 1,1.5,3
+    #print(scale)
+    word_masks *= scale#batch_size*seq_length 0,1,1.5
+    tag_masks *= scale
+    #print(word_masks)
+    word_masks = word_masks.unsqueeze(dim=2)#6*78*1
+    #print(word_masks)
+    tag_masks = tag_masks.unsqueeze(dim=2)
+    word_embeddings = word_embeddings * word_masks
+    tag_embeddings = tag_embeddings * tag_masks
+
+    return word_embeddings, tag_embeddings
+
 class DeepBiAffine(nn.Module):
     def __init__(self, word_dim, num_words, char_dim, num_chars, pos_dim, num_pos, rnn_mode, 
                  hidden_size, num_layers, num_labels, arc_space, type_space,
+                 basic_word_embedding=True,
                  embedd_word=None, embedd_char=None, embedd_pos=None, p_in=0.33, p_out=0.33, 
                  p_rnn=(0.33, 0.33), pos=True, use_char=False, activation='elu',
                  num_attention_heads=8, intermediate_size=1024, minimize_logp=False,
-                 use_input_layer=True, use_sin_position_embedding=False):
+                 use_input_layer=True, use_sin_position_embedding=False, 
+                 freeze_position_embedding=True):
         super(DeepBiAffine, self).__init__()
 
+        self.basic_word_embedding = basic_word_embedding
         self.minimize_logp = minimize_logp
+        self.act_func = activation
+        self.p_in = p_in
+        if self.basic_word_embedding:
+            self.basic_word_embed = nn.Embedding(num_words, word_dim, padding_idx=1)
+        else:
+            self.basic_word_embed = None
         self.word_embed = nn.Embedding(num_words, word_dim, _weight=embedd_word, padding_idx=1)
         self.pos_embed = nn.Embedding(num_pos, pos_dim, _weight=embedd_pos, padding_idx=1) if pos else None
         if use_char:
@@ -100,7 +131,7 @@ class DeepBiAffine(nn.Module):
             self.input_encoder = nn.Linear(dim_enc, hidden_size)
             out_dim = hidden_size
         elif self.input_encoder_type == 'Transformer':
-            self.config = SelfAttentionConfig(input_size=dim_enc,
+            self.config = AttentionEncoderConfig(input_size=dim_enc,
                                         hidden_size=hidden_size,
                                         num_hidden_layers=num_layers,
                                         num_attention_heads=num_attention_heads,
@@ -110,9 +141,10 @@ class DeepBiAffine(nn.Module):
                                         attention_probs_dropout_prob=0.1,
                                         use_input_layer=use_input_layer,
                                         use_sin_position_embedding=use_sin_position_embedding,
+                                        freeze_position_embedding=freeze_position_embedding,
                                         max_position_embeddings=256,
                                         initializer_range=0.02)
-            self.input_encoder = SelfAttentionModel(self.config)
+            self.input_encoder = AttentionEncoder(self.config)
             out_dim = hidden_size
         else:
             self.input_encoder = RNN(dim_enc, hidden_size, num_layers=num_layers, batch_first=True, bidirectional=True, dropout=p_rnn) 
@@ -131,9 +163,11 @@ class DeepBiAffine(nn.Module):
         if self.minimize_logp:
             self.dep_dense = nn.Linear(out_dim, 1)
 
-        assert activation in ['elu', 'tanh']
+        assert activation in ['elu', 'leaky_relu', 'tanh']
         if activation == 'elu':
             self.activation = nn.ELU(inplace=True)
+        elif activation == 'leaky_relu':
+            self.activation = nn.LeakyReLU(0.1)
         else:
             self.activation = nn.Tanh()
         self.criterion = nn.CrossEntropyLoss(reduction='none')
@@ -146,22 +180,32 @@ class DeepBiAffine(nn.Module):
             nn.init.uniform_(self.char_embed.weight, -0.1, 0.1)
         if embedd_pos is None and self.pos_embed is not None:
             nn.init.uniform_(self.pos_embed.weight, -0.1, 0.1)
+        if self.basic_word_embed is not None:
+            nn.init.uniform_(self.basic_word_embed.weight, -0.1, 0.1)
 
         with torch.no_grad():
             self.word_embed.weight[self.word_embed.padding_idx].fill_(0)
+            if self.basic_word_embed is not None:
+                self.basic_word_embed.weight[self.basic_word_embed.padding_idx].fill_(0)
             if self.char_embed is not None:
                 self.char_embed.weight[self.char_embed.padding_idx].fill_(0)
             if self.pos_embed is not None:
                 self.pos_embed.weight[self.pos_embed.padding_idx].fill_(0)
 
-        nn.init.xavier_uniform_(self.arc_h.weight)
-        nn.init.constant_(self.arc_h.bias, 0.)
-        nn.init.xavier_uniform_(self.arc_c.weight)
-        nn.init.constant_(self.arc_c.bias, 0.)
+        if self.act_func == 'leaky_relu':
+            nn.init.kaiming_uniform_(self.arc_h.weight, a=0.1, nonlinearity='leaky_relu')
+            nn.init.kaiming_uniform_(self.arc_c.weight, a=0.1, nonlinearity='leaky_relu')
+            nn.init.kaiming_uniform_(self.type_h.weight, a=0.1, nonlinearity='leaky_relu')
+            nn.init.kaiming_uniform_(self.type_c.weight, a=0.1, nonlinearity='leaky_relu')
+        else:
+            nn.init.xavier_uniform_(self.arc_h.weight)
+            nn.init.xavier_uniform_(self.arc_c.weight)
+            nn.init.xavier_uniform_(self.type_h.weight)
+            nn.init.xavier_uniform_(self.type_c.weight)
 
-        nn.init.xavier_uniform_(self.type_h.weight)
+        nn.init.constant_(self.arc_h.bias, 0.)
+        nn.init.constant_(self.arc_c.bias, 0.)
         nn.init.constant_(self.type_h.bias, 0.)
-        nn.init.xavier_uniform_(self.type_c.weight)
         nn.init.constant_(self.type_c.bias, 0.)
 
         if self.minimize_logp:
@@ -174,25 +218,37 @@ class DeepBiAffine(nn.Module):
 
     def _get_rnn_output(self, input_word, input_char, input_pos, mask=None):
         # [batch, length, word_dim]
-        word = self.word_embed(input_word)
+        pre_word = self.word_embed(input_word)
         # apply dropout word on input
-        word = self.dropout_in(word)
-        enc = word
+        #word = self.dropout_in(word)
+        enc_word = pre_word
+        if self.basic_word_embedding:
+            basic_word = self.basic_word_embed(input_word)
+            #basic_word = self.dropout_in(basic_word)
+            enc_word = enc_word + basic_word
 
         if self.char_embed is not None:
             # [batch, length, char_length, char_dim]
             char = self.char_cnn(self.char_embed(input_char))
-            char = self.dropout_in(char)
+            #char = self.dropout_in(char)
             # concatenate word and char [batch, length, word_dim+char_filter]
-            enc = torch.cat([enc, char], dim=2)
+            enc_word = torch.cat([enc_word, char], dim=2)
 
         if self.pos_embed is not None:
             # [batch, length, pos_dim]
-            pos = self.pos_embed(input_pos)
+            enc_pos = self.pos_embed(input_pos)
             # apply dropout on input
-            pos = self.dropout_in(pos)
-            enc = torch.cat([enc, pos], dim=2)
-
+            #pos = self.dropout_in(pos)
+            if self.training:
+                #print ("enc_word:\n", enc_word)
+                # mask by token dropout
+                enc_word, enc_pos = drop_input_independent(enc_word, enc_pos, self.p_in)
+                #print ("enc_word (a):\n", enc_word)
+            enc = torch.cat([enc_word, enc_pos], dim=2)
+            #print ("enc:\n", enc)
+            # sequence shared mask dropout
+            enc = self.dropout_in(enc.transpose(1, 2)).transpose(1, 2)
+            #print ("enc (a):\n", enc)
         # output from rnn [batch, length, hidden_size]
         if self.input_encoder_type == 'Linear':
             enc = self.position_embedding_layer(enc)
