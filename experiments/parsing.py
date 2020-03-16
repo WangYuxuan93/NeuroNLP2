@@ -264,6 +264,14 @@ def train(args):
         use_input_layer = hyps['use_input_layer']
         use_sin_position_embedding = hyps['use_sin_position_embedding']
         freeze_position_embedding = hyps['freeze_position_embedding']
+        hidden_act = hyps['hidden_act']
+        dropout_type = hyps['dropout_type']
+        initializer = hyps['initializer']
+        embedding_dropout_prob = hyps['embedding_dropout_prob']
+        hidden_dropout_prob = hyps['hidden_dropout_prob']
+        inter_dropout_prob = hyps['inter_dropout_prob']
+        attention_probs_dropout_prob = hyps['attention_probs_dropout_prob']
+
         network = DeepBiAffine(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                                mode, hidden_size, num_layers, num_types, arc_space, type_space,
                                basic_word_embedding=basic_word_embedding,
@@ -272,7 +280,12 @@ def train(args):
                                activation=activation, num_attention_heads=num_attention_heads,
                                intermediate_size=intermediate_size, minimize_logp=minimize_logp,
                                use_input_layer=use_input_layer, use_sin_position_embedding=use_sin_position_embedding,
-                               freeze_position_embedding=freeze_position_embedding)
+                               freeze_position_embedding=freeze_position_embedding,
+                               hidden_act=hidden_act, dropout_type=dropout_type,
+                               initializer=initializer, embedding_dropout_prob=embedding_dropout_prob,
+                               hidden_dropout_prob=hidden_dropout_prob,
+                               inter_dropout_prob=inter_dropout_prob,
+                               attention_probs_dropout_prob=attention_probs_dropout_prob)
     elif model_type == 'NeuroMST':
         num_layers = hyps['num_layers']
         network = NeuroMST(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
@@ -304,6 +317,10 @@ def train(args):
     logger.info("dropout(in, out, rnn): %s(%.2f, %.2f, %s)" % ('variational', p_in, p_out, p_rnn))
     if model_type == 'DeepBiAffine':
         logger.info("##### Input Encoder (Type: %s, Layer: %d) ###" % (mode, num_layers))
+        if mode == 'Transformer':
+            logger.info("Dropout type: %s, probs(emb, hid, inter, att): (%.2f, %.2f, %.2f, %.2f)" % (dropout_type, embedding_dropout_prob, hidden_dropout_prob, inter_dropout_prob,
+                                                attention_probs_dropout_prob))
+            logger.info("Activation: %s, Linear initializer: %s" % (hidden_act, initializer))
         logger.info("Use Randomly Init Word Emb: %s (Freeze Pre-trained Emb: %s)" % (basic_word_embedding, freeze))
         logger.info("Use Sin Position Emb: %s (Freeze Position Emb: %s)" % (use_sin_position_embedding, freeze_position_embedding))
         logger.info("Use Input Layer: %s" % use_input_layer)

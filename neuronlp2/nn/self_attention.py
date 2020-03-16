@@ -69,19 +69,22 @@ class AttentionEncoderConfig(object):
     """Configuration class to store the configuration of a `BertModel`.
     """
     def __init__(self,
-                input_size=100,
-                hidden_size=768,
-                num_hidden_layers=12,
-                num_attention_heads=12,
-                intermediate_size=3072,
+                input_size=200,
+                hidden_size=200,
+                num_hidden_layers=8,
+                num_attention_heads=8,
+                intermediate_size=800,
                 hidden_act="gelu",
-                embedding_dropout_prob=0.1,
-                hidden_dropout_prob=0.1,
+                dropout_type="seq",
+                embedding_dropout_prob=0.33,
+                hidden_dropout_prob=0.2,
+                inter_dropout_prob=0.1,
                 attention_probs_dropout_prob=0.1,
                 use_input_layer=False,
                 use_sin_position_embedding=False,
                 freeze_position_embedding=True,
                 max_position_embeddings=512,
+                initializer="default",
                 initializer_range=0.02):
         """Constructs BertConfig.
 
@@ -94,8 +97,10 @@ class AttentionEncoderConfig(object):
                 layer in the Transformer encoder.
             hidden_act: The non-linear activation function (function or string) in the
                 encoder and pooler.
+            dropout_type: ['seq', 'default']
             hidden_dropout_prob: The dropout probabilitiy for all fully connected
                 layers in the embeddings, encoder, and pooler.
+            inter_dropout_prob: The dropout prob for intermediate layer
             attention_probs_dropout_prob: The dropout ratio for the attention
                 probabilities.
             max_position_embeddings: The maximum sequence length that this model might
@@ -103,6 +108,7 @@ class AttentionEncoderConfig(object):
                 (e.g., 512 or 1024 or 2048).
             initializer_range: The sttdev of the truncated_normal_initializer for
                 initializing all weight matrices.
+            initializer: ['orthogonal', 'default', 'xavier_normal'] init type for Linear layer
         """
         self.input_size = input_size
         self.hidden_size = hidden_size
@@ -110,13 +116,16 @@ class AttentionEncoderConfig(object):
         self.num_attention_heads = num_attention_heads
         self.hidden_act = hidden_act
         self.intermediate_size = intermediate_size
+        self.dropout_type = dropout_type
         self.embedding_dropout_prob = embedding_dropout_prob
         self.hidden_dropout_prob = hidden_dropout_prob
+        self.inter_dropout_prob = inter_dropout_prob
         self.attention_probs_dropout_prob = attention_probs_dropout_prob
         self.use_input_layer = use_input_layer
         self.use_sin_position_embedding = use_sin_position_embedding
         self.freeze_position_embedding = freeze_position_embedding
         self.max_position_embeddings = max_position_embeddings
+        self.initializer = initializer
         self.initializer_range = initializer_range
 
     @classmethod
@@ -166,17 +175,43 @@ def reset_bias_with_orthogonal(bias):
     bias.data = bias_temp.data
 
 class Linear(nn.Module):
-    def __init__(self,d_in,d_out,bias=True):
+    def __init__(self,d_in,d_out,bias=True, initializer='default'):
+        # initializer = ['orthogonal', 'default', 'xavier_normal']
         super(Linear,self).__init__()
         self.linear = nn.Linear(d_in,d_out,bias=bias)
-        #nn.init.xavier_normal_(self.linear.weight)
-        #nn.init.kaiming_uniform_(self.linear.weight, nonlinearity='relu')
-        #nn.init.orthogonal_(self.linear.weight)
-        #if bias:
-        #    reset_bias_with_orthogonal(self.linear.bias)
+        if initializer == 'orthogonal':
+            nn.init.orthogonal_(self.linear.weight)
+            if bias:
+                reset_bias_with_orthogonal(self.linear.bias)
+        elif initializer == 'xavier_normal':
+            nn.init.xavier_normal_(self.linear.weight)
+        elif initializer == 'xavier_uniform':
+            nn.init.xavier_uniform_(self.linear.weight)
+        elif initializer == 'kaiming_uniform':
+            nn.init.kaiming_uniform_(self.linear.weight, nonlinearity='relu')
+        
 
     def forward(self,x):
         return self.linear(x)
+
+class Dropout(nn.Module):
+    def __init__(self, dropout_type='seq', dropout_prob=0.1):
+        # dropout_type = ['seq', 'default']
+        super(Dropout,self).__init__()
+        self.dropout_type = dropout_type
+        if self.dropout_type == 'seq':
+            self.dropout = torch.nn.Dropout2d(p=dropout_prob)
+        else:
+            self.dropout = nn.Dropout(dropout_prob)
+
+    def forward(self, x):
+        """
+        x: (batch, seq_len, hidden_size)
+        """
+        if self.dropout_type == 'seq':
+            return self.dropout(x.transpose(1, 2)).transpose(1, 2)
+        else:
+            return self.dropout(x)
 
 class SelfAttentionLayer(nn.Module):
     def __init__(self, config):
@@ -189,11 +224,11 @@ class SelfAttentionLayer(nn.Module):
         self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
         self.all_head_size = self.num_attention_heads * self.attention_head_size
 
-        self.query = Linear(config.hidden_size, self.all_head_size, bias=False)
-        self.key = Linear(config.hidden_size, self.all_head_size, bias=False)
-        self.value = Linear(config.hidden_size, self.all_head_size, bias=False)
+        self.query = Linear(config.hidden_size, self.all_head_size, bias=False, initializer=config.initializer)
+        self.key = Linear(config.hidden_size, self.all_head_size, bias=False, initializer=config.initializer)
+        self.value = Linear(config.hidden_size, self.all_head_size, bias=False, initializer=config.initializer)
 
-        self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
+        self.dropout = Dropout('default', config.attention_probs_dropout_prob)
 
     def transpose_for_scores(self, x):
         # (batch, seq_len, hidden_size) => (batch, seq_len, num_head, head_size)
@@ -239,9 +274,9 @@ class SelfAttentionLayer(nn.Module):
 class SelfOutput(nn.Module):
     def __init__(self, config):
         super(SelfOutput, self).__init__()
-        self.dense = Linear(config.hidden_size, config.hidden_size, bias=False)
+        self.dense = Linear(config.hidden_size, config.hidden_size, bias=False, initializer=config.initializer)
         self.LayerNorm = LayerNorm(config)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.dropout = Dropout(config.dropout_type, config.hidden_dropout_prob)
 
     def forward(self, hidden_states, input_tensor):
         hidden_states = self.dense(hidden_states)
@@ -265,26 +300,28 @@ class AttentionLayer(nn.Module):
 class IntermediateLayer(nn.Module):
     def __init__(self, config):
         super(IntermediateLayer, self).__init__()
-        self.dense = Linear(config.hidden_size, config.intermediate_size)
+        self.dense = Linear(config.hidden_size, config.intermediate_size, initializer=config.initializer)
         if config.hidden_act == 'gelu':
             self.intermediate_act_fn = gelu
         elif config.hidden_act == 'relu':
             self.intermediate_act_fn = nn.ReLU()
         elif config.hidden_act == 'leaky_relu':
             self.intermediate_act_fn = nn.LeakyReLU(0.1)
+        self.dropout = Dropout(config.dropout_type, config.inter_dropout_prob)
 
     def forward(self, hidden_states):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.intermediate_act_fn(hidden_states)
+        hidden_states = self.dropout(hidden_states)
         return hidden_states
 
 
 class OutputLayer(nn.Module):
     def __init__(self, config):
         super(OutputLayer, self).__init__()
-        self.dense = Linear(config.intermediate_size, config.hidden_size)
+        self.dense = Linear(config.intermediate_size, config.hidden_size, initializer=config.initializer)
         self.LayerNorm = LayerNorm(config)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.dropout = Dropout(config.dropout_type, config.hidden_dropout_prob)
 
     def forward(self, hidden_states, input_tensor):
         hidden_states = self.dense(hidden_states)
@@ -335,7 +372,7 @@ class AttentionEmbeddings(nn.Module):
         """
         #self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size)
         if config.use_input_layer:
-            self.input_layer = nn.Linear(config.input_size, config.hidden_size)
+            self.input_layer = Linear(config.input_size, config.hidden_size, initializer=config.initializer)
         else:
             self.input_layer = None
         self.use_sin_position_embedding = config.use_sin_position_embedding
@@ -351,7 +388,7 @@ class AttentionEmbeddings(nn.Module):
         # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
         # any TensorFlow checkpoint file
         self.LayerNorm = LayerNorm(config)
-        self.dropout = nn.Dropout(config.embedding_dropout_prob)
+        self.dropout = Dropout(config.dropout_type, config.embedding_dropout_prob)
 
     def forward(self, input_tensor):
         """

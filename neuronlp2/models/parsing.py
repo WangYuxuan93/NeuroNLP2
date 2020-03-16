@@ -75,7 +75,9 @@ class DeepBiAffine(nn.Module):
                  p_rnn=(0.33, 0.33), pos=True, use_char=False, activation='elu',
                  num_attention_heads=8, intermediate_size=1024, minimize_logp=False,
                  use_input_layer=True, use_sin_position_embedding=False, 
-                 freeze_position_embedding=True):
+                 freeze_position_embedding=True, hidden_act="gelu", dropout_type="seq",
+                 initializer="default", embedding_dropout_prob=0.33, hidden_dropout_prob=0.2,
+                 inter_dropout_prob=0.1, attention_probs_dropout_prob=0.1):
         super(DeepBiAffine, self).__init__()
 
         self.basic_word_embedding = basic_word_embedding
@@ -137,13 +139,17 @@ class DeepBiAffine(nn.Module):
                                         num_hidden_layers=num_layers,
                                         num_attention_heads=num_attention_heads,
                                         intermediate_size=intermediate_size,
-                                        hidden_act="gelu",
-                                        hidden_dropout_prob=0.1,
-                                        attention_probs_dropout_prob=0.1,
+                                        hidden_act=hidden_act,
+                                        dropout_type=dropout_type,
+                                        embedding_dropout_prob=embedding_dropout_prob,
+                                        hidden_dropout_prob=hidden_dropout_prob,
+                                        inter_dropout_prob=inter_dropout_prob,
+                                        attention_probs_dropout_prob=attention_probs_dropout_prob,
                                         use_input_layer=use_input_layer,
                                         use_sin_position_embedding=use_sin_position_embedding,
                                         freeze_position_embedding=freeze_position_embedding,
                                         max_position_embeddings=256,
+                                        initializer=initializer,
                                         initializer_range=0.02)
             self.input_encoder = AttentionEncoder(self.config)
             #self.input_encoder = SelfAttentionModel(self.config)
@@ -247,19 +253,22 @@ class DeepBiAffine(nn.Module):
                 enc_word, enc_pos = drop_input_independent(enc_word, enc_pos, self.p_in)
                 #print ("enc_word (a):\n", enc_word)
             enc = torch.cat([enc_word, enc_pos], dim=2)
-            #print ("enc:\n", enc)
-            # sequence shared mask dropout
-            enc = self.dropout_in(enc.transpose(1, 2)).transpose(1, 2)
-            #print ("enc (a):\n", enc)
         # output from rnn [batch, length, hidden_size]
         if self.input_encoder_type == 'Linear':
+            # sequence shared mask dropout
+            enc = self.dropout_in(enc.transpose(1, 2)).transpose(1, 2)
             enc = self.position_embedding_layer(enc)
             output = self.input_encoder(enc)
         elif self.input_encoder_type == 'Transformer':
+            # sequence shared mask dropout
+            # apply this dropout in transformer after added position embedding
+            #enc = self.dropout_in(enc.transpose(1, 2)).transpose(1, 2)
             all_encoder_layers = self.input_encoder(enc, mask)
             # [batch, length, hidden_size]
             output = all_encoder_layers[-1]
         else:
+            # sequence shared mask dropout
+            enc = self.dropout_in(enc.transpose(1, 2)).transpose(1, 2)
             output, _ = self.input_encoder(enc, mask)
 
         # apply dropout for output
