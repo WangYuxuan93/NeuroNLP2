@@ -107,8 +107,6 @@ class ExponentialScheduler(_LRScheduler):
         self.warmup_steps = max(1, warmup_steps)
         self.init_lr = init_lr
         self.lr_steps = [(base_lr - init_lr) / self.warmup_steps for base_lr in self.base_lrs]
-        print (self.base_lrs, init_lr, self.lr_steps)
-        exit()
         if last_epoch == -1:
             last_epoch = 0
         self.step(last_epoch)
