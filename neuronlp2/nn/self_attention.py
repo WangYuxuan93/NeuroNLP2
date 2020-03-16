@@ -171,9 +171,9 @@ class Linear(nn.Module):
         self.linear = nn.Linear(d_in,d_out,bias=bias)
         #nn.init.xavier_normal_(self.linear.weight)
         #nn.init.kaiming_uniform_(self.linear.weight, nonlinearity='relu')
-        nn.init.orthogonal_(self.linear.weight)
-        if bias:
-            reset_bias_with_orthogonal(self.linear.bias)
+        #nn.init.orthogonal_(self.linear.weight)
+        #if bias:
+        #    reset_bias_with_orthogonal(self.linear.bias)
 
     def forward(self,x):
         return self.linear(x)
@@ -310,7 +310,7 @@ class AttentionBlock(nn.Module):
 class AttentionEncoder_(nn.Module):
     def __init__(self, config):
         super(AttentionEncoder_, self).__init__()
-        layer = SelfAttentionLayer(config)
+        layer = AttentionBlock(config)
         self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.num_hidden_layers)])    
 
     def forward(self, hidden_states, attention_mask):

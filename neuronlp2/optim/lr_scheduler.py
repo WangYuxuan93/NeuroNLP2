@@ -41,6 +41,9 @@ class _LRScheduler(object):
     def get_lr(self):
         raise NotImplementedError
 
+    def get_total_step(self):
+        return self.last_epoch
+
     def step(self, epoch=None):
         if epoch is None:
             epoch = self.last_epoch + 1
@@ -104,6 +107,8 @@ class ExponentialScheduler(_LRScheduler):
         self.warmup_steps = max(1, warmup_steps)
         self.init_lr = init_lr
         self.lr_steps = [(base_lr - init_lr) / self.warmup_steps for base_lr in self.base_lrs]
+        print (self.base_lrs, init_lr, self.lr_steps)
+        exit()
         if last_epoch == -1:
             last_epoch = 0
         self.step(last_epoch)
@@ -113,4 +118,63 @@ class ExponentialScheduler(_LRScheduler):
             return [self.init_lr + lr_step * self.last_epoch for lr_step in self.lr_steps]
         else:
             lr_factor = self.gamma ** (self.last_epoch - self.warmup_steps)
+            return [base_lr * lr_factor for base_lr in self.base_lrs]
+
+
+class AttentionScheduler(_LRScheduler):
+    """Adopted from Attention is all you need
+    Decay lr with factor gamma after n_steps.
+    Args:
+        optimizer (Optimizer): Wrapped optimizer.
+        hidden_size (float): hidden size of Transformer.
+        warmup_steps (int): Warmup steps.
+        last_epoch (int): The index of last epoch. Default: -1.
+    """
+
+    def __init__(self, optimizer, hidden_size, warmup_steps, last_epoch=-1):
+        super(AttentionScheduler, self).__init__(optimizer, last_epoch)
+        # handle warmup <= 0
+        self.warmup_steps = max(1, warmup_steps)
+        self.hidden_size = hidden_size
+        self.warmup_steps = warmup_steps
+        if last_epoch == -1:
+            last_epoch = 0
+        self.step(last_epoch)
+
+    def get_lr(self):
+        
+        hidden_size = self.hidden_size
+        n_steps, warmup_steps = self.last_epoch, self.warmup_steps
+        if n_steps == 0:
+            n_steps = 1
+        lr_factor = (hidden_size ** -0.5) * min(n_steps ** (-0.5), n_steps * warmup_steps ** (-1.5))
+        return [base_lr * lr_factor for base_lr in self.base_lrs]
+
+
+class StepScheduler(_LRScheduler):
+    """Decay lr with factor decay after decay_steps.
+    Args:
+        optimizer (Optimizer): Wrapped optimizer.
+        decay (float): Multiplicative factor of learning rate decay.
+        decay_steps (int): Number of steps after which apply decay
+        warmup_steps (int): Warmup steps..
+        last_epoch (int): The index of last epoch. Default: -1.
+    """
+    def __init__(self, optimizer, decay, decay_steps=5000, init_lr=1e-7, warmup_steps=0, last_epoch=-1):
+        super(StepScheduler, self).__init__(optimizer, last_epoch)
+        self.decay = decay
+        self.decay_steps = decay_steps
+        self.warmup_steps = warmup_steps
+        if self.warmup_steps > 0:
+            self.init_lr = init_lr
+            self.lr_steps = [(base_lr - init_lr) / self.warmup_steps for base_lr in self.base_lrs]
+        if last_epoch == -1:
+            last_epoch = 0
+        self.step(last_epoch)
+
+    def get_lr(self):
+        if self.warmup_steps > 0 and self.last_epoch < self.warmup_steps:
+            return [self.init_lr + lr_step * self.last_epoch for lr_step in self.lr_steps]
+        else:
+            lr_factor = self.decay ** ((self.last_epoch - self.warmup_steps) // self.decay_steps)
             return [base_lr * lr_factor for base_lr in self.base_lrs]

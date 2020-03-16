@@ -10,7 +10,7 @@ from neuronlp2.io import get_logger
 from neuronlp2.nn import TreeCRF, VarGRU, VarRNN, VarLSTM, VarFastLSTM
 from neuronlp2.nn import BiAffine, BiLinear, CharCNN, BiAffine_v2
 from neuronlp2.tasks import parser
-#from neuronlp2.nn.transformer import SelfAttentionConfig, SelfAttentionModel
+from neuronlp2.nn.transformer import SelfAttentionConfig, SelfAttentionModel
 from neuronlp2.nn.self_attention import AttentionEncoderConfig, AttentionEncoder
 from torch.autograd import Variable
 
@@ -131,12 +131,13 @@ class DeepBiAffine(nn.Module):
             self.input_encoder = nn.Linear(dim_enc, hidden_size)
             out_dim = hidden_size
         elif self.input_encoder_type == 'Transformer':
+            #self.config = SelfAttentionConfig(input_size=dim_enc,
             self.config = AttentionEncoderConfig(input_size=dim_enc,
                                         hidden_size=hidden_size,
                                         num_hidden_layers=num_layers,
                                         num_attention_heads=num_attention_heads,
                                         intermediate_size=intermediate_size,
-                                        hidden_act="relu",
+                                        hidden_act="gelu",
                                         hidden_dropout_prob=0.1,
                                         attention_probs_dropout_prob=0.1,
                                         use_input_layer=use_input_layer,
@@ -145,6 +146,7 @@ class DeepBiAffine(nn.Module):
                                         max_position_embeddings=256,
                                         initializer_range=0.02)
             self.input_encoder = AttentionEncoder(self.config)
+            #self.input_encoder = SelfAttentionModel(self.config)
             out_dim = hidden_size
         else:
             self.input_encoder = RNN(dim_enc, hidden_size, num_layers=num_layers, batch_first=True, bidirectional=True, dropout=p_rnn) 

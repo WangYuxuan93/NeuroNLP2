@@ -17,25 +17,35 @@ import math
 import numpy as np
 import torch
 from torch.optim.adamw import AdamW
-from torch.optim import SGD
+from torch.optim import SGD, Adam
 from torch.nn.utils import clip_grad_norm_
 from neuronlp2.nn.utils import total_grad_norm
 from neuronlp2.io import get_logger, conllx_data, conllx_stacked_data, iterate_data
 from neuronlp2.models import DeepBiAffine, NeuroMST, StackPtrNet
-from neuronlp2.optim import ExponentialScheduler
+from neuronlp2.optim import ExponentialScheduler, StepScheduler, AttentionScheduler
 from neuronlp2 import utils
 from neuronlp2.io import CoNLLXWriter
 from neuronlp2.tasks import parser
 from neuronlp2.nn.utils import freeze_embedding
 
 
-def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgrad, weight_decay, warmup_steps):
+def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgrad, weight_decay, 
+                  warmup_steps, schedule='step', hidden_size=200, decay_steps=5000):
     if optim == 'sgd':
         optimizer = SGD(parameters, lr=learning_rate, momentum=0.9, weight_decay=weight_decay, nesterov=True)
-    else:
+    elif optim == 'adamw':
         optimizer = AdamW(parameters, lr=learning_rate, betas=betas, eps=eps, amsgrad=amsgrad, weight_decay=weight_decay)
+    elif optim == 'adam':
+        optimizer = Adam(parameters, lr=learning_rate, betas=betas, eps=eps, weight_decay=weight_decay)
+    
     init_lr = 1e-7
-    scheduler = ExponentialScheduler(optimizer, lr_decay, warmup_steps, init_lr)
+    if schedule == 'exponential':
+        scheduler = ExponentialScheduler(optimizer, lr_decay, warmup_steps, init_lr)
+    elif schedule == 'attention':
+        scheduler = AttentionScheduler(optimizer, hidden_size, warmup_steps)
+    elif schedule == 'step':
+        scheduler = StepScheduler(optimizer, lr_decay, decay_steps, init_lr, warmup_steps)
+    
     return optimizer, scheduler
 
 
@@ -122,8 +132,10 @@ def train(args):
     num_epochs = args.num_epochs
     batch_size = args.batch_size
     optim = args.optim
+    schedule = args.schedule
     learning_rate = args.learning_rate
     lr_decay = args.lr_decay
+    decay_steps = args.decay_steps
     amsgrad = args.amsgrad
     eps = args.eps
     betas = (args.beta1, args.beta2)
@@ -312,7 +324,9 @@ def train(args):
 
     pred_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, type_alphabet)
     gold_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, type_alphabet)
-    optimizer, scheduler = get_optimizer(network.parameters(), optim, learning_rate, lr_decay, betas, eps, amsgrad, weight_decay, warmup_steps)
+    optimizer, scheduler = get_optimizer(network.parameters(), optim, learning_rate, lr_decay, 
+                                betas, eps, amsgrad, weight_decay, warmup_steps,
+                                schedule, hidden_size, decay_steps)
 
     best_ucorrect = 0.0
     best_lcorrect = 0.0
@@ -352,7 +366,9 @@ def train(args):
     num_batches = num_data // batch_size + 1
     if optim == 'adamw':
         opt_info = 'adamw, betas=(%.1f, %.3f), eps=%.1e, amsgrad=%s' % (betas[0], betas[1], eps, amsgrad)
-    else:
+    elif optim == 'adam':
+        opt_info = 'adam, betas=(%.1f, %.3f), eps=%.1e' % (betas[0], betas[1], eps)
+    elif optim == 'sgd':
         opt_info = 'sgd, momentum=0.9, nesterov=True'
     for epoch in range(1, num_epochs + 1):
         start_time = time.time()
@@ -365,7 +381,8 @@ def train(args):
         num_nans = 0
         network.train()
         lr = scheduler.get_lr()[0]
-        print('Epoch %d (%s, lr=%.6f, lr decay=%.6f, grad clip=%.1f, l2=%.1e): ' % (epoch, opt_info, lr, lr_decay, grad_clip, weight_decay))
+        total_step = scheduler.get_total_step()
+        print('Epoch %d, Step %d (%s, scheduler: %s, lr=%.6f, lr decay=%.6f, grad clip=%.1f, l2=%.1e): ' % (epoch, total_step, opt_info,  schedule, lr, lr_decay, grad_clip, weight_decay))
         #if args.cuda:
         #    torch.cuda.empty_cache()
         gc.collect()
@@ -527,7 +544,6 @@ def train(args):
                 print('=' * 125)
 
                 if patient >= reset:
-                    logger.info('**********reset optimizer momentums')
                     network.load_state_dict(torch.load(model_name, map_location=device))
                     scheduler.reset_state()
                     patient = 0
@@ -658,12 +674,14 @@ if __name__ == '__main__':
     args_parser.add_argument('--num_epochs', type=int, default=200, help='Number of training epochs')
     args_parser.add_argument('--batch_size', type=int, default=16, help='Number of sentences in each batch')
     args_parser.add_argument('--loss_type', choices=['sentence', 'token'], default='sentence', help='loss type (default: sentence)')
-    args_parser.add_argument('--optim', choices=['sgd', 'adamw'], help='type of optimizer')
+    args_parser.add_argument('--optim', choices=['sgd', 'adamw', 'adam'], help='type of optimizer')
+    args_parser.add_argument('--schedule', choices=['exponential', 'attention', 'step'], help='type of lr scheduler')
     args_parser.add_argument('--learning_rate', type=float, default=0.1, help='Learning rate')
     args_parser.add_argument('--beta1', type=float, default=0.9, help='beta1 of Adam')
     args_parser.add_argument('--beta2', type=float, default=0.999, help='beta2 of Adam')
     args_parser.add_argument('--eps', type=float, default=1e-8, help='epsilon for adam or adamax')
     args_parser.add_argument('--lr_decay', type=float, default=0.999995, help='Decay rate of learning rate')
+    args_parser.add_argument('--decay_steps', type=int, default=5000, help='Number of steps to apply lr decay')
     args_parser.add_argument('--amsgrad', action='store_true', help='AMS Grad')
     args_parser.add_argument('--grad_clip', type=float, default=0, help='max norm for gradient clip (default 0: no clip')
     args_parser.add_argument('--warmup_steps', type=int, default=0, metavar='N', help='number of steps to warm up (default: 0)')
