@@ -465,7 +465,7 @@ def train(args):
                 num_words = max(num_words, 1)
                 train_uas = float(overall_arc_correct) * 100.0 / overall_total_arcs
                 train_lacc = float(overall_type_correct) * 100.0 / overall_total_arcs
-                log_info = '[%d/%d (%.0f%%) lr=%.6f (%d)] uas: %.2f%%, lacc: %.2f%%, loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f)' % (step, num_batches, 100. * step / num_batches, curr_lr, num_nans,
+                log_info = '[epoch:%d, step:%d/%d (%.0f%%) lr=%.6f (%d)] uas: %.2f%%, lacc: %.2f%%, loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f)' % (epoch, step, num_batches, 100. * step / num_batches, curr_lr, num_nans,
                                                                                                                     train_uas, train_lacc,
                                                                                                                      train_loss / num_insts, train_loss / num_words,
                                                                                                                      train_arc_loss / num_insts, train_arc_loss / num_words,
