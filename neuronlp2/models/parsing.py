@@ -346,6 +346,43 @@ class DeepBiAffine(nn.Module):
 
         return loss_arc
 
+    def accuracy(self, arc_logits, type_logits, heads, types, mask, debug=False):
+        """
+        arc_logits: (batch, seq_len, seq_len)
+        type_logits: (batch, n_rels, seq_len, seq_len)
+        heads: (batch, seq_len)
+        types: (batch, seq_len)
+        mask: (batch, seq_len)
+        """
+        total_arcs = mask.sum()
+        # (batch, seq_len)
+        arc_preds = arc_logits.argmax(-2)
+        # (batch_size, seq_len, seq_len, n_rels)
+        transposed_type_logits = type_logits.permute(0, 2, 3, 1)
+        # (batch_size, seq_len, seq_len)
+        type_ids = transposed_type_logits.argmax(-1)
+        # (batch, seq_len)
+        type_preds = type_ids.gather(-1, heads.unsqueeze(-1)).squeeze()
+
+        ones = torch.ones_like(heads)
+        zeros = torch.zeros_like(heads)
+        arc_correct = (torch.where(arc_preds==heads, ones, zeros) * mask).sum()
+        type_correct = (torch.where(type_preds==types, ones, zeros) * mask).sum()
+
+        if debug:
+            print ("arc_logits:\n", arc_logits)
+            print ("arc_preds:\n", arc_preds)
+            print ("heads:\n", heads)
+            print ("type_ids:\n", type_ids)
+            print ("type_preds:\n", type_preds)
+            print ("types:\n", types)
+            print ("mask:\n", mask)
+            print ("total_arcs:\n", total_arcs)
+            print ("arc_correct:\n", arc_correct)
+            print ("type_correct:\n", type_correct)
+
+        return arc_correct.cpu().numpy(), type_correct.cpu().numpy(), total_arcs.cpu().numpy()
+
     def loss(self, input_word, input_char, input_pos, heads, types, mask=None):
         # out_arc shape [batch, length_head, length_child]
         out_arc, out_type  = self(input_word, input_char, input_pos, mask=mask)
@@ -384,13 +421,15 @@ class DeepBiAffine(nn.Module):
         #loss_type = self.criterion(out_type.transpose(1, 2), types)
         loss_type = (self.criterion(out_type, types_3D) * heads_3D).sum(-1)
 
+        arc_correct, type_correct, total_arcs = self.accuracy(out_arc, out_type, heads, types, root_mask)
+
         # mask invalid position to 0 for sum loss
         if mask is not None:
             loss_arc = loss_arc * mask
             loss_type = loss_type * mask
 
         # [batch, length - 1] -> [batch] remove the symbolic root.
-        return loss_arc[:, 1:].sum(dim=1), loss_type[:, 1:].sum(dim=1)
+        return loss_arc[:, 1:].sum(dim=1), loss_type[:, 1:].sum(dim=1), arc_correct, type_correct, total_arcs 
 
     def _decode_types(self, out_type, heads, leading_symbolic):
         # out_type shape [batch, length, type_space]

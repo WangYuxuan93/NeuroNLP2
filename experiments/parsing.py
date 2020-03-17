@@ -396,6 +396,7 @@ def train(args):
         num_words = 0
         num_back = 0
         num_nans = 0
+        overall_arc_correct, overall_type_correct, overall_total_arcs = 0, 0, 0
         network.train()
         lr = scheduler.get_lr()[0]
         total_step = scheduler.get_total_step()
@@ -414,7 +415,7 @@ def train(args):
                 types = data['TYPE'].to(device)
                 masks = data['MASK'].to(device)
                 nwords = masks.sum() - nbatch
-                loss_arc, loss_type = network.loss(words, chars, postags, heads, types, mask=masks)
+                loss_arc, loss_type, arc_correct, type_correct, total_arcs = network.loss(words, chars, postags, heads, types, mask=masks)
             else:
                 masks_enc = data['MASK_ENC'].to(device)
                 masks_dec = data['MASK_DEC'].to(device)
@@ -428,6 +429,10 @@ def train(args):
             loss_arc = loss_arc.sum()
             loss_type = loss_type.sum()
             loss_total = loss_arc + loss_type
+            overall_arc_correct += arc_correct
+            overall_type_correct += type_correct
+            overall_total_arcs += total_arcs
+            
             if loss_ty_token:
                 loss = loss_total.div(nwords)
             else:
@@ -472,7 +477,11 @@ def train(args):
             sys.stdout.write("\b" * num_back)
             sys.stdout.write(" " * num_back)
             sys.stdout.write("\b" * num_back)
-        print('total: %d (%d), loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f), time: %.2fs' % (num_insts, num_words, train_loss / num_insts, train_loss / num_words,
+        train_uas = float(overall_arc_correct) * 100.0 / overall_total_arcs
+        train_lacc = float(overall_type_correct) * 100.0 / overall_total_arcs
+        print('total: %d (%d), uas: %.2f%%, lacc: %.2f%%,  loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f), time: %.2fs' % (num_insts, num_words,
+                                                                                                       train_uas, train_lacc,
+                                                                                                       train_loss / num_insts, train_loss / num_words,
                                                                                                        train_arc_loss / num_insts, train_arc_loss / num_words,
                                                                                                        train_type_loss / num_insts, train_type_loss / num_words,
                                                                                                        time.time() - start_time))
