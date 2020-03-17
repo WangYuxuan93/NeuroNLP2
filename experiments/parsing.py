@@ -143,6 +143,7 @@ def train(args):
     weight_decay = args.weight_decay
     grad_clip = args.grad_clip
     eval_every = args.eval_every
+    log_every = args.log_every
     noscreen = args.noscreen
 
     loss_ty_token = args.loss_type == 'token'
@@ -457,26 +458,113 @@ def train(args):
                     train_type_loss += loss_type.item()
 
             # update log
-            if step % 100 == 0:
+            if (step + 1) % log_every == 0:
                 #torch.cuda.empty_cache()
-                if not noscreen: 
-                    sys.stdout.write("\b" * num_back)
-                    sys.stdout.write(" " * num_back)
-                    sys.stdout.write("\b" * num_back)
-                    curr_lr = scheduler.get_lr()[0]
-                    num_insts = max(num_insts, 1)
-                    num_words = max(num_words, 1)
-                    log_info = '[%d/%d (%.0f%%) lr=%.6f (%d)] loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f)' % (step, num_batches, 100. * step / num_batches, curr_lr, num_nans,
-                                                                                                                         train_loss / num_insts, train_loss / num_words,
-                                                                                                                         train_arc_loss / num_insts, train_arc_loss / num_words,
-                                                                                                                        train_type_loss / num_insts, train_type_loss / num_words)
-                    sys.stdout.write(log_info)
-                    sys.stdout.flush()
-                    num_back = len(log_info)
-        if not noscreen: 
-            sys.stdout.write("\b" * num_back)
-            sys.stdout.write(" " * num_back)
-            sys.stdout.write("\b" * num_back)
+                curr_lr = scheduler.get_lr()[0]
+                num_insts = max(num_insts, 1)
+                num_words = max(num_words, 1)
+                train_uas = float(overall_arc_correct) * 100.0 / overall_total_arcs
+                train_lacc = float(overall_type_correct) * 100.0 / overall_total_arcs
+                log_info = '[%d/%d (%.0f%%) lr=%.6f (%d)] uas: %.2f%%, lacc: %.2f%%, loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f)' % (step, num_batches, 100. * step / num_batches, curr_lr, num_nans,
+                                                                                                                    train_uas, train_lacc,
+                                                                                                                     train_loss / num_insts, train_loss / num_words,
+                                                                                                                     train_arc_loss / num_insts, train_arc_loss / num_words,
+                                                                                                                    train_type_loss / num_insts, train_type_loss / num_words)
+                print (log_info)
+                #sys.stdout.write(log_info)
+                sys.stdout.flush()
+
+            if (step+1) % eval_every == 0 or (step+1) == num_batches:
+                # evaluate performance on dev data
+                with torch.no_grad():
+                    pred_filename = os.path.join(result_path, 'pred_dev%d' % epoch)
+                    pred_writer.start(pred_filename)
+                    gold_filename = os.path.join(result_path, 'gold_dev%d' % epoch)
+                    #gold_writer.start(gold_filename)
+
+                    print('Evaluating dev:')
+                    dev_stats, dev_stats_nopunct, dev_stats_root = eval(alg, data_dev, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam)
+
+                    pred_writer.close()
+                    #gold_writer.close()
+
+                    dev_ucorr, dev_lcorr, dev_ucomlpete, dev_lcomplete, dev_total = dev_stats
+                    dev_ucorr_nopunc, dev_lcorr_nopunc, dev_ucomlpete_nopunc, dev_lcomplete_nopunc, dev_total_nopunc = dev_stats_nopunct
+                    dev_root_corr, dev_total_root, dev_total_inst = dev_stats_root
+
+                    if best_lcorrect_nopunc < dev_lcorr_nopunc or (best_lcorrect_nopunc == dev_lcorr_nopunc and best_ucorrect_nopunc < dev_ucorr_nopunc):
+                        best_ucorrect_nopunc = dev_ucorr_nopunc
+                        best_lcorrect_nopunc = dev_lcorr_nopunc
+                        best_ucomlpete_nopunc = dev_ucomlpete_nopunc
+                        best_lcomplete_nopunc = dev_lcomplete_nopunc
+
+                        best_ucorrect = dev_ucorr
+                        best_lcorrect = dev_lcorr
+                        best_ucomlpete = dev_ucomlpete
+                        best_lcomplete = dev_lcomplete
+
+                        best_root_correct = dev_root_corr
+                        best_total = dev_total
+                        best_total_nopunc = dev_total_nopunc
+                        best_total_root = dev_total_root
+                        best_total_inst = dev_total_inst
+
+                        best_epoch = epoch
+                        patient = 0
+                        print ("Saving best model ...")
+                        torch.save(network.state_dict(), model_name)
+
+                        pred_filename = os.path.join(result_path, 'pred_test%d' % epoch)
+                        pred_writer.start(pred_filename)
+                        gold_filename = os.path.join(result_path, 'gold_test%d' % epoch)
+                        #gold_writer.start(gold_filename)
+
+                        print('Evaluating test:')
+                        test_stats, test_stats_nopunct, test_stats_root = eval(alg, data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam)
+
+                        test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total = test_stats
+                        test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
+                        test_root_correct, test_total_root, test_total_inst = test_stats_root
+
+                        pred_writer.close()
+                        #gold_writer.close()
+                    else:
+                        patient += 1
+
+                    print('-' * 125)
+                    print('best dev  W. Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%% (epoch: %d)' % (
+                        best_ucorrect, best_lcorrect, best_total, best_ucorrect * 100 / best_total, best_lcorrect * 100 / best_total,
+                        best_ucomlpete * 100 / dev_total_inst, best_lcomplete * 100 / dev_total_inst,
+                        best_epoch))
+                    print('best dev  Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%% (epoch: %d)' % (
+                        best_ucorrect_nopunc, best_lcorrect_nopunc, best_total_nopunc,
+                        best_ucorrect_nopunc * 100 / best_total_nopunc, best_lcorrect_nopunc * 100 / best_total_nopunc,
+                        best_ucomlpete_nopunc * 100 / best_total_inst, best_lcomplete_nopunc * 100 / best_total_inst,
+                        best_epoch))
+                    print('best dev  Root: corr: %d, total: %d, acc: %.2f%% (epoch: %d)' % (
+                        best_root_correct, best_total_root, best_root_correct * 100 / best_total_root, best_epoch))
+                    print('-' * 125)
+                    print('best test W. Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%% (epoch: %d)' % (
+                        test_ucorrect, test_lcorrect, test_total, test_ucorrect * 100 / test_total, test_lcorrect * 100 / test_total,
+                        test_ucomlpete * 100 / test_total_inst, test_lcomplete * 100 / test_total_inst,
+                        best_epoch))
+                    print('best test Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%% (epoch: %d)' % (
+                        test_ucorrect_nopunc, test_lcorrect_nopunc, test_total_nopunc,
+                        test_ucorrect_nopunc * 100 / test_total_nopunc, test_lcorrect_nopunc * 100 / test_total_nopunc,
+                        test_ucomlpete_nopunc * 100 / test_total_inst, test_lcomplete_nopunc * 100 / test_total_inst,
+                        best_epoch))
+                    print('best test Root: corr: %d, total: %d, acc: %.2f%% (epoch: %d)' % (
+                        test_root_correct, test_total_root, test_root_correct * 100 / test_total_root, best_epoch))
+                    print('-' * 125)
+                    print ("patient:", patient)
+                    print('=' * 125)
+
+                    if reset > 0 and patient >= reset:
+                        logger.info("Reset Optimizer State...")
+                        network.load_state_dict(torch.load(model_name, map_location=device))
+                        scheduler.reset_state()
+                        patient = 0
+
         train_uas = float(overall_arc_correct) * 100.0 / overall_total_arcs
         train_lacc = float(overall_type_correct) * 100.0 / overall_total_arcs
         print('total: %d (%d), uas: %.2f%%, lacc: %.2f%%,  loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f), time: %.2fs' % (num_insts, num_words,
@@ -487,92 +575,7 @@ def train(args):
                                                                                                        time.time() - start_time))
         print('-' * 125)
 
-        if epoch % eval_every == 0:
-            # evaluate performance on dev data
-            with torch.no_grad():
-                pred_filename = os.path.join(result_path, 'pred_dev%d' % epoch)
-                pred_writer.start(pred_filename)
-                gold_filename = os.path.join(result_path, 'gold_dev%d' % epoch)
-                #gold_writer.start(gold_filename)
-
-                print('Evaluating dev:')
-                dev_stats, dev_stats_nopunct, dev_stats_root = eval(alg, data_dev, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam)
-
-                pred_writer.close()
-                #gold_writer.close()
-
-                dev_ucorr, dev_lcorr, dev_ucomlpete, dev_lcomplete, dev_total = dev_stats
-                dev_ucorr_nopunc, dev_lcorr_nopunc, dev_ucomlpete_nopunc, dev_lcomplete_nopunc, dev_total_nopunc = dev_stats_nopunct
-                dev_root_corr, dev_total_root, dev_total_inst = dev_stats_root
-
-                if best_lcorrect_nopunc < dev_lcorr_nopunc or (best_lcorrect_nopunc == dev_lcorr_nopunc and best_ucorrect_nopunc < dev_ucorr_nopunc):
-                    best_ucorrect_nopunc = dev_ucorr_nopunc
-                    best_lcorrect_nopunc = dev_lcorr_nopunc
-                    best_ucomlpete_nopunc = dev_ucomlpete_nopunc
-                    best_lcomplete_nopunc = dev_lcomplete_nopunc
-
-                    best_ucorrect = dev_ucorr
-                    best_lcorrect = dev_lcorr
-                    best_ucomlpete = dev_ucomlpete
-                    best_lcomplete = dev_lcomplete
-
-                    best_root_correct = dev_root_corr
-                    best_total = dev_total
-                    best_total_nopunc = dev_total_nopunc
-                    best_total_root = dev_total_root
-                    best_total_inst = dev_total_inst
-
-                    best_epoch = epoch
-                    patient = 0
-                    torch.save(network.state_dict(), model_name)
-
-                    pred_filename = os.path.join(result_path, 'pred_test%d' % epoch)
-                    pred_writer.start(pred_filename)
-                    gold_filename = os.path.join(result_path, 'gold_test%d' % epoch)
-                    #gold_writer.start(gold_filename)
-
-                    print('Evaluating test:')
-                    test_stats, test_stats_nopunct, test_stats_root = eval(alg, data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam)
-
-                    test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total = test_stats
-                    test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
-                    test_root_correct, test_total_root, test_total_inst = test_stats_root
-
-                    pred_writer.close()
-                    #gold_writer.close()
-                else:
-                    patient += 1
-
-                print('-' * 125)
-                print('best dev  W. Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%% (epoch: %d)' % (
-                    best_ucorrect, best_lcorrect, best_total, best_ucorrect * 100 / best_total, best_lcorrect * 100 / best_total,
-                    best_ucomlpete * 100 / dev_total_inst, best_lcomplete * 100 / dev_total_inst,
-                    best_epoch))
-                print('best dev  Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%% (epoch: %d)' % (
-                    best_ucorrect_nopunc, best_lcorrect_nopunc, best_total_nopunc,
-                    best_ucorrect_nopunc * 100 / best_total_nopunc, best_lcorrect_nopunc * 100 / best_total_nopunc,
-                    best_ucomlpete_nopunc * 100 / best_total_inst, best_lcomplete_nopunc * 100 / best_total_inst,
-                    best_epoch))
-                print('best dev  Root: corr: %d, total: %d, acc: %.2f%% (epoch: %d)' % (
-                    best_root_correct, best_total_root, best_root_correct * 100 / best_total_root, best_epoch))
-                print('-' * 125)
-                print('best test W. Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%% (epoch: %d)' % (
-                    test_ucorrect, test_lcorrect, test_total, test_ucorrect * 100 / test_total, test_lcorrect * 100 / test_total,
-                    test_ucomlpete * 100 / test_total_inst, test_lcomplete * 100 / test_total_inst,
-                    best_epoch))
-                print('best test Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%% (epoch: %d)' % (
-                    test_ucorrect_nopunc, test_lcorrect_nopunc, test_total_nopunc,
-                    test_ucorrect_nopunc * 100 / test_total_nopunc, test_lcorrect_nopunc * 100 / test_total_nopunc,
-                    test_ucomlpete_nopunc * 100 / test_total_inst, test_lcomplete_nopunc * 100 / test_total_inst,
-                    best_epoch))
-                print('best test Root: corr: %d, total: %d, acc: %.2f%% (epoch: %d)' % (
-                    test_root_correct, test_total_root, test_root_correct * 100 / test_total_root, best_epoch))
-                print('=' * 125)
-
-                if patient >= reset:
-                    network.load_state_dict(torch.load(model_name, map_location=device))
-                    scheduler.reset_state()
-                    patient = 0
+        
 
 
 def parse(args):
@@ -711,7 +714,8 @@ if __name__ == '__main__':
     args_parser.add_argument('--amsgrad', action='store_true', help='AMS Grad')
     args_parser.add_argument('--grad_clip', type=float, default=0, help='max norm for gradient clip (default 0: no clip')
     args_parser.add_argument('--warmup_steps', type=int, default=0, metavar='N', help='number of steps to warm up (default: 0)')
-    args_parser.add_argument('--eval_every', type=int, default=100, help='eval every ? epochs')
+    args_parser.add_argument('--eval_every', type=int, default=100, help='eval every ? steps')
+    args_parser.add_argument('--log_every', type=int, default=1, help='output log every ? steps')
     args_parser.add_argument('--noscreen', action='store_true', default=True, help='do not print middle log')
     args_parser.add_argument('--reset', type=int, default=10, help='Number of epochs to reset optimizer (default 10)')
     args_parser.add_argument('--weight_decay', type=float, default=0.0, help='weight for l2 norm decay')
