@@ -21,7 +21,7 @@ from torch.optim import SGD, Adam
 from torch.nn.utils import clip_grad_norm_
 from neuronlp2.nn.utils import total_grad_norm
 from neuronlp2.io import get_logger, conllx_data, conllx_stacked_data, iterate_data
-from neuronlp2.models import DeepBiAffine, NeuroMST, StackPtrNet
+from neuronlp2.models import DeepBiAffine, NeuroMST, StackPtrNet, DeepBiAffineV2
 from neuronlp2.optim import ExponentialScheduler, StepScheduler, AttentionScheduler
 from neuronlp2 import utils
 from neuronlp2.io import CoNLLXWriter
@@ -237,7 +237,7 @@ def train(args):
     hyps = json.load(open(args.config, 'r'))
     json.dump(hyps, open(os.path.join(model_path, 'config.json'), 'w'), indent=2)
     model_type = hyps['model']
-    assert model_type in ['DeepBiAffine', 'NeuroMST', 'StackPtr']
+    assert model_type in ['DeepBiAffine', 'DeepBiAffineV2', 'NeuroMST', 'StackPtr']
     assert word_dim == hyps['word_dim']
     if char_dim is not None:
         assert char_dim == hyps['char_dim']
@@ -287,6 +287,40 @@ def train(args):
                                hidden_dropout_prob=hidden_dropout_prob,
                                inter_dropout_prob=inter_dropout_prob,
                                attention_probs_dropout_prob=attention_probs_dropout_prob)
+    elif model_type == 'DeepBiAffineV2':
+        num_layers = hyps['num_layers']
+        use_char = hyps['use_char']
+        num_attention_heads = hyps['num_attention_heads']
+        intermediate_size = hyps['intermediate_size']
+        minimize_logp = hyps['minimize_logp']
+        use_input_layer = hyps['use_input_layer']
+        use_sin_position_embedding = hyps['use_sin_position_embedding']
+        freeze_position_embedding = hyps['freeze_position_embedding']
+        hidden_act = hyps['hidden_act']
+        dropout_type = hyps['dropout_type']
+        initializer = hyps['initializer']
+        embedding_dropout_prob = hyps['embedding_dropout_prob']
+        hidden_dropout_prob = hyps['hidden_dropout_prob']
+        inter_dropout_prob = hyps['inter_dropout_prob']
+        attention_probs_dropout_prob = hyps['attention_probs_dropout_prob']
+        mlp_initializer = hyps['mlp_initializer']
+        ff_first = hyps['ff_first']
+
+        network = DeepBiAffineV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
+                               mode, hidden_size, num_layers, num_types, arc_space, type_space,
+                               basic_word_embedding=basic_word_embedding,
+                               embedd_word=word_table, embedd_char=char_table,
+                               p_in=p_in, p_out=p_out, p_rnn=p_rnn, pos=use_pos, use_char=use_char,
+                               activation=activation, num_attention_heads=num_attention_heads,
+                               intermediate_size=intermediate_size, minimize_logp=minimize_logp,
+                               use_input_layer=use_input_layer, use_sin_position_embedding=use_sin_position_embedding,
+                               freeze_position_embedding=freeze_position_embedding,
+                               hidden_act=hidden_act, dropout_type=dropout_type,
+                               initializer=initializer, embedding_dropout_prob=embedding_dropout_prob,
+                               hidden_dropout_prob=hidden_dropout_prob,
+                               inter_dropout_prob=inter_dropout_prob,
+                               attention_probs_dropout_prob=attention_probs_dropout_prob,
+                               mlp_initializer=mlp_initializer, ff_first=ff_first)
     elif model_type == 'NeuroMST':
         num_layers = hyps['num_layers']
         network = NeuroMST(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
@@ -316,12 +350,14 @@ def train(args):
     model = "{}-{}".format(model_type, mode)
     logger.info("Network: %s, num_layer=%s, hidden=%d, act=%s" % (model, num_layers, hidden_size, activation))
     logger.info("dropout(in, out, rnn): %s(%.2f, %.2f, %s)" % ('variational', p_in, p_out, p_rnn))
-    if model_type == 'DeepBiAffine':
+    if model_type == 'DeepBiAffine' or model_type == 'DeepBiAffineV2':
         logger.info("##### Input Encoder (Type: %s, Layer: %d) ###" % (mode, num_layers))
         if mode == 'Transformer':
             logger.info("Dropout type: %s, probs(emb, hid, inter, att): (%.2f, %.2f, %.2f, %.2f)" % (dropout_type, embedding_dropout_prob, hidden_dropout_prob, inter_dropout_prob,
                                                 attention_probs_dropout_prob))
             logger.info("Activation: %s, Linear initializer: %s" % (hidden_act, initializer))
+            if model_type == 'DeepBiAffineV2':
+                logger.info("MLP initializer: %s, FF Layer First: %s" % (mlp_initializer, ff_first))
         logger.info("Use Randomly Init Word Emb: %s (Freeze Pre-trained Emb: %s)" % (basic_word_embedding, freeze))
         logger.info("Use Sin Position Emb: %s (Freeze Position Emb: %s)" % (use_sin_position_embedding, freeze_position_embedding))
         logger.info("Use Input Layer: %s" % use_input_layer)
@@ -474,7 +510,7 @@ def train(args):
                 #sys.stdout.write(log_info)
                 sys.stdout.flush()
 
-            if (step+1) % eval_every == 0 or (step+1) == num_batches:
+            if (step+1) % eval_every == 0:
                 # evaluate performance on dev data
                 with torch.no_grad():
                     pred_filename = os.path.join(result_path, 'pred_dev%d' % epoch)
@@ -574,7 +610,95 @@ def train(args):
                                                                                                        train_type_loss / num_insts, train_type_loss / num_words,
                                                                                                        time.time() - start_time))
         print('-' * 125)
+        # evaluate performance on dev data
+        with torch.no_grad():
+            pred_filename = os.path.join(result_path, 'pred_dev%d' % epoch)
+            pred_writer.start(pred_filename)
+            gold_filename = os.path.join(result_path, 'gold_dev%d' % epoch)
+            #gold_writer.start(gold_filename)
 
+            print('Evaluating dev:')
+            dev_stats, dev_stats_nopunct, dev_stats_root = eval(alg, data_dev, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam)
+
+            pred_writer.close()
+            #gold_writer.close()
+
+            dev_ucorr, dev_lcorr, dev_ucomlpete, dev_lcomplete, dev_total = dev_stats
+            dev_ucorr_nopunc, dev_lcorr_nopunc, dev_ucomlpete_nopunc, dev_lcomplete_nopunc, dev_total_nopunc = dev_stats_nopunct
+            dev_root_corr, dev_total_root, dev_total_inst = dev_stats_root
+
+            if best_lcorrect_nopunc < dev_lcorr_nopunc or (best_lcorrect_nopunc == dev_lcorr_nopunc and best_ucorrect_nopunc < dev_ucorr_nopunc):
+                best_ucorrect_nopunc = dev_ucorr_nopunc
+                best_lcorrect_nopunc = dev_lcorr_nopunc
+                best_ucomlpete_nopunc = dev_ucomlpete_nopunc
+                best_lcomplete_nopunc = dev_lcomplete_nopunc
+
+                best_ucorrect = dev_ucorr
+                best_lcorrect = dev_lcorr
+                best_ucomlpete = dev_ucomlpete
+                best_lcomplete = dev_lcomplete
+
+                best_root_correct = dev_root_corr
+                best_total = dev_total
+                best_total_nopunc = dev_total_nopunc
+                best_total_root = dev_total_root
+                best_total_inst = dev_total_inst
+
+                best_epoch = epoch
+                patient = 0
+                print ("Saving best model ...")
+                torch.save(network.state_dict(), model_name)
+
+                pred_filename = os.path.join(result_path, 'pred_test%d' % epoch)
+                pred_writer.start(pred_filename)
+                gold_filename = os.path.join(result_path, 'gold_test%d' % epoch)
+                #gold_writer.start(gold_filename)
+
+                print('Evaluating test:')
+                test_stats, test_stats_nopunct, test_stats_root = eval(alg, data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam)
+
+                test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total = test_stats
+                test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
+                test_root_correct, test_total_root, test_total_inst = test_stats_root
+
+                pred_writer.close()
+                #gold_writer.close()
+            else:
+                patient += 1
+
+            print('-' * 125)
+            print('best dev  W. Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%% (epoch: %d)' % (
+                best_ucorrect, best_lcorrect, best_total, best_ucorrect * 100 / best_total, best_lcorrect * 100 / best_total,
+                best_ucomlpete * 100 / dev_total_inst, best_lcomplete * 100 / dev_total_inst,
+                best_epoch))
+            print('best dev  Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%% (epoch: %d)' % (
+                best_ucorrect_nopunc, best_lcorrect_nopunc, best_total_nopunc,
+                best_ucorrect_nopunc * 100 / best_total_nopunc, best_lcorrect_nopunc * 100 / best_total_nopunc,
+                best_ucomlpete_nopunc * 100 / best_total_inst, best_lcomplete_nopunc * 100 / best_total_inst,
+                best_epoch))
+            print('best dev  Root: corr: %d, total: %d, acc: %.2f%% (epoch: %d)' % (
+                best_root_correct, best_total_root, best_root_correct * 100 / best_total_root, best_epoch))
+            print('-' * 125)
+            print('best test W. Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%% (epoch: %d)' % (
+                test_ucorrect, test_lcorrect, test_total, test_ucorrect * 100 / test_total, test_lcorrect * 100 / test_total,
+                test_ucomlpete * 100 / test_total_inst, test_lcomplete * 100 / test_total_inst,
+                best_epoch))
+            print('best test Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%% (epoch: %d)' % (
+                test_ucorrect_nopunc, test_lcorrect_nopunc, test_total_nopunc,
+                test_ucorrect_nopunc * 100 / test_total_nopunc, test_lcorrect_nopunc * 100 / test_total_nopunc,
+                test_ucomlpete_nopunc * 100 / test_total_inst, test_lcomplete_nopunc * 100 / test_total_inst,
+                best_epoch))
+            print('best test Root: corr: %d, total: %d, acc: %.2f%% (epoch: %d)' % (
+                test_root_correct, test_total_root, test_root_correct * 100 / test_total_root, best_epoch))
+            print('-' * 125)
+            print ("patient:", patient)
+            print('=' * 125)
+
+            if reset > 0 and patient >= reset:
+                logger.info("Reset Optimizer State...")
+                network.load_state_dict(torch.load(model_name, map_location=device))
+                scheduler.reset_state()
+                patient = 0
         
 
 
@@ -616,7 +740,7 @@ def parse(args):
     logger.info("loading network...")
     hyps = json.load(open(os.path.join(model_path, 'config.json'), 'r'))
     model_type = hyps['model']
-    assert model_type in ['DeepBiAffine', 'NeuroMST', 'StackPtr']
+    assert model_type in ['DeepBiAffine', 'DeepBiAffineV2', 'NeuroMST', 'StackPtr']
     word_dim = hyps['word_dim']
     char_dim = hyps['char_dim']
     use_pos = hyps['pos']
@@ -647,7 +771,24 @@ def parse(args):
                                num_attention_heads=num_attention_heads,
                                intermediate_size=intermediate_size, minimize_logp=minimize_logp,
                                use_input_layer=use_input_layer, use_sin_position_embedding=use_sin_position_embedding,
-                               freeze_position_embedding=freeze_position_embedding)                            
+                               freeze_position_embedding=freeze_position_embedding)
+    if model_type == 'DeepBiAffineV2':
+        num_layers = hyps['num_layers']
+        num_attention_heads = hyps['num_attention_heads']
+        intermediate_size = hyps['intermediate_size']
+        minimize_logp = hyps['minimize_logp']
+        use_input_layer = hyps['use_input_layer']
+        use_sin_position_embedding = hyps['use_sin_position_embedding']
+        freeze_position_embedding = hyps['freeze_position_embedding']
+        ff_first=ff_first = hyps['ff_first=ff_first']
+        network = DeepBiAffineV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
+                               mode, hidden_size, num_layers, num_types, arc_space, type_space,
+                               basic_word_embedding=args.basic_word_embedding,
+                               p_in=p_in, p_out=p_out, p_rnn=p_rnn, pos=use_pos, activation=activation,
+                               num_attention_heads=num_attention_heads,
+                               intermediate_size=intermediate_size, minimize_logp=minimize_logp,
+                               use_input_layer=use_input_layer, use_sin_position_embedding=use_sin_position_embedding,
+                               freeze_position_embedding=freeze_position_embedding, ff_first=ff_first)                           
     elif model_type == 'NeuroMST':
         num_layers = hyps['num_layers']
         network = NeuroMST(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,

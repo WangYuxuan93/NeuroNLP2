@@ -85,7 +85,8 @@ class AttentionEncoderConfig(object):
                 freeze_position_embedding=True,
                 max_position_embeddings=512,
                 initializer="default",
-                initializer_range=0.02):
+                initializer_range=0.02,
+                ff_first=False):
         """Constructs BertConfig.
 
         Args:
@@ -109,6 +110,7 @@ class AttentionEncoderConfig(object):
             initializer_range: The sttdev of the truncated_normal_initializer for
                 initializing all weight matrices.
             initializer: ['orthogonal', 'default', 'xavier_normal'] init type for Linear layer
+            ff_first: apply FF layer before attention layer ?
         """
         self.input_size = input_size
         self.hidden_size = hidden_size
@@ -127,6 +129,7 @@ class AttentionEncoderConfig(object):
         self.max_position_embeddings = max_position_embeddings
         self.initializer = initializer
         self.initializer_range = initializer_range
+        self.ff_first = ff_first
 
     @classmethod
     def from_dict(cls, json_object):
@@ -333,14 +336,20 @@ class OutputLayer(nn.Module):
 class AttentionBlock(nn.Module):
     def __init__(self, config):
         super(AttentionBlock, self).__init__()
+        self.ff_first = config.ff_first
         self.attention = AttentionLayer(config)
         self.intermediate = IntermediateLayer(config)
         self.output = OutputLayer(config)
 
     def forward(self, hidden_states, attention_mask):
-        attention_output = self.attention(hidden_states, attention_mask)
-        intermediate_output = self.intermediate(attention_output)
-        layer_output = self.output(intermediate_output, attention_output)
+        if self.ff_first:
+            intermediate_output = self.intermediate(hidden_states)
+            inter_output = self.output(intermediate_output, hidden_states)
+            layer_output = self.attention(inter_output, attention_mask)
+        else:
+            attention_output = self.attention(hidden_states, attention_mask)
+            intermediate_output = self.intermediate(attention_output)
+            layer_output = self.output(intermediate_output, attention_output)
         return layer_output
 
 
@@ -406,8 +415,8 @@ class AttentionEmbeddings(nn.Module):
         position_embeddings = self.position_embeddings(position_ids)
         embeddings = input_tensor + position_embeddings
 
-        embeddings = self.LayerNorm(embeddings)
         embeddings = self.dropout(embeddings)
+        embeddings = self.LayerNorm(embeddings)
         return embeddings
 
 

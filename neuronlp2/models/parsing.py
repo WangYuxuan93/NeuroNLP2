@@ -6,6 +6,7 @@ from enum import Enum
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 from neuronlp2.io import get_logger
 from neuronlp2.nn import TreeCRF, VarGRU, VarRNN, VarLSTM, VarFastLSTM
 from neuronlp2.nn import BiAffine, BiLinear, CharCNN, BiAffine_v2
@@ -45,7 +46,6 @@ class PositionEmbeddingLayer(nn.Module):
             print ("embeddings:",embeddings)
         return embeddings
 
-
 def drop_input_independent(word_embeddings, tag_embeddings, dropout_emb):
     batch_size, seq_length, _ = word_embeddings.size()
     word_masks = word_embeddings.data.new(batch_size, seq_length).fill_(1 - dropout_emb)#6*98 ;0.67
@@ -67,6 +67,36 @@ def drop_input_independent(word_embeddings, tag_embeddings, dropout_emb):
 
     return word_embeddings, tag_embeddings
 
+def orthonormal_initializer(output_size, input_size):
+    """
+    adopted from Timothy Dozat https://github.com/tdozat/Parser/blob/master/lib/linalg.py
+    """
+    print(output_size, input_size)
+    I = np.eye(output_size)
+    lr = .1
+    eps = .05 / (output_size + input_size)
+    success = False
+    tries = 0
+    while not success and tries < 10:
+        Q = np.random.randn(input_size, output_size) / np.sqrt(output_size)
+        for i in range(100):
+            QTQmI = Q.T.dot(Q) - I
+            loss = np.sum(QTQmI ** 2 / 2)
+            Q2 = Q ** 2
+            Q -= lr * Q.dot(QTQmI) / (
+                    np.abs(Q2 + Q2.sum(axis=0, keepdims=True) + Q2.sum(axis=1, keepdims=True) - 1) + eps)
+            if np.max(Q) > 1e6 or loss > 1e6 or not np.isfinite(loss):
+                tries += 1
+                lr /= 2
+                break
+        success = True
+    if success:
+        print('Orthogonal pretrainer loss: %.2e' % loss)
+    else:
+        print('Orthogonal pretrainer failed, using non-orthogonal random matrix')
+        Q = np.random.randn(input_size, output_size) / np.sqrt(output_size)
+    return np.transpose(Q.astype(np.float32))
+
 class DeepBiAffine(nn.Module):
     def __init__(self, word_dim, num_words, char_dim, num_chars, pos_dim, num_pos, rnn_mode, 
                  hidden_size, num_layers, num_labels, arc_space, type_space,
@@ -83,6 +113,7 @@ class DeepBiAffine(nn.Module):
         self.basic_word_embedding = basic_word_embedding
         self.minimize_logp = minimize_logp
         self.act_func = activation
+        self.initializer = initializer
         self.p_in = p_in
         if self.basic_word_embedding:
             self.basic_word_embed = nn.Embedding(num_words, word_dim, padding_idx=1)
@@ -200,12 +231,17 @@ class DeepBiAffine(nn.Module):
             if self.pos_embed is not None:
                 self.pos_embed.weight[self.pos_embed.padding_idx].fill_(0)
 
-        if self.act_func == 'leaky_relu':
+        if self.initializer == 'orthogonal':
+            nn.init.orthogonal_(self.arc_h.weight)
+            nn.init.orthogonal_(self.arc_c.weight)
+            nn.init.orthogonal_(self.type_h.weight)
+            nn.init.orthogonal_(self.type_c.weight)
+        elif self.initializer == 'default':
             nn.init.kaiming_uniform_(self.arc_h.weight, a=0.1, nonlinearity='leaky_relu')
             nn.init.kaiming_uniform_(self.arc_c.weight, a=0.1, nonlinearity='leaky_relu')
             nn.init.kaiming_uniform_(self.type_h.weight, a=0.1, nonlinearity='leaky_relu')
             nn.init.kaiming_uniform_(self.type_c.weight, a=0.1, nonlinearity='leaky_relu')
-        else:
+        elif self.initializer == 'xavier_uniform':
             nn.init.xavier_uniform_(self.arc_h.weight)
             nn.init.xavier_uniform_(self.arc_c.weight)
             nn.init.xavier_uniform_(self.type_h.weight)
