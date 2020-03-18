@@ -20,6 +20,7 @@
   "attention_probs_dropout_prob": 0.1,
   "initializer": "orthogonal",
   "mlp_initializer": "orthonormal",
+  "emb_initializer": "default",
   "num_attention_heads": 8,
   "intermediate_size": 800,
   "hidden_size": 200,

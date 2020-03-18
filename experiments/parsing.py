@@ -48,7 +48,119 @@ def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgra
     
     return optimizer, scheduler
 
+def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, 
+        device, beam=1, batch_size=256, write_to_tmp=True, prev_best_lcorr=0, prev_best_ucorr=0,
+        pred_filename=None):
+    network.eval()
+    accum_ucorr = 0.0
+    accum_lcorr = 0.0
+    accum_total = 0
+    accum_ucomlpete = 0.0
+    accum_lcomplete = 0.0
+    accum_ucorr_nopunc = 0.0
+    accum_lcorr_nopunc = 0.0
+    accum_total_nopunc = 0
+    accum_ucomlpete_nopunc = 0.0
+    accum_lcomplete_nopunc = 0.0
+    accum_root_corr = 0.0
+    accum_total_root = 0.0
+    accum_total_inst = 0.0
+    accum_recomp_freq = 0.0
 
+    all_words = []
+    all_postags = []
+    all_heads_pred = []
+    all_types_pred = []
+    all_lengths = []
+    all_src_words = []
+    all_heads_by_layer = []
+
+    for data in iterate_data(data, batch_size):
+        words = data['WORD'].to(device)
+        chars = data['CHAR'].to(device)
+        postags = data['POS'].to(device)
+        heads = data['HEAD'].numpy()
+        types = data['TYPE'].numpy()
+        lengths = data['LENGTH'].numpy()
+        if alg == 'graph':
+            masks = data['MASK'].to(device)
+            heads_pred, types_pred = network.decode(words, chars, postags, mask=masks, leading_symbolic=conllx_data.NUM_SYMBOLIC_TAGS)
+        else:
+            masks = data['MASK_ENC'].to(device)
+            heads_pred, types_pred = network.decode(words, chars, postags, mask=masks, beam=beam, leading_symbolic=conllx_data.NUM_SYMBOLIC_TAGS)
+
+        words = words.cpu().numpy()
+        postags = postags.cpu().numpy()
+
+        if write_to_tmp:
+            pred_writer.write(words, postags, heads_pred, types_pred, lengths, symbolic_root=True, src_words=data['SRC'])
+        else:
+            all_words.append(words)
+            all_postags.append(postags)
+            all_heads_pred.append(heads_pred)
+            all_types_pred.append(types_pred)
+            all_lengths.append(lengths)
+            all_src_words.append(data['SRC'])
+
+        #gold_writer.write(words, postags, heads, types, lengths, symbolic_root=True)
+
+        stats, stats_nopunc, stats_root, num_inst = parser.eval(words, postags, heads_pred, types_pred, heads, types,
+                                                                word_alphabet, pos_alphabet, lengths, punct_set=punct_set, 
+                                                                symbolic_root=True)
+        ucorr, lcorr, total, ucm, lcm = stats
+        ucorr_nopunc, lcorr_nopunc, total_nopunc, ucm_nopunc, lcm_nopunc = stats_nopunc
+        corr_root, total_root = stats_root
+
+        accum_ucorr += ucorr
+        accum_lcorr += lcorr
+        accum_total += total
+        accum_ucomlpete += ucm
+        accum_lcomplete += lcm
+
+        accum_ucorr_nopunc += ucorr_nopunc
+        accum_lcorr_nopunc += lcorr_nopunc
+        accum_total_nopunc += total_nopunc
+        accum_ucomlpete_nopunc += ucm_nopunc
+        accum_lcomplete_nopunc += lcm_nopunc
+
+        accum_root_corr += corr_root
+        accum_total_root += total_root
+
+        accum_total_inst += num_inst
+
+    print('W. Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%%' % (
+        accum_ucorr, accum_lcorr, accum_total, accum_ucorr * 100 / accum_total, accum_lcorr * 100 / accum_total,
+        accum_ucomlpete * 100 / accum_total_inst, accum_lcomplete * 100 / accum_total_inst))
+    print('Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%%' % (
+        accum_ucorr_nopunc, accum_lcorr_nopunc, accum_total_nopunc, accum_ucorr_nopunc * 100 / accum_total_nopunc,
+        accum_lcorr_nopunc * 100 / accum_total_nopunc,
+        accum_ucomlpete_nopunc * 100 / accum_total_inst, accum_lcomplete_nopunc * 100 / accum_total_inst))
+    print('Root: corr: %d, total: %d, acc: %.2f%%' %(accum_root_corr, accum_total_root, accum_root_corr * 100 / accum_total_root))
+    
+    if not write_to_tmp:
+        if prev_best_lcorr < accum_lcorr_nopunc or (prev_best_lcorr == accum_lcorr_nopunc and prev_best_ucorr < accum_ucorr_nopunc):
+            print ('### Writing New Best Dev Prediction File ... ###')
+            pred_writer.start(pred_filename)
+            #words = np.concatenate(all_words, axis=0)
+            #postags = np.concatenate(all_postags, axis=0)
+            #heads_pred = np.concatenate(all_heads_pred, axis=0)
+            #types_pred = np.concatenate(all_types_pred, axis=0)
+            #lengths = np.concatenate(all_lengths, axis=0)
+            #src_words = np.concatenate(all_src_words, axis=0)
+            #if get_head_by_layer:
+            #    heads_by_layer = np.concatenate(all_heads_by_layer, axis=0)
+            #else:
+            #    heads_by_layer = None
+            for i in range(len(all_words)):
+                pred_writer.write(all_words[i], all_postags[i], all_heads_pred[i], all_types_pred[i], 
+                                all_lengths[i], symbolic_root=True, src_words=all_src_words[i])
+            pred_writer.close()
+
+    return (accum_ucorr, accum_lcorr, accum_ucomlpete, accum_lcomplete, accum_total), \
+           (accum_ucorr_nopunc, accum_lcorr_nopunc, accum_ucomlpete_nopunc, accum_lcomplete_nopunc, accum_total_nopunc), \
+           (accum_root_corr, accum_total_root, accum_total_inst)
+
+"""
 def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=1, batch_size=256):
     network.eval()
     accum_ucorr = 0.0
@@ -117,7 +229,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
     return (accum_ucorr, accum_lcorr, accum_ucomlpete, accum_lcomplete, accum_total), \
            (accum_ucorr_nopunc, accum_lcorr_nopunc, accum_ucomlpete_nopunc, accum_lcomplete_nopunc, accum_total_nopunc), \
            (accum_root_corr, accum_total_root, accum_total_inst)
-
+"""
 
 def train(args):
     logger = get_logger("Parsing")
@@ -304,6 +416,7 @@ def train(args):
         inter_dropout_prob = hyps['inter_dropout_prob']
         attention_probs_dropout_prob = hyps['attention_probs_dropout_prob']
         mlp_initializer = hyps['mlp_initializer']
+        emb_initializer = hyps['emb_initializer']
         ff_first = hyps['ff_first']
 
         network = DeepBiAffineV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
@@ -320,7 +433,8 @@ def train(args):
                                hidden_dropout_prob=hidden_dropout_prob,
                                inter_dropout_prob=inter_dropout_prob,
                                attention_probs_dropout_prob=attention_probs_dropout_prob,
-                               mlp_initializer=mlp_initializer, ff_first=ff_first)
+                               mlp_initializer=mlp_initializer, emb_initializer=emb_initializer,
+                               ff_first=ff_first)
     elif model_type == 'NeuroMST':
         num_layers = hyps['num_layers']
         network = NeuroMST(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
@@ -357,7 +471,7 @@ def train(args):
                                                 attention_probs_dropout_prob))
             logger.info("Activation: %s, Linear initializer: %s" % (hidden_act, initializer))
             if model_type == 'DeepBiAffineV2':
-                logger.info("MLP initializer: %s, FF Layer First: %s" % (mlp_initializer, ff_first))
+                logger.info("MLP initializer: %s, Emb initializer: %s, FF Layer First: %s" % (mlp_initializer, emb_initializer, ff_first))
         logger.info("Use Randomly Init Word Emb: %s (Freeze Pre-trained Emb: %s)" % (basic_word_embedding, freeze))
         logger.info("Use Sin Position Emb: %s (Freeze Position Emb: %s)" % (use_sin_position_embedding, freeze_position_embedding))
         logger.info("Use Input Layer: %s" % use_input_layer)
@@ -514,14 +628,16 @@ def train(args):
                 # evaluate performance on dev data
                 with torch.no_grad():
                     pred_filename = os.path.join(result_path, 'pred_dev%d' % epoch)
-                    pred_writer.start(pred_filename)
-                    gold_filename = os.path.join(result_path, 'gold_dev%d' % epoch)
+                    #pred_writer.start(pred_filename)
+                    #gold_filename = os.path.join(result_path, 'gold_dev%d' % epoch)
                     #gold_writer.start(gold_filename)
 
                     print('Evaluating dev:')
-                    dev_stats, dev_stats_nopunct, dev_stats_root = eval(alg, data_dev, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam)
+                    dev_stats, dev_stats_nopunct, dev_stats_root = eval(alg, data_dev, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, 
+                                                                    beam=beam, write_to_tmp=False, prev_best_lcorr=best_lcorrect_nopunc,
+                                                                    prev_best_ucorr=best_ucorrect_nopunc, pred_filename=pred_filename)
 
-                    pred_writer.close()
+                    #pred_writer.close()
                     #gold_writer.close()
 
                     dev_ucorr, dev_lcorr, dev_ucomlpete, dev_lcomplete, dev_total = dev_stats
@@ -613,14 +729,16 @@ def train(args):
         # evaluate performance on dev data
         with torch.no_grad():
             pred_filename = os.path.join(result_path, 'pred_dev%d' % epoch)
-            pred_writer.start(pred_filename)
-            gold_filename = os.path.join(result_path, 'gold_dev%d' % epoch)
+            #pred_writer.start(pred_filename)
+            #gold_filename = os.path.join(result_path, 'gold_dev%d' % epoch)
             #gold_writer.start(gold_filename)
 
             print('Evaluating dev:')
-            dev_stats, dev_stats_nopunct, dev_stats_root = eval(alg, data_dev, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam)
+            dev_stats, dev_stats_nopunct, dev_stats_root = eval(alg, data_dev, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, 
+                                                                    beam=beam, write_to_tmp=False, prev_best_lcorr=best_lcorrect_nopunc,
+                                                                    prev_best_ucorr=best_ucorrect_nopunc, pred_filename=pred_filename)
 
-            pred_writer.close()
+            #pred_writer.close()
             #gold_writer.close()
 
             dev_ucorr, dev_lcorr, dev_ucomlpete, dev_lcomplete, dev_total = dev_stats
@@ -646,7 +764,7 @@ def train(args):
 
                 best_epoch = epoch
                 patient = 0
-                print ("Saving best model ...")
+                print ("### Saving best model ... ###")
                 torch.save(network.state_dict(), model_name)
 
                 pred_filename = os.path.join(result_path, 'pred_test%d' % epoch)

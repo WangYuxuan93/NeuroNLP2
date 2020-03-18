@@ -212,13 +212,14 @@ class DeepBiAffineV2(nn.Module):
                  freeze_position_embedding=True, hidden_act="gelu", dropout_type="seq",
                  initializer="default", embedding_dropout_prob=0.33, hidden_dropout_prob=0.2,
                  inter_dropout_prob=0.1, attention_probs_dropout_prob=0.1,
-                 mlp_initializer="orthogonal", ff_first=True):
+                 mlp_initializer="orthogonal", emb_initializer="default", ff_first=True):
         super(DeepBiAffineV2, self).__init__()
 
         self.basic_word_embedding = basic_word_embedding
         self.minimize_logp = minimize_logp
         self.act_func = activation
         self.initializer = initializer
+        self.emb_initializer = emb_initializer
         self.p_out = p_out
         self.p_in = p_in
         self.arc_space = arc_space
@@ -345,9 +346,17 @@ class DeepBiAffineV2(nn.Module):
         if embedd_char is None and self.char_embed is not None:
             nn.init.uniform_(self.char_embed.weight, -0.1, 0.1)
         if embedd_pos is None and self.pos_embed is not None:
-            nn.init.uniform_(self.pos_embed.weight, -0.1, 0.1)
+            if self.emb_initializer == 'uniform':
+                nn.init.uniform_(self.pos_embed.weight, -0.1, 0.1)
+            else:
+                pos_num, pos_dim = list(self.pos_embed.weight.size())
+                tag_init = np.random.randn(pos_num, pos_dim).astype(np.float32)
+                self.pos_embed.weight.data.copy_(torch.from_numpy(tag_init))
         if self.basic_word_embed is not None:
-            nn.init.uniform_(self.basic_word_embed.weight, -0.1, 0.1)
+            if self.emb_initializer == 'uniform':
+                nn.init.uniform_(self.basic_word_embed.weight, -0.1, 0.1)
+            else:
+                nn.init.normal_(self.basic_word_embed.weight, 0.0, 1.0 / (200 ** 0.5))
 
         with torch.no_grad():
             self.word_embed.weight[self.word_embed.padding_idx].fill_(0)
