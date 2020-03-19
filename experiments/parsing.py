@@ -569,15 +569,17 @@ def train(args):
                 num_words = max(num_words, 1)
                 train_uas = float(overall_arc_correct) * 100.0 / overall_total_arcs
                 train_lacc = float(overall_type_correct) * 100.0 / overall_total_arcs
-                if not args.loss_type == 'mean':
+                if args.loss_type == 'mean':
+                    log_info = '[epoch:%d, step:%d/%d (%.0f%%) lr=%.6f (%d)] uas: %.2f%%, lacc: %.2f%%, loss: %.4f, arc: %.4f, type: %.4f' % (epoch, step, num_batches, 100. * step / num_batches, curr_lr, num_nans,
+                                                                                                                    train_uas, train_lacc, loss_total.item(),loss_arc.item(),loss_type.item())
+                else:
                     log_info = '[epoch:%d, step:%d/%d (%.0f%%) lr=%.6f (%d)] uas: %.2f%%, lacc: %.2f%%, loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f)' % (epoch, step, num_batches, 100. * step / num_batches, curr_lr, num_nans,
                                                                                                                     train_uas, train_lacc,
                                                                                                                      train_loss / num_insts, train_loss / num_words,
                                                                                                                      train_arc_loss / num_insts, train_arc_loss / num_words,
                                                                                                                     train_type_loss / num_insts, train_type_loss / num_words)
-                else:
-                    log_info = '[epoch:%d, step:%d/%d (%.0f%%) lr=%.6f (%d)] uas: %.2f%%, lacc: %.2f%%, loss: %.4f, arc: %.4f, type: %.4f' % (epoch, step, num_batches, 100. * step / num_batches, curr_lr, num_nans,
-                                                                                                                    train_uas, train_lacc,train_loss/num_batches,train_arc_loss/num_batches,train_type_loss/num_batches)
+                
+                    
                 print (log_info)
                 #sys.stdout.write(log_info)
                 sys.stdout.flush()
@@ -680,7 +682,7 @@ def train(args):
         if args.loss_type == 'mean':
             print('total: %d (%d), uas: %.2f%%, lacc: %.2f%%,  loss: %.4f, arc: %.4f, type: %.4f, time: %.2fs' % (num_insts, num_words,
                                                                                                        train_uas, train_lacc,
-                                                                                                       loss_total.item(),loss_arc.item(),loss_type.item(),
+                                                                                                       train_loss/num_batches,train_arc_loss/num_batches,train_type_loss/num_batches,
                                                                                                        time.time() - start_time))
         else:
             print('total: %d (%d), uas: %.2f%%, lacc: %.2f%%,  loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f), time: %.2fs' % (num_insts, num_words,
