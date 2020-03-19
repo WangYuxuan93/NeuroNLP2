@@ -142,7 +142,7 @@ class BiaffineParser(object):
 
     def compute_accuracy(self, true_arcs, true_rels, mask):
         b, l1, l2 = self.arc_logits.size()
-        pred_arcs = self.arc_logits.data.max(2)[1].cpu()
+        pred_arcs = self.arc_logits.data.max(2)[1]#.cpu()
 
         neg_ones = torch.ones_like(true_arcs) * -1
         # pad = -1
@@ -163,7 +163,7 @@ class BiaffineParser(object):
             rel_probs = torch.stack(rel_probs, dim=0)
             output_logits[batch_index] = torch.squeeze(rel_probs, dim=1)
 
-        pred_rels = output_logits.data.max(2)[1].cpu()
+        pred_rels = output_logits.data.max(2)[1]#.cpu()
         #print ("pred_rels:\n", pred_rels)
         #print ("true_rels:\n", true_rels)
         neg_ones = torch.ones_like(true_rels) * -1
