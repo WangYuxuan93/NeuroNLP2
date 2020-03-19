@@ -1,5 +1,5 @@
 {
-  "model": "DeepBiAffineV2",
+  "model": "DeepBiAffineV3",
   "word_dim": 100,
   "char_dim": 100,
   "pos": true,
@@ -19,8 +19,8 @@
   "inter_dropout_prob": 0.1,
   "attention_probs_dropout_prob": 0.1,
   "initializer": "orthogonal",
-  "mlp_initializer": "orthonormal",
-  "emb_initializer": "default",
+  "mlp_initializer": "orthogonal",
+  "emb_initializer": "normal",
   "num_attention_heads": 8,
   "intermediate_size": 800,
   "hidden_size": 200,

@@ -27,6 +27,8 @@ from neuronlp2 import utils
 from neuronlp2.io import CoNLLXWriter
 from neuronlp2.tasks import parser
 from neuronlp2.nn.utils import freeze_embedding
+from neuronlp2.models.Model import ParserModel, BiaffineConfig
+from neuronlp2.models.Parser import BiaffineParser
 
 
 def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgrad, weight_decay, 
@@ -103,7 +105,9 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
             all_src_words.append(data['SRC'])
 
         #gold_writer.write(words, postags, heads, types, lengths, symbolic_root=True)
-
+        #print ("heads_pred:\n", heads_pred)
+        #print ("types_pred:\n", types_pred)
+        #print ("heads:\n", heads)
         stats, stats_nopunc, stats_root, num_inst = parser.eval(words, postags, heads_pred, types_pred, heads, types,
                                                                 word_alphabet, pos_alphabet, lengths, punct_set=punct_set, 
                                                                 symbolic_root=True)
@@ -160,76 +164,6 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
            (accum_ucorr_nopunc, accum_lcorr_nopunc, accum_ucomlpete_nopunc, accum_lcomplete_nopunc, accum_total_nopunc), \
            (accum_root_corr, accum_total_root, accum_total_inst)
 
-"""
-def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=1, batch_size=256):
-    network.eval()
-    accum_ucorr = 0.0
-    accum_lcorr = 0.0
-    accum_total = 0
-    accum_ucomlpete = 0.0
-    accum_lcomplete = 0.0
-    accum_ucorr_nopunc = 0.0
-    accum_lcorr_nopunc = 0.0
-    accum_total_nopunc = 0
-    accum_ucomlpete_nopunc = 0.0
-    accum_lcomplete_nopunc = 0.0
-    accum_root_corr = 0.0
-    accum_total_root = 0.0
-    accum_total_inst = 0.0
-    for data in iterate_data(data, batch_size):
-        words = data['WORD'].to(device)
-        chars = data['CHAR'].to(device)
-        postags = data['POS'].to(device)
-        heads = data['HEAD'].numpy()
-        types = data['TYPE'].numpy()
-        lengths = data['LENGTH'].numpy()
-        if alg == 'graph':
-            masks = data['MASK'].to(device)
-            heads_pred, types_pred = network.decode(words, chars, postags, mask=masks, leading_symbolic=conllx_data.NUM_SYMBOLIC_TAGS)
-        else:
-            masks = data['MASK_ENC'].to(device)
-            heads_pred, types_pred = network.decode(words, chars, postags, mask=masks, beam=beam, leading_symbolic=conllx_data.NUM_SYMBOLIC_TAGS)
-
-        words = words.cpu().numpy()
-        postags = postags.cpu().numpy()
-        pred_writer.write(words, postags, heads_pred, types_pred, lengths, symbolic_root=True, src_words=data['SRC'])
-        #gold_writer.write(words, postags, heads, types, lengths, symbolic_root=True, src_words=data['SRC'])
-
-        stats, stats_nopunc, stats_root, num_inst = parser.eval(words, postags, heads_pred, types_pred, heads, types,
-                                                                word_alphabet, pos_alphabet, lengths, punct_set=punct_set, symbolic_root=True)
-        ucorr, lcorr, total, ucm, lcm = stats
-        ucorr_nopunc, lcorr_nopunc, total_nopunc, ucm_nopunc, lcm_nopunc = stats_nopunc
-        corr_root, total_root = stats_root
-
-        accum_ucorr += ucorr
-        accum_lcorr += lcorr
-        accum_total += total
-        accum_ucomlpete += ucm
-        accum_lcomplete += lcm
-
-        accum_ucorr_nopunc += ucorr_nopunc
-        accum_lcorr_nopunc += lcorr_nopunc
-        accum_total_nopunc += total_nopunc
-        accum_ucomlpete_nopunc += ucm_nopunc
-        accum_lcomplete_nopunc += lcm_nopunc
-
-        accum_root_corr += corr_root
-        accum_total_root += total_root
-
-        accum_total_inst += num_inst
-
-    print('W. Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%%' % (
-        accum_ucorr, accum_lcorr, accum_total, accum_ucorr * 100 / accum_total, accum_lcorr * 100 / accum_total,
-        accum_ucomlpete * 100 / accum_total_inst, accum_lcomplete * 100 / accum_total_inst))
-    print('Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%%' % (
-        accum_ucorr_nopunc, accum_lcorr_nopunc, accum_total_nopunc, accum_ucorr_nopunc * 100 / accum_total_nopunc,
-        accum_lcorr_nopunc * 100 / accum_total_nopunc,
-        accum_ucomlpete_nopunc * 100 / accum_total_inst, accum_lcomplete_nopunc * 100 / accum_total_inst))
-    print('Root: corr: %d, total: %d, acc: %.2f%%' %(accum_root_corr, accum_total_root, accum_root_corr * 100 / accum_total_root))
-    return (accum_ucorr, accum_lcorr, accum_ucomlpete, accum_lcomplete, accum_total), \
-           (accum_ucorr_nopunc, accum_lcorr_nopunc, accum_ucomlpete_nopunc, accum_lcomplete_nopunc, accum_total_nopunc), \
-           (accum_root_corr, accum_total_root, accum_total_inst)
-"""
 
 def train(args):
     logger = get_logger("Parsing")
@@ -349,7 +283,7 @@ def train(args):
     hyps = json.load(open(args.config, 'r'))
     json.dump(hyps, open(os.path.join(model_path, 'config.json'), 'w'), indent=2)
     model_type = hyps['model']
-    assert model_type in ['DeepBiAffine', 'DeepBiAffineV2', 'NeuroMST', 'StackPtr']
+    assert model_type in ['DeepBiAffine', 'DeepBiAffineV2', 'DeepBiAffineV3', 'NeuroMST', 'StackPtr']
     assert word_dim == hyps['word_dim']
     if char_dim is not None:
         assert char_dim == hyps['char_dim']
@@ -399,6 +333,7 @@ def train(args):
                                hidden_dropout_prob=hidden_dropout_prob,
                                inter_dropout_prob=inter_dropout_prob,
                                attention_probs_dropout_prob=attention_probs_dropout_prob)
+        network = network.to(device)
     elif model_type == 'DeepBiAffineV2':
         num_layers = hyps['num_layers']
         use_char = hyps['use_char']
@@ -435,12 +370,29 @@ def train(args):
                                attention_probs_dropout_prob=attention_probs_dropout_prob,
                                mlp_initializer=mlp_initializer, emb_initializer=emb_initializer,
                                ff_first=ff_first)
+        network = network.to(device)
+    elif model_type == 'DeepBiAffineV3':
+        num_layers = hyps['num_layers']
+        embedding_dropout_prob = hyps['embedding_dropout_prob']
+        mlp_initializer = hyps['mlp_initializer']
+        emb_initializer = hyps['emb_initializer']
+        initializer = hyps['initializer']
+        config = BiaffineConfig(num_words, num_pos, num_types, word_dims=word_dim, tag_dims=pos_dim, 
+                                dropout_emb=embedding_dropout_prob, n_layer=num_layers, 
+                                d_model=hidden_size, hidden_size=hidden_size, mlp_arc_size=arc_space, 
+                                mlp_rel_size=type_space, dropout_mlp=p_out, mlp_initializer=mlp_initializer,
+                                emb_initializer=emb_initializer, initializer=initializer)
+        model = ParserModel(config, word_table, 256)
+        model = model.to(device)
+        ROOT_REL_ID = type_alphabet.get_index("root")
+        network = BiaffineParser(model, ROOT_REL_ID)
     elif model_type == 'NeuroMST':
         num_layers = hyps['num_layers']
         network = NeuroMST(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                            mode, hidden_size, num_layers, num_types, arc_space, type_space,
                            embedd_word=word_table, embedd_char=char_table,
                            p_in=p_in, p_out=p_out, p_rnn=p_rnn, pos=use_pos, activation=activation)
+        network = network.to(device)
     elif model_type == 'StackPtr':
         encoder_layers = hyps['encoder_layers']
         decoder_layers = hyps['decoder_layers']
@@ -454,13 +406,13 @@ def train(args):
                               embedd_word=word_table, embedd_char=char_table, prior_order=prior_order, activation=activation,
                               p_in=p_in, p_out=p_out, p_rnn=p_rnn, pos=use_pos, use_char=use_char,
                               grandPar=grandPar, sibling=sibling)
+        network = network.to(device)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
     if freeze:
         freeze_embedding(network.word_embed)
-
-    network = network.to(device)
+    
     model = "{}-{}".format(model_type, mode)
     logger.info("Network: %s, num_layer=%s, hidden=%d, act=%s" % (model, num_layers, hidden_size, activation))
     logger.info("dropout(in, out, rnn): %s(%.2f, %.2f, %s)" % ('variational', p_in, p_out, p_rnn))
@@ -584,10 +536,12 @@ def train(args):
             overall_type_correct += type_correct
             overall_total_arcs += total_arcs
             
-            if loss_ty_token:
+            if args.loss_type == 'token':
                 loss = loss_total.div(nwords)
-            else:
+            elif args.loss_type == 'sentence':
                 loss = loss_total.div(nbatch)
+            else:
+                loss = loss_total
             loss.backward()
             if grad_clip > 0:
                 grad_norm = clip_grad_norm_(network.parameters(), grad_clip)
@@ -620,6 +574,9 @@ def train(args):
                                                                                                                      train_loss / num_insts, train_loss / num_words,
                                                                                                                      train_arc_loss / num_insts, train_arc_loss / num_words,
                                                                                                                     train_type_loss / num_insts, train_type_loss / num_words)
+                if args.loss_type == 'mean':
+                    log_info = '[epoch:%d, step:%d/%d (%.0f%%) lr=%.6f (%d)] uas: %.2f%%, lacc: %.2f%%, loss: %.4f, arc: %.4f, type: %.4f' % (epoch, step, num_batches, 100. * step / num_batches, curr_lr, num_nans,
+                                                                                                                    train_uas, train_lacc,train_loss,train_arc_loss,train_type_loss)
                 print (log_info)
                 #sys.stdout.write(log_info)
                 sys.stdout.flush()
@@ -719,7 +676,13 @@ def train(args):
 
         train_uas = float(overall_arc_correct) * 100.0 / overall_total_arcs
         train_lacc = float(overall_type_correct) * 100.0 / overall_total_arcs
-        print('total: %d (%d), uas: %.2f%%, lacc: %.2f%%,  loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f), time: %.2fs' % (num_insts, num_words,
+        if args.loss_type == 'mean':
+            print('total: %d (%d), uas: %.2f%%, lacc: %.2f%%,  loss: %.4f, arc: %.4f, type: %.4f, time: %.2fs' % (num_insts, num_words,
+                                                                                                       train_uas, train_lacc,
+                                                                                                       train_loss,train_arc_loss,train_type_loss,
+                                                                                                       time.time() - start_time))
+        else:
+            print('total: %d (%d), uas: %.2f%%, lacc: %.2f%%,  loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f), time: %.2fs' % (num_insts, num_words,
                                                                                                        train_uas, train_lacc,
                                                                                                        train_loss / num_insts, train_loss / num_words,
                                                                                                        train_arc_loss / num_insts, train_arc_loss / num_words,
@@ -961,7 +924,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--config', type=str, help='config file')
     args_parser.add_argument('--num_epochs', type=int, default=200, help='Number of training epochs')
     args_parser.add_argument('--batch_size', type=int, default=16, help='Number of sentences in each batch')
-    args_parser.add_argument('--loss_type', choices=['sentence', 'token'], default='sentence', help='loss type (default: sentence)')
+    args_parser.add_argument('--loss_type', choices=['sentence', 'token', 'mean'], default='sentence', help='loss type (default: sentence)')
     args_parser.add_argument('--optim', choices=['sgd', 'adamw', 'adam'], help='type of optimizer')
     args_parser.add_argument('--schedule', choices=['exponential', 'attention', 'step'], help='type of lr scheduler')
     args_parser.add_argument('--learning_rate', type=float, default=0.1, help='Learning rate')
