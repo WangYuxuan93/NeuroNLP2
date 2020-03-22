@@ -123,6 +123,8 @@ def create_alphabet_from_embedding(alphabet_directory, embedd_dict, vocabs, max_
         for word in vocabs:
             if word in pretrained_vocab:
                 pretrained_alphabet.add(word)
+            elif word.lower() in pretrained_vocab:
+                pretrained_alphabet.add(word.lower())
             elif word not in _START_VOCAB:
                 n_oov += 1
         #vocab_size = min(len(pretrained_vocab), max_vocabulary_size)

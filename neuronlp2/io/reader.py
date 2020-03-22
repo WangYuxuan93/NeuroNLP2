@@ -97,7 +97,10 @@ class CoNLLXReader(object):
 
             if self.__pre_alphabet:
                 pres.append(word)
-                pre_ids.append(self.__pre_alphabet.get_index(word))
+                id = self.__pre_alphabet.get_index(word)
+                if id == 0:
+                    id = self.__pre_alphabet.get_index(word.lower())
+                pre_ids.append(id)
 
         if symbolic_end:
             words.append(END)
