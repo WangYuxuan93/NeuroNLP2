@@ -85,6 +85,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
 
     for data in iterate_data(data, batch_size):
         words = data['WORD'].to(device)
+        pres = data['PRETRAINED'].to(device)
         chars = data['CHAR'].to(device)
         postags = data['POS'].to(device)
         heads = data['HEAD'].numpy()
@@ -92,7 +93,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         lengths = data['LENGTH'].numpy()
         if alg == 'graph':
             masks = data['MASK'].to(device)
-            heads_pred, types_pred = network.decode(words, chars, postags, mask=masks, leading_symbolic=conllx_data.NUM_SYMBOLIC_TAGS)
+            heads_pred, types_pred = network.decode(words, pres, chars, postags, mask=masks, leading_symbolic=conllx_data.NUM_SYMBOLIC_TAGS)
         else:
             masks = data['MASK_ENC'].to(device)
             heads_pred, types_pred = network.decode(words, chars, postags, mask=masks, beam=beam, leading_symbolic=conllx_data.NUM_SYMBOLIC_TAGS)
@@ -227,7 +228,7 @@ def train(args):
                                                                                              data_paths=[dev_path, test_path],
                                                                                              embedd_dict=word_dict, max_vocabulary_size=200000)
 
-    pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path, word_dict, max_vocabulary_size=200000)
+    pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path, word_dict, word_alphabet.instances, max_vocabulary_size=200000)
     num_words = word_alphabet.size()
     num_pretrained = pretrained_alphabet.size()
     num_chars = char_alphabet.size()
@@ -265,7 +266,7 @@ def train(args):
                 embedding = np.zeros([1, word_dim]).astype(np.float32) if freeze else np.random.uniform(-scale, scale, [1, word_dim]).astype(np.float32)
                 oov += 1
             table[index, :] = embedding
-        print('word OOV: %d' % oov)
+        #print('word OOV: %d' % oov)
         return torch.from_numpy(table)
 
     def construct_char_embedding_table():
@@ -532,6 +533,7 @@ def train(args):
         for step, data in enumerate(iterate_data(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True)):
             optimizer.zero_grad()
             words = data['WORD'].to(device)
+            pres = data['PRETRAINED'].to(device)
             chars = data['CHAR'].to(device)
             postags = data['POS'].to(device)
             heads = data['HEAD'].to(device)
@@ -540,7 +542,7 @@ def train(args):
                 types = data['TYPE'].to(device)
                 masks = data['MASK'].to(device)
                 nwords = masks.sum() - nbatch
-                loss_arc, loss_type, arc_correct, type_correct, total_arcs = network.loss(words, chars, postags, heads, types, mask=masks)
+                loss_arc, loss_type, arc_correct, type_correct, total_arcs = network.loss(words, pres, chars, postags, heads, types, mask=masks)
             else:
                 masks_enc = data['MASK_ENC'].to(device)
                 masks_dec = data['MASK_DEC'].to(device)

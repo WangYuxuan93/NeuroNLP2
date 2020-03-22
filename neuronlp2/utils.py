@@ -107,8 +107,8 @@ def load_embedding_dict(embedding, embedding_path, normalize_digits=True):
     else:
         raise ValueError("embedding should choose from [word2vec, senna, glove, sskip, polyglot]")
 
-def create_alphabet_from_embedding(alphabet_directory, embedd_dict, max_vocabulary_size=100000):
-    #_START_VOCAB = [PAD, ROOT, END]
+def create_alphabet_from_embedding(alphabet_directory, embedd_dict, vocabs, max_vocabulary_size=100000):
+    _START_VOCAB = [PAD, ROOT, END]
     logger = get_logger("Create Pretrained Alphabets")
     pretrained_alphabet = Alphabet('pretrained', defualt_value=True)
     file = os.path.join(alphabet_directory, 'pretrained.json')
@@ -119,16 +119,21 @@ def create_alphabet_from_embedding(alphabet_directory, embedd_dict, max_vocabula
         pretrained_alphabet.add(END)
 
         pretrained_vocab = list(embedd_dict.keys())
-        vocab_size = min(len(pretrained_vocab), max_vocabulary_size)
-        logger.info("Used/Total Pretrained Vocab Size: %d/%d" % (vocab_size,len(pretrained_vocab)))
-        for word in pretrained_vocab[:vocab_size]:
-            pretrained_alphabet.add(word)
+        n_oov = 0
+        for word in vocabs:
+            if word in pretrained_vocab:
+                pretrained_alphabet.add(word)
+            elif word not in _START_VOCAB:
+                n_oov += 1
+        #vocab_size = min(len(pretrained_vocab), max_vocabulary_size)
+        logger.info("Loaded/Total Pretrained Vocab Size: %d/%d, OOV Words: %d" % (pretrained_alphabet.size(),len(pretrained_vocab),n_oov))
+        
         pretrained_alphabet.save(alphabet_directory)
     else:
         pretrained_alphabet.load(alphabet_directory)
-        pretrained_vocab = list(embedd_dict.keys())
-        vocab_size = min(len(pretrained_vocab), max_vocabulary_size)
-        assert pretrained_alphabet.size() == (vocab_size + 4)
+        #pretrained_vocab = list(embedd_dict.keys())
+        #vocab_size = min(len(pretrained_vocab), max_vocabulary_size)
+        #assert pretrained_alphabet.size() == (vocab_size + 4)
         
     pretrained_alphabet.close()
 

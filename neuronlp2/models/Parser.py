@@ -130,12 +130,12 @@ class BiaffineParser(object):
 
         return arc_loss, rel_loss
 
-    def loss(self, input_word, input_char, input_pos, heads, types, mask=None):
+    def loss(self, input_word, input_pre, input_char, input_pos, heads, types, mask=None):
         batch_size, seq_len  = input_word.size()
         position_ids = torch.arange(seq_len, dtype=torch.long, device=input_word.device)
         # (batch, seq_len)
         position_ids = position_ids.unsqueeze(0).expand(batch_size,-1) * mask.long()
-        self.forward(input_word, input_word, input_pos, mask, position_ids)
+        self.forward(input_word, input_pre, input_pos, mask, position_ids)
         arc_loss, rel_loss = self.compute_loss(heads, types, mask)
         arc_correct, label_correct, total_arcs = self.compute_accuracy(heads, types, mask)
         return arc_loss, rel_loss, arc_correct, label_correct, total_arcs
@@ -176,14 +176,14 @@ class BiaffineParser(object):
 
         return arc_correct, label_correct, total_arcs
 
-    def decode(self, input_word, input_char, input_pos, mask=None, leading_symbolic=None):
+    def decode(self, input_word, input_pre, input_char, input_pos, mask=None, leading_symbolic=None):
         batch_size, seq_len  = input_word.size()
         position_ids = torch.arange(seq_len, dtype=torch.long, device=input_word.device)
         # (batch, seq_len)
         position_ids = position_ids.unsqueeze(0).expand(batch_size,-1) * mask.long()
         # (batch)
         lengths = mask.sum(-1).int().cpu().numpy()
-        heads_pred, types_pred = self.parse(input_word, input_word, input_pos, lengths, mask, position_ids)
+        heads_pred, types_pred = self.parse(input_word, input_pre, input_pos, lengths, mask, position_ids)
         #print ("heads_pred:\n", heads_pred)
         #print ("types_pred:\n", types_pred)
         heads_pred_ = np.zeros((batch_size, seq_len), dtype=np.int32)
