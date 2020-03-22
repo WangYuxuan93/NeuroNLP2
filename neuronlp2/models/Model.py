@@ -41,11 +41,12 @@ def drop_sequence_sharedmask(inputs, dropout, batch_first=True):
     return inputs.transpose(1, 0)
 
 class BiaffineConfig(object):
-    def __init__(self, vocab_size, tag_size, rel_size, word_dims=100, tag_dims=100, dropout_emb=.33,
+    def __init__(self, vocab_size, pretrained_size, tag_size, rel_size, word_dims=100, tag_dims=100, dropout_emb=.33,
                  n_layer=8, d_model=200, hidden_size=200, mlp_arc_size=500, mlp_rel_size=100,
                  dropout_mlp=.33, mlp_initializer="orthonormal", emb_initializer="normal", 
                  initializer="orthogonal"):
         self.vocab_size = vocab_size
+        self.pretrained_size = pretrained_size
         self.tag_size = tag_size
         self.rel_size = rel_size
         self.word_dims = word_dims

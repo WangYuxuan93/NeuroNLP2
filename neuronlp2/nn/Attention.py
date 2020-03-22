@@ -59,7 +59,7 @@ class MyAttentionEncoder(nn.Module):
         self.position_enc.weight.data=position_encoding_init(n_position,config.word_dims+config.tag_dims)
 
         self.word_emb=nn.Embedding(config.vocab_size,config.word_dims,padding_idx=1)
-        self.extword_emb=nn.Embedding(config.vocab_size,config.word_dims,padding_idx=1)
+        self.extword_emb=nn.Embedding(config.pretrained_size,config.word_dims,padding_idx=1)
         self.tag_emb=nn.Embedding(config.tag_size,config.tag_dims,padding_idx=1)
         #word_init = np.random.randn(vocab.vocab_size,config.word_dims).astype(np.float32)
         #word_init = np.zeros((vocab.vocab_size,config.word_dims),dtype=np.float32)

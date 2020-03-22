@@ -7,12 +7,14 @@ from neuronlp2.io.common import DIGIT_RE, MAX_CHAR_LENGTH
 
 
 class CoNLLXReader(object):
-    def __init__(self, file_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet):
+    def __init__(self, file_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, 
+                pre_alphabet=None):
         self.__source_file = open(file_path, 'r')
         self.__word_alphabet = word_alphabet
         self.__char_alphabet = char_alphabet
         self.__pos_alphabet = pos_alphabet
         self.__type_alphabet = type_alphabet
+        self.__pre_alphabet = pre_alphabet
 
     def close(self):
         self.__source_file.close()
@@ -44,6 +46,12 @@ class CoNLLXReader(object):
         types = []
         type_ids = []
         heads = []
+        if self.__pre_alphabet:
+            pres = []
+            pre_ids = []
+        else:
+            pres = None
+            pre_ids = None
 
         if symbolic_root:
             words.append(ROOT)
@@ -55,6 +63,9 @@ class CoNLLXReader(object):
             types.append(ROOT_TYPE)
             type_ids.append(self.__type_alphabet.get_index(ROOT_TYPE))
             heads.append(0)
+            if self.__pre_alphabet:
+                pres.append(ROOT)
+                pre_ids.append(self.__pre_alphabet.get_index(ROOT))
 
         for tokens in lines:
             chars = []
@@ -84,6 +95,10 @@ class CoNLLXReader(object):
 
             heads.append(head)
 
+            if self.__pre_alphabet:
+                pres.append(word)
+                pre_ids.append(self.__pre_alphabet.get_index(word))
+
         if symbolic_end:
             words.append(END)
             word_ids.append(self.__word_alphabet.get_index(END))
@@ -94,8 +109,11 @@ class CoNLLXReader(object):
             types.append(END_TYPE)
             type_ids.append(self.__type_alphabet.get_index(END_TYPE))
             heads.append(0)
+            if self.__pre_alphabet:
+                pres.append(END)
+                pre_ids.append(self.__pre_alphabet.get_index(END))
 
-        return DependencyInstance(Sentence(words, word_ids, char_seqs, char_id_seqs), postags, pos_ids, heads, types, type_ids)
+        return DependencyInstance(Sentence(words, word_ids, char_seqs, char_id_seqs, pres=pres, pre_ids=pre_ids), postags, pos_ids, heads, types, type_ids)
 
 
 class CoNLL03Reader(object):

@@ -29,6 +29,7 @@ from neuronlp2.tasks import parser
 from neuronlp2.nn.utils import freeze_embedding
 from neuronlp2.models.Model import ParserModel, BiaffineConfig
 from neuronlp2.models.Parser import BiaffineParser
+from neuronlp2.optim.optimizer import AdamOptimizer
 
 
 def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgrad, weight_decay, 
@@ -39,9 +40,14 @@ def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgra
         optimizer = AdamW(parameters, lr=learning_rate, betas=betas, eps=eps, amsgrad=amsgrad, weight_decay=weight_decay)
     elif optim == 'adam':
         optimizer = Adam(parameters, lr=learning_rate, betas=betas, eps=eps, weight_decay=weight_decay)
-    
+    elif optim == 'adam_li':
+        optimizer = AdamOptimizer(parameters, lr=learning_rate,betas=betas,eps=eps, weight_decay=weight_decay,
+                                    decay=lr_decay, decay_step=decay_steps)
+
     init_lr = 1e-7
-    if schedule == 'exponential':
+    if optim == 'adam_li':
+        scheduler = None
+    elif schedule == 'exponential':
         scheduler = ExponentialScheduler(optimizer, lr_decay, warmup_steps, init_lr)
     elif schedule == 'attention':
         scheduler = AttentionScheduler(optimizer, hidden_size, warmup_steps)
@@ -221,12 +227,15 @@ def train(args):
                                                                                              data_paths=[dev_path, test_path],
                                                                                              embedd_dict=word_dict, max_vocabulary_size=200000)
 
+    pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path, word_dict, max_vocabulary_size=200000)
     num_words = word_alphabet.size()
+    num_pretrained = pretrained_alphabet.size()
     num_chars = char_alphabet.size()
     num_pos = pos_alphabet.size()
     num_types = type_alphabet.size()
 
     logger.info("Word Alphabet Size: %d" % num_words)
+    logger.info("Pretrained Alphabet Size: %d" % num_pretrained)
     logger.info("Character Alphabet Size: %d" % num_chars)
     logger.info("POS Alphabet Size: %d" % num_pos)
     logger.info("Type Alphabet Size: %d" % num_types)
@@ -242,10 +251,12 @@ def train(args):
 
     def construct_word_embedding_table():
         scale = np.sqrt(3.0 / word_dim)
-        table = np.empty([word_alphabet.size(), word_dim], dtype=np.float32)
+        #table = np.empty([word_alphabet.size(), word_dim], dtype=np.float32)
+        table = np.empty([pretrained_alphabet.size(), word_dim], dtype=np.float32)
         table[conllx_data.UNK_ID, :] = np.zeros([1, word_dim]).astype(np.float32) if freeze else np.random.uniform(-scale, scale, [1, word_dim]).astype(np.float32)
         oov = 0
-        for word, index in word_alphabet.items():
+        #for word, index in word_alphabet.items():
+        for word, index in pretrained_alphabet.items():
             if word in word_dict:
                 embedding = word_dict[word]
             elif word.lower() in word_dict:
@@ -377,7 +388,7 @@ def train(args):
         mlp_initializer = hyps['mlp_initializer']
         emb_initializer = hyps['emb_initializer']
         initializer = hyps['initializer']
-        config = BiaffineConfig(num_words, num_pos, num_types, word_dims=word_dim, tag_dims=pos_dim, 
+        config = BiaffineConfig(num_words, num_pretrained, num_pos, num_types, word_dims=word_dim, tag_dims=pos_dim, 
                                 dropout_emb=embedding_dropout_prob, n_layer=num_layers, 
                                 d_model=hidden_size, hidden_size=hidden_size, mlp_arc_size=arc_space, 
                                 mlp_rel_size=type_space, dropout_mlp=p_out, mlp_initializer=mlp_initializer,
@@ -432,9 +443,12 @@ def train(args):
 
     logger.info("Reading Data")
     if alg == 'graph':
-        data_train = conllx_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True)
-        data_dev = conllx_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True)
-        data_test = conllx_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True)
+        data_train = conllx_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
+                                                    pre_alphabet=pretrained_alphabet)
+        data_dev = conllx_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
+                                                    pre_alphabet=pretrained_alphabet)
+        data_test = conllx_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
+                                                    pre_alphabet=pretrained_alphabet)
     else:
         data_train = conllx_stacked_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, prior_order=prior_order)
         data_dev = conllx_stacked_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, prior_order=prior_order)
@@ -481,6 +495,7 @@ def train(args):
     test_total_root = 0
 
     patient = 0
+    n_steps = 0
     beam = args.beam
     reset = args.reset
     num_batches = num_data // batch_size + 1
@@ -488,6 +503,9 @@ def train(args):
         opt_info = 'adamw, betas=(%.1f, %.3f), eps=%.1e, amsgrad=%s' % (betas[0], betas[1], eps, amsgrad)
     elif optim == 'adam':
         opt_info = 'adam, betas=(%.1f, %.3f), eps=%.1e' % (betas[0], betas[1], eps)
+    elif optim == 'adam_li':
+        opt_info = 'adam_li, betas=(%.1f, %.3f), eps=%.1e' % (betas[0], betas[1], eps)
+        reset = 0
     elif optim == 'sgd':
         opt_info = 'sgd, momentum=0.9, nesterov=True'
     for epoch in range(1, num_epochs + 1):
@@ -501,8 +519,12 @@ def train(args):
         num_nans = 0
         overall_arc_correct, overall_type_correct, overall_total_arcs = 0, 0, 0
         network.train()
-        lr = scheduler.get_lr()[0]
-        total_step = scheduler.get_total_step()
+        if optim == 'adam_li':
+            lr = optimizer.scheduler.get_lr()[0]
+            total_step = n_steps
+        else:
+            lr = scheduler.get_lr()[0]
+            total_step = scheduler.get_total_step()
         print('Epoch %d, Step %d (%s, scheduler: %s, lr=%.6f, lr decay=%.6f, grad clip=%.1f, l2=%.1e): ' % (epoch, total_step, opt_info,  schedule, lr, lr_decay, grad_clip, weight_decay))
         #if args.cuda:
         #    torch.cuda.empty_cache()
@@ -552,7 +574,9 @@ def train(args):
                 num_nans += 1
             else:
                 optimizer.step()
-                scheduler.step()
+                n_steps += 1
+                if not optim == 'adam_li':
+                    scheduler.step()
 
                 with torch.no_grad():
                     num_insts += nbatch
@@ -564,16 +588,19 @@ def train(args):
             # update log
             if (step + 1) % log_every == 0:
                 #torch.cuda.empty_cache()
-                curr_lr = scheduler.get_lr()[0]
+                if optim == 'adam_li':
+                    curr_lr = optimizer.scheduler.get_lr()[0]
+                else:
+                    curr_lr = scheduler.get_lr()[0]
                 num_insts = max(num_insts, 1)
                 num_words = max(num_words, 1)
                 train_uas = float(overall_arc_correct) * 100.0 / overall_total_arcs
                 train_lacc = float(overall_type_correct) * 100.0 / overall_total_arcs
                 if args.loss_type == 'mean':
-                    log_info = '[epoch:%d, step:%d/%d (%.0f%%) lr=%.6f (%d)] uas: %.2f%%, lacc: %.2f%%, loss: %.4f, arc: %.4f, type: %.4f' % (epoch, step, num_batches, 100. * step / num_batches, curr_lr, num_nans,
+                    log_info = '[epoch:%d, step:%d/%d (total steps: %d) lr=%.6f (%d)] uas: %.2f%%, lacc: %.2f%%, loss: %.4f, arc: %.4f, type: %.4f' % (epoch, step, num_batches, n_steps, curr_lr, num_nans,
                                                                                                                     train_uas, train_lacc, loss_total.item(),loss_arc.item(),loss_type.item())
                 else:
-                    log_info = '[epoch:%d, step:%d/%d (%.0f%%) lr=%.6f (%d)] uas: %.2f%%, lacc: %.2f%%, loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f)' % (epoch, step, num_batches, 100. * step / num_batches, curr_lr, num_nans,
+                    log_info = '[epoch:%d, step:%d/%d (total steps: %d) lr=%.6f (%d)] uas: %.2f%%, lacc: %.2f%%, loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f)' % (epoch, step, num_batches, n_steps, curr_lr, num_nans,
                                                                                                                     train_uas, train_lacc,
                                                                                                                      train_loss / num_insts, train_loss / num_words,
                                                                                                                      train_arc_loss / num_insts, train_arc_loss / num_words,
@@ -928,7 +955,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--num_epochs', type=int, default=200, help='Number of training epochs')
     args_parser.add_argument('--batch_size', type=int, default=16, help='Number of sentences in each batch')
     args_parser.add_argument('--loss_type', choices=['sentence', 'token', 'mean'], default='sentence', help='loss type (default: sentence)')
-    args_parser.add_argument('--optim', choices=['sgd', 'adamw', 'adam'], help='type of optimizer')
+    args_parser.add_argument('--optim', choices=['sgd', 'adamw', 'adam', 'adam_li'], help='type of optimizer')
     args_parser.add_argument('--schedule', choices=['exponential', 'attention', 'step'], help='type of lr scheduler')
     args_parser.add_argument('--learning_rate', type=float, default=0.1, help='Learning rate')
     args_parser.add_argument('--beta1', type=float, default=0.9, help='beta1 of Adam')

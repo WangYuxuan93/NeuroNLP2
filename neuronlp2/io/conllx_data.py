@@ -136,14 +136,14 @@ def create_alphabets(alphabet_directory, train_path, data_paths=None, max_vocabu
 
 
 def read_data(source_path: str, word_alphabet: Alphabet, char_alphabet: Alphabet, pos_alphabet: Alphabet, type_alphabet: Alphabet,
-              max_size=None, normalize_digits=True, symbolic_root=False, symbolic_end=False,
+              pre_alphabet=None, max_size=None, normalize_digits=True, symbolic_root=False, symbolic_end=False,
               mask_out_root=False):
     data = []
     max_length = 0
     max_char_length = 0
     print('Reading data from %s' % source_path)
     counter = 0
-    reader = CoNLLXReader(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet)
+    reader = CoNLLXReader(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, pre_alphabet=pre_alphabet)
     inst = reader.getNext(normalize_digits=normalize_digits, symbolic_root=symbolic_root, symbolic_end=symbolic_end)
     src_words = []
     while inst is not None and (not max_size or counter < max_size):
@@ -153,7 +153,7 @@ def read_data(source_path: str, word_alphabet: Alphabet, char_alphabet: Alphabet
 
         sent = inst.sentence
         #print (inst.sentence.words)
-        data.append([sent.word_ids, sent.char_id_seqs, inst.pos_ids, inst.heads, inst.type_ids])
+        data.append([sent.word_ids, sent.char_id_seqs, inst.pos_ids, inst.heads, inst.type_ids, sent.pre_ids])
         src_words.append(sent.words)
         max_len = max([len(char_seq) for char_seq in sent.char_seqs])
         if max_char_length < max_len:
@@ -171,18 +171,22 @@ def read_data(source_path: str, word_alphabet: Alphabet, char_alphabet: Alphabet
     pid_inputs = np.empty([data_size, max_length], dtype=np.int64)
     hid_inputs = np.empty([data_size, max_length], dtype=np.int64)
     tid_inputs = np.empty([data_size, max_length], dtype=np.int64)
+    preid_inputs = np.empty([data_size, max_length], dtype=np.int64)
 
     masks = np.zeros([data_size, max_length], dtype=np.float32)
     single = np.zeros([data_size, max_length], dtype=np.int64)
     lengths = np.empty(data_size, dtype=np.int64)
 
     for i, inst in enumerate(data):
-        wids, cid_seqs, pids, hids, tids = inst
+        wids, cid_seqs, pids, hids, tids, preids = inst
         inst_size = len(wids)
         lengths[i] = inst_size
         # word ids
         wid_inputs[i, :inst_size] = wids
         wid_inputs[i, inst_size:] = PAD_ID_WORD
+        if pre_alphabet:
+            preid_inputs[i, :inst_size] = preids
+            preid_inputs[i, inst_size:] = PAD_ID_WORD
         for c, cids in enumerate(cid_seqs):
             cid_inputs[i, c, :len(cids)] = cids
             cid_inputs[i, c, len(cids):] = PAD_ID_CHAR
@@ -216,20 +220,22 @@ def read_data(source_path: str, word_alphabet: Alphabet, char_alphabet: Alphabet
     masks = torch.from_numpy(masks)
     single = torch.from_numpy(single)
     lengths = torch.from_numpy(lengths)
+    pres = torch.from_numpy(preid_inputs)
 
     data_tensor = {'WORD': words, 'CHAR': chars, 'POS': pos, 'HEAD': heads, 'TYPE': types,
-                   'MASK': masks, 'SINGLE': single, 'LENGTH': lengths, 'SRC': src_words}
+                   'MASK': masks, 'SINGLE': single, 'LENGTH': lengths, 'SRC': src_words,
+                   'PRETRAINED': pres}
     return data_tensor, data_size
 
 
 def read_bucketed_data(source_path: str, word_alphabet: Alphabet, char_alphabet: Alphabet, pos_alphabet: Alphabet, type_alphabet: Alphabet,
-                       max_size=None, normalize_digits=True, symbolic_root=False, symbolic_end=False,
+                       pre_alphabet=None, max_size=None, normalize_digits=True, symbolic_root=False, symbolic_end=False,
                        mask_out_root=False):
     data = [[] for _ in _buckets]
     max_char_length = [0 for _ in _buckets]
     print('Reading data from %s' % source_path)
     counter = 0
-    reader = CoNLLXReader(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet)
+    reader = CoNLLXReader(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, pre_alphabet=pre_alphabet)
     inst = reader.getNext(normalize_digits=normalize_digits, symbolic_root=symbolic_root, symbolic_end=symbolic_end)
     while inst is not None and (not max_size or counter < max_size):
         counter += 1
@@ -240,7 +246,7 @@ def read_bucketed_data(source_path: str, word_alphabet: Alphabet, char_alphabet:
         sent = inst.sentence
         for bucket_id, bucket_size in enumerate(_buckets):
             if inst_size < bucket_size:
-                data[bucket_id].append([sent.word_ids, sent.char_id_seqs, inst.pos_ids, inst.heads, inst.type_ids])
+                data[bucket_id].append([sent.word_ids, sent.char_id_seqs, inst.pos_ids, inst.heads, inst.type_ids, sent.pre_ids])
                 max_len = max([len(char_seq) for char_seq in sent.char_seqs])
                 if max_char_length[bucket_id] < max_len:
                     max_char_length[bucket_id] = max_len
@@ -265,18 +271,22 @@ def read_bucketed_data(source_path: str, word_alphabet: Alphabet, char_alphabet:
         pid_inputs = np.empty([bucket_size, bucket_length], dtype=np.int64)
         hid_inputs = np.empty([bucket_size, bucket_length], dtype=np.int64)
         tid_inputs = np.empty([bucket_size, bucket_length], dtype=np.int64)
+        preid_inputs = np.empty([bucket_size, bucket_length], dtype=np.int64)
 
         masks = np.zeros([bucket_size, bucket_length], dtype=np.float32)
         single = np.zeros([bucket_size, bucket_length], dtype=np.int64)
         lengths = np.empty(bucket_size, dtype=np.int64)
 
         for i, inst in enumerate(data[bucket_id]):
-            wids, cid_seqs, pids, hids, tids = inst
+            wids, cid_seqs, pids, hids, tids, preids = inst
             inst_size = len(wids)
             lengths[i] = inst_size
             # word ids
             wid_inputs[i, :inst_size] = wids
             wid_inputs[i, inst_size:] = PAD_ID_WORD
+            if pre_alphabet:
+                preid_inputs[i, :inst_size] = preids
+                preid_inputs[i, inst_size:] = PAD_ID_WORD
             for c, cids in enumerate(cid_seqs):
                 cid_inputs[i, c, :len(cids)] = cids
                 cid_inputs[i, c, len(cids):] = PAD_ID_CHAR
@@ -310,8 +320,9 @@ def read_bucketed_data(source_path: str, word_alphabet: Alphabet, char_alphabet:
         masks = torch.from_numpy(masks)
         single = torch.from_numpy(single)
         lengths = torch.from_numpy(lengths)
+        pres = torch.from_numpy(preid_inputs)
 
         data_tensor = {'WORD': words, 'CHAR': chars, 'POS': pos, 'HEAD': heads, 'TYPE': types,
-                       'MASK': masks, 'SINGLE': single, 'LENGTH': lengths}
+                       'MASK': masks, 'SINGLE': single, 'LENGTH': lengths, 'PRETRAINED': pres}
         data_tensors.append(data_tensor)
     return data_tensors, bucket_sizes
