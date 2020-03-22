@@ -366,7 +366,7 @@ def train(args):
         emb_initializer = hyps['emb_initializer']
         ff_first = hyps['ff_first']
 
-        network = DeepBiAffineV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
+        network = DeepBiAffineV2(num_pretrained, word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                                mode, hidden_size, num_layers, num_types, arc_space, type_space,
                                basic_word_embedding=basic_word_embedding,
                                embedd_word=word_table, embedd_char=char_table,

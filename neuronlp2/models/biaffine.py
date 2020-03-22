@@ -202,7 +202,7 @@ class Biaffine(nn.Module):
 
 
 class DeepBiAffineV2(nn.Module):
-    def __init__(self, word_dim, num_words, char_dim, num_chars, pos_dim, num_pos, rnn_mode, 
+    def __init__(self, num_pretrained, word_dim, num_words, char_dim, num_chars, pos_dim, num_pos, rnn_mode, 
                  hidden_size, num_layers, num_labels, arc_space, rel_space,
                  basic_word_embedding=True,
                  embedd_word=None, embedd_char=None, embedd_pos=None, p_in=0.33, p_out=0.33, 
@@ -228,7 +228,9 @@ class DeepBiAffineV2(nn.Module):
             self.basic_word_embed = nn.Embedding(num_words, word_dim, padding_idx=1)
         else:
             self.basic_word_embed = None
-        self.word_embed = nn.Embedding(num_words, word_dim, _weight=embedd_word, padding_idx=1)
+
+        self.word_embed = nn.Embedding(num_pretrained, word_dim, _weight=embedd_word, padding_idx=1)
+        self.word_embed.weight.requires_grad=False
         self.pos_embed = nn.Embedding(num_pos, pos_dim, _weight=embedd_pos, padding_idx=1) if pos else None
         if use_char:
             self.char_embed = nn.Embedding(num_chars, char_dim, _weight=embedd_char, padding_idx=1)
@@ -397,14 +399,19 @@ class DeepBiAffineV2(nn.Module):
             nn.init.xavier_uniform_(self.input_encoder.weight)
             nn.init.constant_(self.input_encoder.bias, 0.)
 
-    def _get_logits(self, input_word, input_char, input_pos, mask=None):
+    def _get_logits(self, input_word, input_pretrained, input_char, input_pos, mask=None):
+        #print ("word:\n", input_word)
+        #print ("pretrained:\n",input_pretrained)
         # [batch, length, word_dim]
-        pre_word = self.word_embed(input_word)
+        #pre_word = self.word_embed(input_word)
+        pre_word = self.word_embed(input_pretrained)
         # apply dropout word on input
         #word = self.dropout_in(word)
         enc_word = pre_word
         if self.basic_word_embedding:
             basic_word = self.basic_word_embed(input_word)
+            #print ("pre_emb:\n", pre_word)
+            #print ("basic_emb:\n", basic_word)
             #basic_word = self.dropout_in(basic_word)
             enc_word = enc_word + basic_word
 
@@ -585,7 +592,7 @@ class DeepBiAffineV2(nn.Module):
 
         return arc_correct.cpu().numpy(), rel_correct.cpu().numpy(), total_arcs.cpu().numpy()
 
-    def loss(self, input_word, input_char, input_pos, heads, rels, mask=None):
+    def loss(self, input_word, input_pretrained, input_char, input_pos, heads, rels, mask=None):
         # out_arc shape [batch, length_head, length_child]
         #out_arc, out_rel  = self(input_word, input_char, input_pos, mask=mask)
         # out_rel shape [batch, length, rel_space]
@@ -610,7 +617,7 @@ class DeepBiAffineV2(nn.Module):
         # (batch, n_rels, seq_len, seq_len)
         #out_rel = self.bilinear(rel_c, rel_h)
 
-        arc_logit, rel_logit = self._get_logits(input_word, input_char, input_pos, root_mask)
+        arc_logit, rel_logit = self._get_logits(input_word, input_pretrained, input_char, input_pos, root_mask)
         # (batch, seq_len, seq_len, n_rels) => (batch, n_rels, seq_len, seq_len)
         rel_logit = rel_logit.permute(0,3,1,2)
         if self.minimize_logp:
@@ -669,7 +676,7 @@ class DeepBiAffineV2(nn.Module):
 
         return heads.cpu().numpy(), rels.cpu().numpy()
 
-    def decode(self, input_word, input_char, input_pos, mask=None, leading_symbolic=0):
+    def decode(self, input_word, input_pretrained, input_char, input_pos, mask=None, leading_symbolic=0):
         """
         Args:
             input_word: Tensor
@@ -708,7 +715,7 @@ class DeepBiAffineV2(nn.Module):
         # (batch, seq_len), seq mask, where at position 0 is 0
         seq_len = input_word.size(1)
         root_mask = torch.arange(seq_len, device=input_word.device).gt(0).float().unsqueeze(0) * mask
-        arc_logit, rel_logit = self._get_logits(input_word, input_char, input_pos, root_mask)
+        arc_logit, rel_logit = self._get_logits(input_word, input_pretrained, input_char, input_pos, root_mask)
         #rel_logit = rel_logit.permute(0,3,2,1)
 
         if mask is not None:
