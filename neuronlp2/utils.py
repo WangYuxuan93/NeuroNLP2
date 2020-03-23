@@ -5,8 +5,12 @@ import pickle
 import numpy as np
 from gensim.models.word2vec import Word2Vec
 import gzip
+import os
 
+from neuronlp2.io.logger import get_logger
+from neuronlp2.io.alphabet import Alphabet
 from neuronlp2.io.common import DIGIT_RE
+from neuronlp2.io.common import PAD, ROOT, END
 
 
 def load_embedding_dict(embedding, embedding_path, normalize_digits=True):
@@ -103,3 +107,38 @@ def load_embedding_dict(embedding, embedding_path, normalize_digits=True):
 
     else:
         raise ValueError("embedding should choose from [word2vec, senna, glove, sskip, polyglot]")
+
+
+def create_alphabet_from_embedding(alphabet_directory, embedd_dict, vocabs, max_vocabulary_size=100000):
+    _START_VOCAB = [PAD, ROOT, END]
+    logger = get_logger("Create Pretrained Alphabets")
+    pretrained_alphabet = Alphabet('pretrained', defualt_value=True)
+    file = os.path.join(alphabet_directory, 'pretrained.json')
+    if not os.path.exists(file):
+        logger.info("Creating Pretrained Alphabets: %s" % alphabet_directory)
+        pretrained_alphabet.add(PAD)
+        pretrained_alphabet.add(ROOT)
+        pretrained_alphabet.add(END)
+
+        pretrained_vocab = list(embedd_dict.keys())
+        n_oov = 0
+        for word in vocabs:
+            if word in pretrained_vocab:
+                pretrained_alphabet.add(word)
+            elif word.lower() in pretrained_vocab:
+                pretrained_alphabet.add(word.lower())
+            elif word not in _START_VOCAB:
+                n_oov += 1
+        #vocab_size = min(len(pretrained_vocab), max_vocabulary_size)
+        logger.info("Loaded/Total Pretrained Vocab Size: %d/%d, OOV Words: %d" % (pretrained_alphabet.size(),len(pretrained_vocab),n_oov))
+        
+        pretrained_alphabet.save(alphabet_directory)
+    else:
+        pretrained_alphabet.load(alphabet_directory)
+        #pretrained_vocab = list(embedd_dict.keys())
+        #vocab_size = min(len(pretrained_vocab), max_vocabulary_size)
+        #assert pretrained_alphabet.size() == (vocab_size + 4)
+        
+    pretrained_alphabet.close()
+
+    return pretrained_alphabet

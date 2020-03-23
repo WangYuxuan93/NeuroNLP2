@@ -68,7 +68,7 @@ def drop_input_independent(word_embeddings, tag_embeddings, dropout_emb):
     return word_embeddings, tag_embeddings
 
 class DeepBiAffine(nn.Module):
-    def __init__(self, word_dim, num_words, char_dim, num_chars, pos_dim, num_pos, rnn_mode, 
+    def __init__(self, num_pretrained, word_dim, num_words, char_dim, num_chars, pos_dim, num_pos, rnn_mode, 
                  hidden_size, num_layers, num_labels, arc_space, type_space,
                  basic_word_embedding=True,
                  embedd_word=None, embedd_char=None, embedd_pos=None, p_in=0.33, p_out=0.33, 
@@ -84,11 +84,12 @@ class DeepBiAffine(nn.Module):
         self.minimize_logp = minimize_logp
         self.act_func = activation
         self.p_in = p_in
-        if self.basic_word_embedding:
-            self.basic_word_embed = nn.Embedding(num_words, word_dim, padding_idx=1)
-        else:
-            self.basic_word_embed = None
-        self.word_embed = nn.Embedding(num_words, word_dim, _weight=embedd_word, padding_idx=1)
+        #if self.basic_word_embedding:
+        self.basic_word_embed = nn.Embedding(num_words, word_dim, padding_idx=1)
+        #else:
+        #    self.basic_word_embed = None
+        self.word_embed = nn.Embedding(num_pretrained, word_dim, _weight=embedd_word, padding_idx=1)
+        self.word_embed.weight.requires_grad=False
         self.pos_embed = nn.Embedding(num_pos, pos_dim, _weight=embedd_pos, padding_idx=1) if pos else None
         if use_char:
             self.char_embed = nn.Embedding(num_chars, char_dim, _weight=embedd_char, padding_idx=1)
@@ -224,14 +225,19 @@ class DeepBiAffine(nn.Module):
             nn.init.xavier_uniform_(self.input_encoder.weight)
             nn.init.constant_(self.input_encoder.bias, 0.)
 
-    def _get_rnn_output(self, input_word, input_char, input_pos, mask=None):
+    def _get_rnn_output(self, input_word, input_pretrained, input_char, input_pos, mask=None):
+        
+        #print ("input_word:\n", input_word)
+        #print ("input_pretrained:\n", input_pretrained)
         # [batch, length, word_dim]
-        pre_word = self.word_embed(input_word)
+        pre_word = self.word_embed(input_pretrained)
         # apply dropout word on input
         #word = self.dropout_in(word)
         enc_word = pre_word
         if self.basic_word_embedding:
             basic_word = self.basic_word_embed(input_word)
+            #print ("pre_word:\n", pre_word)
+            #print ("basic_word:\n", basic_word)
             #basic_word = self.dropout_in(basic_word)
             enc_word = enc_word + basic_word
 
@@ -300,9 +306,9 @@ class DeepBiAffine(nn.Module):
 
         return (arc_h, arc_c), (type_h, type_c)
 
-    def forward(self, input_word, input_char, input_pos, mask=None):
+    def forward(self, input_word, input_pretrained, input_char, input_pos, mask=None):
         # output from rnn [batch, length, dim]
-        arc, type = self._get_rnn_output(input_word, input_char, input_pos, mask=mask)
+        arc, type = self._get_rnn_output(input_word, input_pretrained, input_char, input_pos, mask=mask)
         # [batch, length_head, length_child]
         #out_arc = self.biaffine(arc[0], arc[1], mask_query=mask, mask_key=mask)
         out_arc = self.biaffine(arc[1], arc[0])
@@ -383,9 +389,9 @@ class DeepBiAffine(nn.Module):
 
         return arc_correct.cpu().numpy(), type_correct.cpu().numpy(), total_arcs.cpu().numpy()
 
-    def loss(self, input_word, input_char, input_pos, heads, types, mask=None):
+    def loss(self, input_word, input_pretrained, input_char, input_pos, heads, types, mask=None):
         # out_arc shape [batch, length_head, length_child]
-        out_arc, out_type  = self(input_word, input_char, input_pos, mask=mask)
+        out_arc, out_type  = self(input_word, input_pretrained, input_char, input_pos, mask=mask)
         # out_type shape [batch, length, type_space]
         type_h, type_c = out_type
 
@@ -431,6 +437,7 @@ class DeepBiAffine(nn.Module):
         # [batch, length - 1] -> [batch] remove the symbolic root.
         return loss_arc[:, 1:].sum(dim=1), loss_type[:, 1:].sum(dim=1), arc_correct, type_correct, total_arcs 
 
+    """
     def _decode_types(self, out_type, heads, leading_symbolic):
         # out_type shape [batch, length, type_space]
         type_h, type_c = out_type
@@ -463,8 +470,9 @@ class DeepBiAffine(nn.Module):
         types = self._decode_types(out_type, heads, leading_symbolic)
 
         return heads.cpu().numpy(), types.cpu().numpy()
+    """
 
-    def decode(self, input_word, input_char, input_pos, mask=None, leading_symbolic=0):
+    def decode(self, input_word, input_pretrained, input_char, input_pos, mask=None, leading_symbolic=0):
         """
         Args:
             input_word: Tensor
@@ -487,7 +495,7 @@ class DeepBiAffine(nn.Module):
 
         """
         # out_arc shape [batch, length_h, length_c]
-        out_arc, out_type = self(input_word, input_char, input_pos, mask=mask)
+        out_arc, out_type = self(input_word, input_pretrained, input_char, input_pos, mask=mask)
 
         # out_type shape [batch, length, type_space]
         type_h, type_c = out_type

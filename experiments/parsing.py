@@ -49,7 +49,9 @@ def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgra
     return optimizer, scheduler
 
 
-def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=1, batch_size=256):
+def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, 
+        device, beam=1, batch_size=256, write_to_tmp=True, prev_best_lcorr=0, prev_best_ucorr=0,
+        pred_filename=None):
     network.eval()
     accum_ucorr = 0.0
     accum_lcorr = 0.0
@@ -64,8 +66,19 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
     accum_root_corr = 0.0
     accum_total_root = 0.0
     accum_total_inst = 0.0
+    accum_recomp_freq = 0.0
+
+    all_words = []
+    all_postags = []
+    all_heads_pred = []
+    all_types_pred = []
+    all_lengths = []
+    all_src_words = []
+    all_heads_by_layer = []
+
     for data in iterate_data(data, batch_size):
         words = data['WORD'].to(device)
+        pres = data['PRETRAINED'].to(device)
         chars = data['CHAR'].to(device)
         postags = data['POS'].to(device)
         heads = data['HEAD'].numpy()
@@ -73,18 +86,31 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         lengths = data['LENGTH'].numpy()
         if alg == 'graph':
             masks = data['MASK'].to(device)
-            heads_pred, types_pred = network.decode(words, chars, postags, mask=masks, leading_symbolic=conllx_data.NUM_SYMBOLIC_TAGS)
+            heads_pred, types_pred = network.decode(words, pres, chars, postags, mask=masks, leading_symbolic=conllx_data.NUM_SYMBOLIC_TAGS)
         else:
             masks = data['MASK_ENC'].to(device)
             heads_pred, types_pred = network.decode(words, chars, postags, mask=masks, beam=beam, leading_symbolic=conllx_data.NUM_SYMBOLIC_TAGS)
 
         words = words.cpu().numpy()
         postags = postags.cpu().numpy()
-        pred_writer.write(words, postags, heads_pred, types_pred, lengths, symbolic_root=True, src_words=data['SRC'])
-        #gold_writer.write(words, postags, heads, types, lengths, symbolic_root=True, src_words=data['SRC'])
 
+        if write_to_tmp:
+            pred_writer.write(words, postags, heads_pred, types_pred, lengths, symbolic_root=True, src_words=data['SRC'])
+        else:
+            all_words.append(words)
+            all_postags.append(postags)
+            all_heads_pred.append(heads_pred)
+            all_types_pred.append(types_pred)
+            all_lengths.append(lengths)
+            all_src_words.append(data['SRC'])
+
+        #gold_writer.write(words, postags, heads, types, lengths, symbolic_root=True)
+        #print ("heads_pred:\n", heads_pred)
+        #print ("types_pred:\n", types_pred)
+        #print ("heads:\n", heads)
         stats, stats_nopunc, stats_root, num_inst = parser.eval(words, postags, heads_pred, types_pred, heads, types,
-                                                                word_alphabet, pos_alphabet, lengths, punct_set=punct_set, symbolic_root=True)
+                                                                word_alphabet, pos_alphabet, lengths, punct_set=punct_set, 
+                                                                symbolic_root=True)
         ucorr, lcorr, total, ucm, lcm = stats
         ucorr_nopunc, lcorr_nopunc, total_nopunc, ucm_nopunc, lcm_nopunc = stats_nopunc
         corr_root, total_root = stats_root
@@ -114,6 +140,26 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         accum_lcorr_nopunc * 100 / accum_total_nopunc,
         accum_ucomlpete_nopunc * 100 / accum_total_inst, accum_lcomplete_nopunc * 100 / accum_total_inst))
     print('Root: corr: %d, total: %d, acc: %.2f%%' %(accum_root_corr, accum_total_root, accum_root_corr * 100 / accum_total_root))
+    
+    if not write_to_tmp:
+        if prev_best_lcorr < accum_lcorr_nopunc or (prev_best_lcorr == accum_lcorr_nopunc and prev_best_ucorr < accum_ucorr_nopunc):
+            print ('### Writing New Best Dev Prediction File ... ###')
+            pred_writer.start(pred_filename)
+            #words = np.concatenate(all_words, axis=0)
+            #postags = np.concatenate(all_postags, axis=0)
+            #heads_pred = np.concatenate(all_heads_pred, axis=0)
+            #types_pred = np.concatenate(all_types_pred, axis=0)
+            #lengths = np.concatenate(all_lengths, axis=0)
+            #src_words = np.concatenate(all_src_words, axis=0)
+            #if get_head_by_layer:
+            #    heads_by_layer = np.concatenate(all_heads_by_layer, axis=0)
+            #else:
+            #    heads_by_layer = None
+            for i in range(len(all_words)):
+                pred_writer.write(all_words[i], all_postags[i], all_heads_pred[i], all_types_pred[i], 
+                                all_lengths[i], symbolic_root=True, src_words=all_src_words[i])
+            pred_writer.close()
+
     return (accum_ucorr, accum_lcorr, accum_ucomlpete, accum_lcomplete, accum_total), \
            (accum_ucorr_nopunc, accum_lcorr_nopunc, accum_ucomlpete_nopunc, accum_lcomplete_nopunc, accum_total_nopunc), \
            (accum_root_corr, accum_total_root, accum_total_inst)
@@ -173,13 +219,16 @@ def train(args):
     word_alphabet, char_alphabet, pos_alphabet, type_alphabet = conllx_data.create_alphabets(alphabet_path, train_path,
                                                                                              data_paths=[dev_path, test_path],
                                                                                              embedd_dict=word_dict, max_vocabulary_size=200000)
+    pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path, word_dict, word_alphabet.instances, max_vocabulary_size=200000)
 
     num_words = word_alphabet.size()
+    num_pretrained = pretrained_alphabet.size()
     num_chars = char_alphabet.size()
     num_pos = pos_alphabet.size()
     num_types = type_alphabet.size()
 
     logger.info("Word Alphabet Size: %d" % num_words)
+    logger.info("Pretrained Alphabet Size: %d" % num_pretrained)
     logger.info("Character Alphabet Size: %d" % num_chars)
     logger.info("POS Alphabet Size: %d" % num_pos)
     logger.info("Type Alphabet Size: %d" % num_types)
@@ -195,10 +244,11 @@ def train(args):
 
     def construct_word_embedding_table():
         scale = np.sqrt(3.0 / word_dim)
-        table = np.empty([word_alphabet.size(), word_dim], dtype=np.float32)
+        #table = np.empty([word_alphabet.size(), word_dim], dtype=np.float32)
+        table = np.empty([pretrained_alphabet.size(), word_dim], dtype=np.float32)
         table[conllx_data.UNK_ID, :] = np.zeros([1, word_dim]).astype(np.float32) if freeze else np.random.uniform(-scale, scale, [1, word_dim]).astype(np.float32)
         oov = 0
-        for word, index in word_alphabet.items():
+        for word, index in pretrained_alphabet.items():
             if word in word_dict:
                 embedding = word_dict[word]
             elif word.lower() in word_dict:
@@ -272,7 +322,7 @@ def train(args):
         inter_dropout_prob = hyps['inter_dropout_prob']
         attention_probs_dropout_prob = hyps['attention_probs_dropout_prob']
 
-        network = DeepBiAffine(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
+        network = DeepBiAffine(num_pretrained, word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                                mode, hidden_size, num_layers, num_types, arc_space, type_space,
                                basic_word_embedding=basic_word_embedding,
                                embedd_word=word_table, embedd_char=char_table,
@@ -329,9 +379,12 @@ def train(args):
 
     logger.info("Reading Data")
     if alg == 'graph':
-        data_train = conllx_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True)
-        data_dev = conllx_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True)
-        data_test = conllx_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True)
+        data_train = conllx_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
+                                                    pre_alphabet=pretrained_alphabet)
+        data_dev = conllx_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
+                                                    pre_alphabet=pretrained_alphabet)
+        data_test = conllx_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
+                                                    pre_alphabet=pretrained_alphabet)
     else:
         data_train = conllx_stacked_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, prior_order=prior_order)
         data_dev = conllx_stacked_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, prior_order=prior_order)
@@ -407,6 +460,7 @@ def train(args):
         for step, data in enumerate(iterate_data(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True)):
             optimizer.zero_grad()
             words = data['WORD'].to(device)
+            pres = data['PRETRAINED'].to(device)
             chars = data['CHAR'].to(device)
             postags = data['POS'].to(device)
             heads = data['HEAD'].to(device)
@@ -415,7 +469,7 @@ def train(args):
                 types = data['TYPE'].to(device)
                 masks = data['MASK'].to(device)
                 nwords = masks.sum() - nbatch
-                loss_arc, loss_type, arc_correct, type_correct, total_arcs = network.loss(words, chars, postags, heads, types, mask=masks)
+                loss_arc, loss_type, arc_correct, type_correct, total_arcs = network.loss(words, pres, chars, postags, heads, types, mask=masks)
             else:
                 masks_enc = data['MASK_ENC'].to(device)
                 masks_dec = data['MASK_DEC'].to(device)
@@ -491,14 +545,16 @@ def train(args):
             # evaluate performance on dev data
             with torch.no_grad():
                 pred_filename = os.path.join(result_path, 'pred_dev%d' % epoch)
-                pred_writer.start(pred_filename)
-                gold_filename = os.path.join(result_path, 'gold_dev%d' % epoch)
+                #pred_writer.start(pred_filename)
+                #gold_filename = os.path.join(result_path, 'gold_dev%d' % epoch)
                 #gold_writer.start(gold_filename)
 
                 print('Evaluating dev:')
-                dev_stats, dev_stats_nopunct, dev_stats_root = eval(alg, data_dev, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam)
+                dev_stats, dev_stats_nopunct, dev_stats_root = eval(alg, data_dev, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, 
+                                                                    beam=beam, write_to_tmp=False, prev_best_lcorr=best_lcorrect_nopunc,
+                                                                    prev_best_ucorr=best_ucorrect_nopunc, pred_filename=pred_filename)
 
-                pred_writer.close()
+                #pred_writer.close()
                 #gold_writer.close()
 
                 dev_ucorr, dev_lcorr, dev_ucomlpete, dev_lcomplete, dev_total = dev_stats
@@ -528,7 +584,7 @@ def train(args):
 
                     pred_filename = os.path.join(result_path, 'pred_test%d' % epoch)
                     pred_writer.start(pred_filename)
-                    gold_filename = os.path.join(result_path, 'gold_test%d' % epoch)
+                    #gold_filename = os.path.join(result_path, 'gold_test%d' % epoch)
                     #gold_writer.start(gold_filename)
 
                     print('Evaluating test:')
@@ -569,7 +625,8 @@ def train(args):
                     test_root_correct, test_total_root, test_root_correct * 100 / test_total_root, best_epoch))
                 print('=' * 125)
 
-                if patient >= reset:
+                if reset > 0 and patient >= reset:
+                    print ("### Reset optimizer state ###")
                     network.load_state_dict(torch.load(model_name, map_location=device))
                     scheduler.reset_state()
                     patient = 0
