@@ -10,55 +10,70 @@ from neuronlp2.nn import TreeCRF, VarGRU, VarRNN, VarLSTM, VarFastLSTM
 from neuronlp2.nn import BiAffine, BiAffine_v2, BiLinear, CharCNN
 from neuronlp2.tasks import parser
 from neuronlp2.nn.transformer import GraphAttentionV2Config, GraphAttentionModelV2
-from neuronlp2.nn.transformer import SelfAttentionConfig, SelfAttentionModel
+#from neuronlp2.nn.transformer import SelfAttentionConfig, SelfAttentionModel
+from neuronlp2.nn.self_attention import AttentionEncoderConfig, AttentionEncoder
 from neuronlp2.models.parsing import PositionEmbeddingLayer
 from neuronlp2.nn.hard_concrete import HardConcreteDist
+from neuronlp2.io import get_logger
 
 class EasyFirst(nn.Module):
-    def __init__(self, word_dim, num_words, char_dim, num_chars, pos_dim, num_pos, hidden_size, num_labels, arc_space, type_space,
-                 intermediate_size,
-                 device=torch.device('cpu'),
-                 hidden_dropout_prob=0.1, attention_probs_dropout_prob=0.1,
-                 graph_attention_hidden_dropout_prob=0.1,
-                 graph_attention_probs_dropout_prob=0,
-                 embedd_word=None, embedd_char=None, embedd_pos=None, p_in=0.33, p_out=0.33, 
-                 pos=True, use_char=False, activation='elu',
-                 dep_prob_depend_on_head=False, use_top2_margin=False, target_recomp_prob=0.25,
-                 extra_self_attention_layer=False, num_attention_heads=4,
-                 input_encoder='Linear', num_layers=3, p_rnn=(0.33, 0.33),
-                 input_self_attention_layer=False, num_input_attention_layers=3,
-                 maximize_unencoded_arcs_for_norc=False,
-                 encode_all_arc_for_rel=False, use_input_encode_for_rel=False,
-                 always_recompute=False, use_hard_concrete_dist=True, 
-                 hard_concrete_temp=0.1, hard_concrete_eps=0.1,
-                 apply_recomp_prob_first=False, num_graph_attention_layers=1, share_params=False,
-                 residual_from_input=False, transformer_drop_prob=0,
-                 num_graph_attention_heads=1, only_value_weight=False,
-                 encode_rel_type='gold', rel_dim=100, use_null_att_pos=True, end_word_id=3,
-                 num_arcs_per_pred=1, use_input_layer=True, use_sin_position_embedding=False):
+    def __init__(self, hyps, num_words, num_chars, num_pos, num_labels, device=torch.device('cpu'), 
+                  embedd_word=None, embedd_char=None, embedd_pos=None, end_word_id=3):
         super(EasyFirst, self).__init__()
+        self.hyps = hyps
         self.device = device
-        self.dep_prob_depend_on_head = dep_prob_depend_on_head
-        self.use_top2_margin = use_top2_margin
-        self.maximize_unencoded_arcs_for_norc = maximize_unencoded_arcs_for_norc
-        self.encode_all_arc_for_rel = encode_all_arc_for_rel
-        self.use_input_encode_for_rel = use_input_encode_for_rel
-        self.always_recompute = always_recompute
-        self.target_recomp_prob = target_recomp_prob
-        self.use_hard_concrete_dist = use_hard_concrete_dist
-        self.apply_recomp_prob_first = apply_recomp_prob_first
-        self.residual_from_input = residual_from_input
-        self.encode_rel_type = encode_rel_type
-        self.use_null_att_pos = use_null_att_pos
-        self.end_word_id = end_word_id
-        self.num_arcs_per_pred = num_arcs_per_pred
+        # for input embeddings
+        use_pos = hyps['use_pos']
+        use_char = hyps['use_char']
+        word_dim = hyps['word_dim']
+        pos_dim = hyps['pos_dim']
+        # for biaffine layer
+        arc_space = hyps['arc_space']
+        type_space = hyps['type_space']
+        p_in = hyps['p_in']
+        p_out = hyps['p_out']
+        activation = hyps['activation']
+        # for input encoder
+        input_encoder = hyps['input_encoder']
+        hidden_size = hyps['hidden_size']
+        num_layers = hyps['num_layers']
+        p_rnn = hyps['p_rnn']
+        # for GAT encoder
+        self.encode_rel_type = hyps['GAT']['encode_rel_type']
         if self.encode_rel_type == 'gold' or self.encode_rel_type == 'pred':
             self.do_encode_rel = True
         else:
             self.do_encode_rel = False
-
+        self.use_null_att_pos = hyps['GAT']['use_null_att_pos']
+        self.end_word_id = end_word_id
+        # for easyfirst parser
+        self.dep_prob_depend_on_head = hyps['dep_prob_depend_on_head']
+        self.use_top2_margin = hyps['use_top2_margin']
+        self.maximize_unencoded_arcs_for_norc = hyps['maximize_unencoded_arcs_for_norc']
+        self.encode_all_arc_for_rel = hyps['encode_all_arc_for_rel']
+        self.use_input_encode_for_rel = hyps['use_input_encode_for_rel']
+        self.always_recompute = hyps['always_recompute']
+        self.target_recomp_prob = hyps['target_recomp_prob']
+        self.apply_recomp_prob_first = hyps['apply_recomp_prob_first']
+        #recomp_att_dim = hyps['recomp_att_dim']
+        self.residual_from_input = hyps['residual_from_input']
+        transformer_drop_prob = hyps['transformer_drop_prob']
+        self.num_arcs_per_pred = hyps['num_arcs_per_pred']
+        # for hard concrete distribution
+        self.use_hard_concrete_dist = hyps['use_hard_concrete_dist']
+        hard_concrete_temp = hyps['hard_concrete_temp']
+        hard_concrete_eps = hyps['hard_concrete_eps']
+        
+        logger = get_logger("Network")
+        model = "{}-{}".format(hyps['model'], input_encoder)
+        logger.info("Network: %s, hidden=%d, act=%s" % (model, hidden_size, activation))
+        logger.info("##### Embeddings (POS tag: %s, Char: %s) #####" % (use_pos, use_char))
+        logger.info("dropout(in, out): (%.2f, %.2f)" % (p_in, p_out))
+        logger.info("##### Input Encoder (Type: %s, Layer: %d) #####" % (input_encoder, num_layers))
+        
+        # Initialization
         self.word_embed = nn.Embedding(num_words, word_dim, _weight=embedd_word, padding_idx=1)
-        self.pos_embed = nn.Embedding(num_pos, pos_dim, _weight=embedd_pos, padding_idx=1) if pos else None
+        self.pos_embed = nn.Embedding(num_pos, pos_dim, _weight=embedd_pos, padding_idx=1) if use_pos else None
         if use_char:
             self.char_embed = nn.Embedding(num_chars, char_dim, _weight=embedd_char, padding_idx=1)
             self.char_cnn = CharCNN(2, char_dim, char_dim, hidden_channels=char_dim * 4, activation=activation)
@@ -74,70 +89,104 @@ class EasyFirst(nn.Module):
         if self.residual_from_input:
             self.transformer_dropout = nn.Dropout2d(p=transformer_drop_prob)
 
-        dim_enc = word_dim
+        enc_dim = word_dim
         if use_char:
-            dim_enc += char_dim
-        if pos:
-            dim_enc += pos_dim
+            enc_dim += char_dim
+        if use_pos:
+            enc_dim += pos_dim
 
         self.input_encoder_type = input_encoder
         if input_encoder == 'Linear':
-            self.input_encoder = nn.Linear(dim_enc, hidden_size)
-            self.position_embedding_layer = PositionEmbeddingLayer(dim_enc, dropout_prob=0, 
+            self.input_encoder = nn.Linear(enc_dim, hidden_size)
+            self.position_embedding_layer = PositionEmbeddingLayer(enc_dim, dropout_prob=0, 
                                                                 max_position_embeddings=256)
             out_dim = hidden_size
         elif input_encoder == 'FastLSTM':
-            self.input_encoder = VarFastLSTM(dim_enc, hidden_size, num_layers=num_layers, batch_first=True, bidirectional=True, dropout=p_rnn)
+            self.input_encoder = VarFastLSTM(enc_dim, hidden_size, num_layers=num_layers, batch_first=True, bidirectional=True, dropout=p_rnn)
             out_dim = hidden_size * 2
         elif input_encoder == 'Transformer':
-            if not use_input_layer and not dim_enc == hidden_size:
-                print ("dim_enc ({}) does not match hidden_size ({}) with no input layer!".format(dim_enc, hidden_size))
+            num_attention_heads = hyps['num_attention_heads']
+            intermediate_size = hyps['intermediate_size']
+            hidden_act = hyps['hidden_act']
+            dropout_type = hyps['dropout_type']
+            embedding_dropout_prob = hyps['embedding_dropout_prob']
+            hidden_dropout_prob = hyps['hidden_dropout_prob']
+            inter_dropout_prob = hyps['inter_dropout_prob']
+            attention_probs_dropout_prob = hyps['attention_probs_dropout_prob']
+            use_input_layer = hyps['use_input_layer']
+            use_sin_position_embedding = hyps['use_sin_position_embedding']
+            freeze_position_embedding = hyps['freeze_position_embedding']
+            initializer = hyps['initializer']
+            if not use_input_layer and not enc_dim == hidden_size:
+                print ("enc_dim ({}) does not match hidden_size ({}) with no input layer!".format(enc_dim, hidden_size))
                 exit()
-            self.config = SelfAttentionConfig(input_size=dim_enc,
-                                        hidden_size=hidden_size,
-                                        num_hidden_layers=num_layers,
-                                        num_attention_heads=num_attention_heads,
-                                        intermediate_size=intermediate_size,
-                                        hidden_act="gelu",
-                                        embedding_dropout_prob=0.1,
-                                        hidden_dropout_prob=hidden_dropout_prob,
-                                        attention_probs_dropout_prob=attention_probs_dropout_prob,
-                                        use_input_layer=use_input_layer,
-                                        use_sin_position_embedding=use_sin_position_embedding,
-                                        max_position_embeddings=256,
-                                        initializer_range=0.02)
-            self.input_encoder = SelfAttentionModel(self.config)
+
+            self.attention_config = AttentionEncoderConfig(input_size=enc_dim,
+                                                    hidden_size=hidden_size,
+                                                    num_hidden_layers=num_layers,
+                                                    num_attention_heads=num_attention_heads,
+                                                    intermediate_size=intermediate_size,
+                                                    hidden_act=hidden_act,
+                                                    dropout_type=dropout_type,
+                                                    embedding_dropout_prob=embedding_dropout_prob,
+                                                    hidden_dropout_prob=hidden_dropout_prob,
+                                                    inter_dropout_prob=inter_dropout_prob,
+                                                    attention_probs_dropout_prob=attention_probs_dropout_prob,
+                                                    use_input_layer=use_input_layer,
+                                                    use_sin_position_embedding=use_sin_position_embedding,
+                                                    freeze_position_embedding=freeze_position_embedding,
+                                                    max_position_embeddings=256,
+                                                    initializer=initializer,
+                                                    initializer_range=0.02)
+            self.input_encoder = AttentionEncoder(self.attention_config)
             out_dim = hidden_size
+            logger.info("dropout(emb, hidden, inter, att): (%.2f, %.2f, %.2f, %.2f)" % (embedding_dropout_prob, 
+                                hidden_dropout_prob, inter_dropout_prob, attention_probs_dropout_prob))
+            logger.info("Use Sin Position Embedding: %s (Freeze it: %s)" % (use_sin_position_embedding, freeze_position_embedding))
+            logger.info("Use Input Layer: %s" % use_input_layer)
+            logger.info("Residual From Input Layer: %s (transformer dropout: %.2f)" % (self.residual_from_input, transformer_drop_prob))
         elif input_encoder == 'None':
             self.input_encoder = None
-            out_dim = dim_enc
+            out_dim = enc_dim
         else:
             self.input_encoder = None
-            out_dim = dim_enc
+            out_dim = enc_dim
 
-        self.config = GraphAttentionV2Config(input_size=out_dim,
-                                            hidden_size=hidden_size,
-                                            arc_space=arc_space,
-                                            num_attention_heads=num_graph_attention_heads,
-                                            num_graph_attention_layers=num_graph_attention_layers,
-                                            share_params=share_params,
-                                            only_value_weight=only_value_weight,
-                                            intermediate_size=intermediate_size,
-                                            hidden_act="gelu",
-                                            hidden_dropout_prob=graph_attention_hidden_dropout_prob,
-                                            graph_attention_probs_dropout_prob=graph_attention_probs_dropout_prob,
-                                            use_input_layer=use_input_layer,
-                                            use_sin_position_embedding=use_sin_position_embedding,
-                                            max_position_embeddings=256,
-                                            initializer_range=0.02,
-                                            extra_self_attention_layer=extra_self_attention_layer,
-                                            input_self_attention_layer=input_self_attention_layer,
-                                            num_input_attention_layers=num_input_attention_layers,
-                                            rel_dim=rel_dim, do_encode_rel=self.do_encode_rel,
-                                            use_null_att_pos=use_null_att_pos)
+        # for GAT encoder
 
-        self.graph_attention = GraphAttentionModelV2(self.config)
+        self.gat_config = GraphAttentionV2Config(input_size=out_dim,
+                                                hidden_size=hyps['GAT']['hidden_size'],
+                                                num_graph_attention_layers=hyps['GAT']['num_layers'],
+                                                num_attention_heads=hyps['GAT']['num_attention_heads'],
+                                                share_params=hyps['GAT']['share_params'],
+                                                only_value_weight=hyps['GAT']['only_value_weight'],
+                                                intermediate_size=hyps['GAT']['intermediate_size'],
+                                                hidden_act=hyps['GAT']['hidden_act'],
+                                                hidden_dropout_prob=hyps['GAT']['hidden_dropout_prob'],
+                                                graph_attention_probs_dropout_prob=hyps['GAT']['attention_probs_dropout_prob'],
+                                                use_input_layer=hyps['GAT']['use_input_layer'],
+                                                use_sin_position_embedding=hyps['GAT']['use_sin_position_embedding'],
+                                                max_position_embeddings=256, initializer_range=0.02,
+                                                rel_dim=hyps['GAT']['rel_dim'], do_encode_rel=self.do_encode_rel,
+                                                use_null_att_pos=hyps['GAT']['use_null_att_pos'])
 
+        self.graph_attention = GraphAttentionModelV2(self.gat_config)
+
+        logger.info("##### Graph Encoder (Layers: %s, Share Params:%s) #####"% (hyps['GAT']['num_layers'], hyps['GAT']['share_params']))
+        logger.info("dropout(emb, hidden, inter, att): (%.2f, %.2f, %.2f, %.2f)" % (hyps['GAT']['embedding_dropout_prob'],
+                hyps['GAT']['hidden_dropout_prob'],hyps['GAT']['inter_dropout_prob'], hyps['GAT']['attention_probs_dropout_prob']))
+        logger.info("Only Use Value Weight: %s" % hyps['GAT']['only_value_weight'])
+        logger.info("Attend to END if no head: %s" % hyps['GAT']['use_null_att_pos'])
+        logger.info("Encode Relation Type: %s (rel embed dim: %d)" % (self.encode_rel_type, hyps['GAT']['rel_dim']))
+        logger.info("Use Hard Concrete Distribution: %s (Temperature: %.2f, Epsilon: %.2f, Apply Prob First: %s)" % (self.use_hard_concrete_dist,
+                                                                        hard_concrete_temp, hard_concrete_eps, self.apply_recomp_prob_first))
+        logger.info("##### Parser #####")
+        logger.info("Number of Arcs per Prediction: %d" % self.num_arcs_per_pred)
+        logger.info("Always Recompute after Generation: %s" % self.always_recompute)
+        logger.info("Maximize All Unencoded Arcs for No Recompute: %s" % self.maximize_unencoded_arcs_for_norc)
+        logger.info("Encode All Arcs for Relation Prediction: %s" % self.encode_all_arc_for_rel)
+        logger.info("Only Use Input Encoder for Relation Prediction: %s" % self.use_input_encode_for_rel)
+    
         graph_attention_dim = hidden_size
         self.arc_h = nn.Linear(graph_attention_dim, arc_space)
         self.arc_c = nn.Linear(graph_attention_dim, arc_space)
@@ -191,6 +240,7 @@ class EasyFirst(nn.Module):
             self.l2_loss.to(device)
             self.criterion.to(device)
         self.reset_parameters(embedd_word, embedd_char, embedd_pos)
+        logger.info('# of Parameters: %d' % (sum([param.numel() for param in self.parameters()])))
 
     def reset_parameters(self, embedd_word, embedd_char, embedd_pos):
         if embedd_word is None:

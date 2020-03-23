@@ -766,7 +766,6 @@ class GraphAttentionV2Config(object):
     def __init__(self,
                 input_size=100,
                 hidden_size=768,
-                arc_space=600,
                 num_graph_attention_layers=1,
                 num_attention_heads=1,
                 share_params=False,
@@ -810,7 +809,6 @@ class GraphAttentionV2Config(object):
         """
         self.input_size = input_size
         self.hidden_size = hidden_size
-        self.arc_space = arc_space
         self.num_attention_heads = num_attention_heads
         self.num_graph_attention_layers = num_graph_attention_layers
         self.hidden_act = hidden_act

@@ -180,15 +180,21 @@ class Linear(nn.Module):
         super(Linear,self).__init__()
         self.linear = nn.Linear(d_in,d_out,bias=bias)
         if initializer == 'orthogonal':
+            print ("Initializing attention encoder linear with orthogonal ...")
             nn.init.orthogonal_(self.linear.weight)
             if bias:
                 reset_bias_with_orthogonal(self.linear.bias)
         elif initializer == 'xavier_normal':
+            print ("Initializing attention encoder linear with xavier_normal ...")
             nn.init.xavier_normal_(self.linear.weight)
         elif initializer == 'xavier_uniform':
+            print ("Initializing attention encoder linear with xavier_uniform ...")
             nn.init.xavier_uniform_(self.linear.weight)
         elif initializer == 'kaiming_uniform':
+            print ("Initializing attention encoder linear with kaiming_uniform ...")
             nn.init.kaiming_uniform_(self.linear.weight, nonlinearity='relu')
+        else:
+            print ("Initializing attention encoder linear by default ...")
         
 
     def forward(self,x):

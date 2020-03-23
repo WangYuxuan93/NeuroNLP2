@@ -30,6 +30,7 @@ from neuronlp2.io import CoNLLXWriter
 from neuronlp2.tasks import parser
 from neuronlp2.nn.utils import freeze_embedding
 from neuronlp2.io.common import END
+from neuronlp2.nn.transformer import GraphAttentionV2Config, SelfAttentionConfig
 
 def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgrad, weight_decay, warmup_steps):
     if optim == 'sgd':
@@ -310,56 +311,14 @@ def train(args):
         char_dim = hyps['char_dim']
     mode = hyps['transformer_mode']
     target_recomp_prob = hyps['target_recomp_prob']
-    use_pos = hyps['pos']
-    use_char = hyps['use_char']
     use_chosen_head = hyps['use_chosen_head']
     use_whole_seq = hyps['use_whole_seq']
-    pos_dim = hyps['pos_dim']
-    hidden_size = hyps['hidden_size']
-    arc_space = hyps['arc_space']
-    type_space = hyps['type_space']
-    p_in = hyps['p_in']
-    p_out = hyps['p_out']
-    activation = hyps['activation']
     loss_interpolation = hyps['loss_interpolation']
     recomp_ratio = hyps['recomp_ratio']
+    use_null_att_pos=hyps['GAT']['use_null_att_pos']
     always_recompute = hyps['always_recompute']
-    use_hard_concrete_dist = hyps['use_hard_concrete_dist']
-    hc_temp = hyps['hard_concrete_temp']
-    hc_eps = hyps['hard_concrete_eps']
-    apply_recomp_prob_first = hyps['apply_recomp_prob_first']
-
-    num_attention_heads = hyps['num_attention_heads']
-    intermediate_size = hyps['intermediate_size']
-    p_hid = hyps['hidden_dropout_prob']
-    p_att = hyps['attention_probs_dropout_prob']
-    p_graph_hid = hyps['graph_attention_hidden_dropout_prob']
-    p_graph_att = hyps['graph_attention_probs_dropout_prob']
-    recomp_att_dim = hyps['recomp_att_dim']
-    dep_prob_depend_on_head = hyps['dep_prob_depend_on_head']
-    use_top2_margin = hyps['use_top2_margin']
-    extra_self_attention_layer = hyps['extra_self_attention_layer']
-    input_self_attention_layer = hyps['input_self_attention_layer']
-    num_input_attention_layers = hyps['num_input_attention_layers']
-    num_attention_heads = hyps['num_attention_heads']
-    input_encoder = hyps['input_encoder']
-    num_layers = hyps['num_layers']
-    p_rnn = hyps['p_rnn']
-    maximize_unencoded_arcs_for_norc = hyps['maximize_unencoded_arcs_for_norc']
-    encode_all_arc_for_rel = hyps['encode_all_arc_for_rel']
-    use_input_encode_for_rel = hyps['use_input_encode_for_rel']
-    num_graph_attention_layers = hyps['num_graph_attention_layers']
-    share_params = hyps['share_params']
-    residual_from_input = hyps['residual_from_input']
-    transformer_drop_prob = hyps['transformer_drop_prob']
-    num_graph_attention_heads = hyps['num_graph_attention_heads']
-    only_value_weight = hyps['only_value_weight']
-    encode_rel_type = hyps['encode_rel_type']
-    rel_dim = hyps['rel_dim']
-    use_null_att_pos = hyps['use_null_att_pos']
     num_arcs_per_pred = hyps['num_arcs_per_pred']
-    use_input_layer = hyps['use_input_layer']
-    use_sin_position_embedding = hyps['use_sin_position_embedding']
+
     if use_null_att_pos:
         end_word_id = word_alphabet.get_index(END)
     else:
@@ -371,76 +330,19 @@ def train(args):
     num_gpu = torch.cuda.device_count()
 
     if model_type == 'EasyFirst':
-        network = EasyFirst(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
-                           hidden_size, num_types, arc_space, type_space,
-                           intermediate_size,
-                           device=device, 
-                           hidden_dropout_prob=p_hid,
-                           attention_probs_dropout_prob=p_att,
-                           graph_attention_hidden_dropout_prob=p_graph_hid,
-                           graph_attention_probs_dropout_prob=p_graph_att,
+        network = EasyFirst(hyps, num_words, num_chars, num_pos,
+                           num_types, device=device, 
                            embedd_word=word_table, embedd_char=char_table,
-                           p_in=p_in, p_out=p_out, pos=use_pos, use_char=use_char, 
-                           activation=activation, dep_prob_depend_on_head=dep_prob_depend_on_head, 
-                           use_top2_margin=use_top2_margin, target_recomp_prob=target_recomp_prob,
-                           extra_self_attention_layer=extra_self_attention_layer,
-                           num_attention_heads=num_attention_heads,
-                           input_encoder=input_encoder, num_layers=num_layers, p_rnn=p_rnn,
-                           input_self_attention_layer=input_self_attention_layer,
-                           num_input_attention_layers=num_input_attention_layers,
-                           maximize_unencoded_arcs_for_norc=maximize_unencoded_arcs_for_norc,
-                           encode_all_arc_for_rel=encode_all_arc_for_rel,
-                           use_input_encode_for_rel=use_input_encode_for_rel,
-                           always_recompute=always_recompute,
-                           use_hard_concrete_dist=use_hard_concrete_dist, 
-                           hard_concrete_temp=hc_temp, hard_concrete_eps=hc_eps,
-                           apply_recomp_prob_first=apply_recomp_prob_first,
-                           num_graph_attention_layers=num_graph_attention_layers,
-                           share_params=share_params, residual_from_input=residual_from_input,
-                           transformer_drop_prob=transformer_drop_prob,
-                           num_graph_attention_heads=num_graph_attention_heads, 
-                           only_value_weight=only_value_weight,
-                           encode_rel_type=encode_rel_type, rel_dim=rel_dim,
-                           use_null_att_pos=use_null_att_pos, end_word_id=end_word_id,
-                           num_arcs_per_pred=num_arcs_per_pred, use_input_layer=use_input_layer, 
-                           use_sin_position_embedding=use_sin_position_embedding)
+                           end_word_id=end_word_id)
     elif model_type == 'EasyFirstV2':
-        network = EasyFirstV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
-                           hidden_size, num_types, arc_space, type_space,
-                           intermediate_size,
-                           device=device, 
-                           hidden_dropout_prob=p_hid,
-                           attention_probs_dropout_prob=p_att,
-                           graph_attention_hidden_dropout_prob=p_graph_hid,
-                           graph_attention_probs_dropout_prob=p_graph_att,
+        network = EasyFirstV2(hyps, num_words, num_chars, num_pos,
+                           num_types, device=device, 
                            embedd_word=word_table, embedd_char=char_table,
-                           p_in=p_in, p_out=p_out, pos=use_pos, use_char=use_char, 
-                           activation=activation, dep_prob_depend_on_head=dep_prob_depend_on_head, 
-                           use_top2_margin=use_top2_margin, target_recomp_prob=target_recomp_prob,
-                           extra_self_attention_layer=extra_self_attention_layer,
-                           num_attention_heads=num_attention_heads,
-                           input_encoder=input_encoder, num_layers=num_layers, p_rnn=p_rnn,
-                           input_self_attention_layer=input_self_attention_layer,
-                           num_input_attention_layers=num_input_attention_layers,
-                           maximize_unencoded_arcs_for_norc=maximize_unencoded_arcs_for_norc,
-                           encode_all_arc_for_rel=encode_all_arc_for_rel,
-                           use_input_encode_for_rel=use_input_encode_for_rel,
-                           always_recompute=always_recompute,
-                           use_hard_concrete_dist=use_hard_concrete_dist, 
-                           hard_concrete_temp=hc_temp, hard_concrete_eps=hc_eps,
-                           apply_recomp_prob_first=apply_recomp_prob_first,
-                           num_graph_attention_layers=num_graph_attention_layers,
-                           share_params=share_params, residual_from_input=residual_from_input,
-                           transformer_drop_prob=transformer_drop_prob,
-                           num_graph_attention_heads=num_graph_attention_heads, 
-                           only_value_weight=only_value_weight,
-                           encode_rel_type=encode_rel_type, rel_dim=rel_dim,
-                           use_null_att_pos=use_null_att_pos, end_word_id=end_word_id,
-                           num_arcs_per_pred=num_arcs_per_pred, use_input_layer=use_input_layer, 
-                           use_sin_position_embedding=use_sin_position_embedding)
+                           end_word_id=end_word_id)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
+    logger.info("Sampler: %s (Explore: %s)" % (sampler, explore))
     if fine_tune:
         logger.info("Fine-tuning: Loading model from %s" % model_name)
         network.load_state_dict(torch.load(model_name))
@@ -455,34 +357,6 @@ def train(args):
     if freeze:
         freeze_embedding(network.word_embed)
 
-    #network = network.to(device)
-    model = "{}-{}".format(model_type, mode)
-    logger.info("Network: %s, hidden=%d, act=%s" % (model, hidden_size, activation))
-    logger.info("Sampler: %s (Explore: %s)" % (sampler, explore))
-    logger.info("##### Input Encoder (Type: %s, Layer: %d) ###" % (input_encoder, num_layers))
-    logger.info("dropout(in, out, hidden, att): (%.2f, %.2f, %.2f, %.2f)" % (p_in, p_out, p_hid, p_att))
-    logger.info("Use POS tag: %s" % use_pos)
-    logger.info("Use Char: %s" % use_char)
-    logger.info("Use Sin Position Embedding: %s" % use_sin_position_embedding)
-    logger.info("Use Input Layer: %s" % use_input_layer)
-    logger.info("Residual From Input Layer: %s (transformer dropout: %.2f)" % (residual_from_input, transformer_drop_prob))
-    logger.info("##### Graph Encoder (Layers: %s, Share Params:%s) #####"% (num_graph_attention_layers, share_params))
-    logger.info("dropout(graph_hid, graph_att): (%.2f, %.2f)" % (p_graph_hid, p_graph_att))
-    logger.info("Number of Arcs per Prediction: %d" % num_arcs_per_pred)
-    logger.info("Only Use Value Weight: %s" % only_value_weight)
-    logger.info("Attend to END if no head: %s" % use_null_att_pos)
-    logger.info("Encode Relation Type: %s (rel embed dim: %d)" % (encode_rel_type, rel_dim))
-    logger.info("Use Input Self Attention Layer: %s (Layer: %d)" % (input_self_attention_layer, num_input_attention_layers))
-    logger.info("Use Top Self Attention Layer: %s" % extra_self_attention_layer)
-    logger.info("Use Hard Concrete Distribution: %s (Temperature: %.2f, Epsilon: %.2f, Apply Prob First: %s)" % (use_hard_concrete_dist,
-                                                                                        hc_temp, hc_eps, apply_recomp_prob_first))
-    logger.info("##### Parser #####")
-    logger.info("Always Recompute after Generation: %s" % always_recompute)
-    logger.info("Maximize All Unencoded Arcs for No Recompute: %s" % maximize_unencoded_arcs_for_norc)
-    logger.info("Encode All Arcs for Relation Prediction: %s" % encode_all_arc_for_rel)
-    logger.info("Only Use Input Encoder for Relation Prediction: %s" % use_input_encode_for_rel)
-    logger.info('# of Parameters: %d' % (sum([param.numel() for param in network.parameters()])))
-    
     symbolic_end = args.symbolic_end
     logger.info("Reading Data (symbolic end: %s)" % symbolic_end)
     if use_null_att_pos and not symbolic_end:
@@ -930,10 +804,10 @@ def parse(args):
 
     num_attention_heads = hyps['num_attention_heads']
     intermediate_size = hyps['intermediate_size']
-    p_hid = hyps['hidden_dropout_prob']
-    p_att = hyps['attention_probs_dropout_prob']
-    p_graph_hid = hyps['graph_attention_hidden_dropout_prob']
-    p_graph_att = hyps['graph_attention_probs_dropout_prob']
+    hidden_dropout_prob = hyps['hidden_dropout_prob']
+    attention_probs_dropout_prob = hyps['attention_probs_dropout_prob']
+    p_graph_hid = hyps['gat_hidden_dropout_prob']
+    p_graph_att = hyps['gat_probs_dropout_prob']
     recomp_att_dim = hyps['recomp_att_dim']
     dep_prob_depend_on_head = hyps['dep_prob_depend_on_head']
     use_top2_margin = hyps['use_top2_margin']
@@ -948,11 +822,11 @@ def parse(args):
     maximize_unencoded_arcs_for_norc = hyps['maximize_unencoded_arcs_for_norc']
     encode_all_arc_for_rel = hyps['encode_all_arc_for_rel']
     use_input_encode_for_rel = hyps['use_input_encode_for_rel']
-    num_graph_attention_layers = hyps['num_graph_attention_layers']
+    num_gat_layers = hyps['num_gat_layers']
     share_params = hyps['share_params']
     residual_from_input = hyps['residual_from_input']
     transformer_drop_prob = hyps['transformer_drop_prob']
-    num_graph_attention_heads = hyps['num_graph_attention_heads']
+    num_gat_heads = hyps['num_gat_heads']
     only_value_weight = hyps['only_value_weight']
     encode_rel_type = hyps['encode_rel_type']
     rel_dim = hyps['rel_dim']
@@ -974,10 +848,10 @@ def parse(args):
                            hidden_size, num_types, arc_space, type_space,
                            intermediate_size,
                            device=device, 
-                           hidden_dropout_prob=p_hid,
-                           attention_probs_dropout_prob=p_att,
-                           graph_attention_hidden_dropout_prob=p_graph_hid,
-                           graph_attention_probs_dropout_prob=p_graph_att,
+                           hidden_dropout_prob=hidden_dropout_prob,
+                           attention_probs_dropout_prob=attention_probs_dropout_prob,
+                           gat_hidden_dropout_prob=p_graph_hid,
+                           gat_probs_dropout_prob=p_graph_att,
                            p_in=p_in, p_out=p_out, pos=use_pos, use_char=use_char, 
                            activation=activation, dep_prob_depend_on_head=dep_prob_depend_on_head, 
                            use_top2_margin=use_top2_margin, target_recomp_prob=target_recomp_prob,
@@ -993,10 +867,10 @@ def parse(args):
                            use_hard_concrete_dist=use_hard_concrete_dist, 
                            hard_concrete_temp=hc_temp, hard_concrete_eps=hc_eps,
                            apply_recomp_prob_first=apply_recomp_prob_first,
-                           num_graph_attention_layers=num_graph_attention_layers,
+                           num_gat_layers=num_gat_layers,
                            share_params=share_params, residual_from_input=residual_from_input,
                            transformer_drop_prob=transformer_drop_prob,
-                           num_graph_attention_heads=num_graph_attention_heads, 
+                           num_gat_heads=num_gat_heads, 
                            only_value_weight=only_value_weight,
                            encode_rel_type=encode_rel_type, rel_dim=rel_dim,
                            use_null_att_pos=use_null_att_pos, end_word_id=end_word_id,
@@ -1007,10 +881,10 @@ def parse(args):
                            hidden_size, num_types, arc_space, type_space,
                            intermediate_size,
                            device=device, 
-                           hidden_dropout_prob=p_hid,
-                           attention_probs_dropout_prob=p_att,
-                           graph_attention_hidden_dropout_prob=p_graph_hid,
-                           graph_attention_probs_dropout_prob=p_graph_att,
+                           hidden_dropout_prob=hidden_dropout_prob,
+                           attention_probs_dropout_prob=attention_probs_dropout_prob,
+                           gat_hidden_dropout_prob=p_graph_hid,
+                           gat_probs_dropout_prob=p_graph_att,
                            p_in=p_in, p_out=p_out, pos=use_pos, use_char=use_char, 
                            activation=activation, dep_prob_depend_on_head=dep_prob_depend_on_head, 
                            use_top2_margin=use_top2_margin, target_recomp_prob=target_recomp_prob,
@@ -1026,10 +900,10 @@ def parse(args):
                            use_hard_concrete_dist=use_hard_concrete_dist, 
                            hard_concrete_temp=hc_temp, hard_concrete_eps=hc_eps,
                            apply_recomp_prob_first=apply_recomp_prob_first,
-                           num_graph_attention_layers=num_graph_attention_layers,
+                           num_gat_layers=num_gat_layers,
                            share_params=share_params, residual_from_input=residual_from_input,
                            transformer_drop_prob=transformer_drop_prob,
-                           num_graph_attention_heads=num_graph_attention_heads, 
+                           num_gat_heads=num_gat_heads, 
                            only_value_weight=only_value_weight,
                            encode_rel_type=encode_rel_type, rel_dim=rel_dim,
                            use_null_att_pos=use_null_att_pos, end_word_id=end_word_id,
