@@ -9,7 +9,8 @@ import torch.nn.functional as F
 from neuronlp2.nn import TreeCRF, VarGRU, VarRNN, VarLSTM, VarFastLSTM
 from neuronlp2.nn import BiAffine, BiAffine_v2, BiLinear, CharCNN
 from neuronlp2.tasks import parser
-from neuronlp2.nn.transformer import GraphAttentionV2Config, GraphAttentionModelV2
+#from neuronlp2.nn.transformer import GraphAttentionV2Config, GraphAttentionModelV2
+from neuronlp2.nn.graph_attention_network import GraphAttentionNetworkConfig, GraphAttentionNetwork
 #from neuronlp2.nn.transformer import SelfAttentionConfig, SelfAttentionModel
 from neuronlp2.nn.self_attention import AttentionEncoderConfig, AttentionEncoder
 from neuronlp2.models.parsing import PositionEmbeddingLayer
@@ -153,26 +154,31 @@ class EasyFirst(nn.Module):
             out_dim = enc_dim
 
         # for GAT encoder
+        logger.info("##### Graph Encoder (Layers: %s, Share Params:%s) #####"% (hyps['GAT']['num_layers'], hyps['GAT']['share_params']))
 
-        self.gat_config = GraphAttentionV2Config(input_size=out_dim,
+        self.gat_config = GraphAttentionNetworkConfig(input_size=out_dim,
                                                 hidden_size=hyps['GAT']['hidden_size'],
-                                                num_graph_attention_layers=hyps['GAT']['num_layers'],
+                                                num_layers=hyps['GAT']['num_layers'],
                                                 num_attention_heads=hyps['GAT']['num_attention_heads'],
                                                 share_params=hyps['GAT']['share_params'],
                                                 only_value_weight=hyps['GAT']['only_value_weight'],
                                                 intermediate_size=hyps['GAT']['intermediate_size'],
                                                 hidden_act=hyps['GAT']['hidden_act'],
+                                                dropout_type=hyps['GAT']['dropout_type'],
+                                                embedding_dropout_prob=hyps['GAT']['embedding_dropout_prob'],
                                                 hidden_dropout_prob=hyps['GAT']['hidden_dropout_prob'],
-                                                graph_attention_probs_dropout_prob=hyps['GAT']['attention_probs_dropout_prob'],
+                                                inter_dropout_prob=hyps['GAT']['inter_dropout_prob'],
+                                                attention_probs_dropout_prob=hyps['GAT']['attention_probs_dropout_prob'],
                                                 use_input_layer=hyps['GAT']['use_input_layer'],
                                                 use_sin_position_embedding=hyps['GAT']['use_sin_position_embedding'],
+                                                freeze_position_embedding=hyps['GAT']['freeze_position_embedding'],
                                                 max_position_embeddings=256, initializer_range=0.02,
+                                                initializer=hyps['GAT']['initializer'],
                                                 rel_dim=hyps['GAT']['rel_dim'], do_encode_rel=self.do_encode_rel,
                                                 use_null_att_pos=hyps['GAT']['use_null_att_pos'])
 
-        self.graph_attention = GraphAttentionModelV2(self.gat_config)
-
-        logger.info("##### Graph Encoder (Layers: %s, Share Params:%s) #####"% (hyps['GAT']['num_layers'], hyps['GAT']['share_params']))
+        self.graph_attention = GraphAttentionNetwork(self.gat_config)
+        
         logger.info("dropout(emb, hidden, inter, att): (%.2f, %.2f, %.2f, %.2f)" % (hyps['GAT']['embedding_dropout_prob'],
                 hyps['GAT']['hidden_dropout_prob'],hyps['GAT']['inter_dropout_prob'], hyps['GAT']['attention_probs_dropout_prob']))
         logger.info("Only Use Value Weight: %s" % hyps['GAT']['only_value_weight'])
@@ -180,6 +186,7 @@ class EasyFirst(nn.Module):
         logger.info("Encode Relation Type: %s (rel embed dim: %d)" % (self.encode_rel_type, hyps['GAT']['rel_dim']))
         logger.info("Use Hard Concrete Distribution: %s (Temperature: %.2f, Epsilon: %.2f, Apply Prob First: %s)" % (self.use_hard_concrete_dist,
                                                                         hard_concrete_temp, hard_concrete_eps, self.apply_recomp_prob_first))
+
         logger.info("##### Parser #####")
         logger.info("Number of Arcs per Prediction: %d" % self.num_arcs_per_pred)
         logger.info("Always Recompute after Generation: %s" % self.always_recompute)
