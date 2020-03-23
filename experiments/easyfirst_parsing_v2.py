@@ -31,15 +31,7 @@ from neuronlp2.tasks import parser
 from neuronlp2.nn.utils import freeze_embedding
 from neuronlp2.io.common import END
 from neuronlp2.nn.transformer import GraphAttentionV2Config, SelfAttentionConfig
-
-def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgrad, weight_decay, warmup_steps):
-    if optim == 'sgd':
-        optimizer = SGD(parameters, lr=learning_rate, momentum=0.9, weight_decay=weight_decay, nesterov=True)
-    else:
-        optimizer = AdamW(parameters, lr=learning_rate, betas=betas, eps=eps, amsgrad=amsgrad, weight_decay=weight_decay)
-    init_lr = 1e-7
-    scheduler = ExponentialScheduler(optimizer, lr_decay, warmup_steps, init_lr)
-    return optimizer, scheduler
+from neuronlp2.optim.optimizer import get_optimizer
 
 
 def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, 
@@ -187,8 +179,10 @@ def train(args):
     batch_size = args.batch_size
     step_batch_size = args.step_batch_size
     optim = args.optim
+    schedule = args.schedule
     learning_rate = args.learning_rate
     lr_decay = args.lr_decay
+    decay_steps = args.decay_steps
     amsgrad = args.amsgrad
     eps = args.eps
     betas = (args.beta1, args.beta2)
@@ -370,6 +364,12 @@ def train(args):
     data_test = conllx_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
                                         mask_out_root=False, symbolic_end=symbolic_end)
     
+    if schedule == 'step':
+        logger.info("Scheduler: %s, init lr=%.6f, lr decay=%.6f, decay_steps=%d, warmup_steps=%d" % (schedule, learning_rate, lr_decay, decay_steps, warmup_steps))
+    elif schedule == 'attention':
+        logger.info("Scheduler: %s, init lr=%.6f, warmup_steps=%d" % (schedule, learning_rate, warmup_steps))
+    elif schedule == 'exponential':
+        logger.info("Scheduler: %s, init lr=%.6f, lr decay=%.6f, warmup_steps=%d" % (schedule, learning_rate, lr_decay, warmup_steps))
 
     num_data = sum(data_train[1])
     logger.info("training: #training data: %d, batch: %d, unk replace: %.2f" % (num_data, batch_size, unk_replace))
@@ -380,7 +380,9 @@ def train(args):
 
     pred_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, type_alphabet)
     gold_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, type_alphabet)
-    optimizer, scheduler = get_optimizer(network.parameters(), optim, learning_rate, lr_decay, betas, eps, amsgrad, weight_decay, warmup_steps)
+    optimizer, scheduler = get_optimizer(network.parameters(), optim, learning_rate, 
+                            lr_decay, betas, eps, amsgrad, weight_decay, warmup_steps,
+                            schedule, hyps['hidden_size'], decay_steps)
 
     best_ucorrect = 0.0
     best_lcorrect = 0.0
@@ -437,7 +439,9 @@ def train(args):
         num_nans = 0
         network.train()
         lr = scheduler.get_lr()[0]
-        print('Epoch %d (%s, lr=%.6f, lr decay=%.6f, grad clip=%.1f, l2=%.1e): ' % (epoch, opt_info, lr, lr_decay, grad_clip, weight_decay))
+        total_step = scheduler.get_total_step()
+        print('Epoch %d, Step %d (%s, scheduler: %s, lr=%.6f, lr decay=%.6f, grad clip=%.1f, l2=%.1e): ' % (epoch, total_step, opt_info, schedule, lr, lr_decay, grad_clip, weight_decay))
+        #print('Epoch %d (%s, lr=%.6f, lr decay=%.6f, grad clip=%.1f, l2=%.1e): ' % (epoch, opt_info, lr, lr_decay, grad_clip, weight_decay))
         #if args.cuda:
         #    torch.cuda.empty_cache()
         gc.collect()
@@ -733,7 +737,7 @@ def train(args):
                     test_root_correct, test_total_root, test_root_correct * 100 / (test_total_root+1e-9), test_recomp_freq, best_epoch))
                 print('=' * 125)
 
-                if patient >= reset:
+                if reset > 0 and patient >= reset:
                     logger.info('reset optimizer momentums')
                     single_network.load_state_dict(torch.load(model_name, map_location=device))
                     scheduler.reset_state()
@@ -962,11 +966,13 @@ if __name__ == '__main__':
     args_parser.add_argument('--step_batch_size', type=int, default=16, help='Number of steps in each batch (for easyfirst parsing)')
     args_parser.add_argument('--loss_type', choices=['sentence', 'token'], default='sentence', help='loss type (default: sentence)')
     args_parser.add_argument('--optim', choices=['sgd', 'adam'], help='type of optimizer')
+    args_parser.add_argument('--schedule', choices=['exponential', 'attention', 'step'], help='type of lr scheduler')
     args_parser.add_argument('--learning_rate', type=float, default=0.1, help='Learning rate')
     args_parser.add_argument('--beta1', type=float, default=0.9, help='beta1 of Adam')
     args_parser.add_argument('--beta2', type=float, default=0.999, help='beta2 of Adam')
     args_parser.add_argument('--eps', type=float, default=1e-8, help='epsilon for adam or adamax')
     args_parser.add_argument('--lr_decay', type=float, default=0.999995, help='Decay rate of learning rate')
+    args_parser.add_argument('--decay_steps', type=int, default=5000, help='Number of steps to apply lr decay')
     args_parser.add_argument('--amsgrad', action='store_true', help='AMS Grad')
     args_parser.add_argument('--grad_clip', type=float, default=0, help='max norm for gradient clip (default 0: no clip')
     args_parser.add_argument('--warmup_steps', type=int, default=0, metavar='N', help='number of steps to warm up (default: 0)')

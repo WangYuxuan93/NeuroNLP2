@@ -7,7 +7,7 @@
   "use_pos": true,
   "use_char": false,
   "input_encoder": "Transformer",
-  "num_layers": 1,
+  "num_layers": 8,
   "num_attention_heads": 4,
   "hidden_size": 200,
   "intermediate_size": 800,
@@ -22,7 +22,7 @@
   "freeze_position_embedding": false,
   "initializer": "default",
   "GAT": {
-    "num_layers": 3,
+    "num_layers": 1,
     "num_attention_heads": 4,
     "share_params": false,
     "only_value_weight": false,

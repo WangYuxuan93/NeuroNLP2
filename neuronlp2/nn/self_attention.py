@@ -338,8 +338,9 @@ class AttentionBlock(nn.Module):
 class AttentionEncoder_(nn.Module):
     def __init__(self, config):
         super(AttentionEncoder_, self).__init__()
-        layer = AttentionBlock(config)
-        self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.num_hidden_layers)])    
+        #layer = AttentionBlock(config)
+        #self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.num_hidden_layers)])
+        self.layer = nn.ModuleList([AttentionBlock(config) for _ in range(config.num_hidden_layers)])    
 
     def forward(self, hidden_states, attention_mask):
         all_encoder_layers = []

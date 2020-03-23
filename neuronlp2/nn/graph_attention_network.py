@@ -441,11 +441,13 @@ class GATEncoder(nn.Module):
         super(GATEncoder, self).__init__()
         self.share_params = config.share_params
         self.num_layers = config.num_layers
-        layer = GATLayer(config)
+        #layer = GATLayer(config)
         if self.share_params:
-            self.layer = layer
+            #self.layer = layer
+            self.layer = GATLayer(config)
         else:
-            self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.num_layers)])
+            #self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.num_layers)])
+            self.layer = nn.ModuleList([GATLayer(config) for _ in range(config.num_layers)])
 
     def forward(self, hidden_states, graph_matrix, attention_mask, rel_embeddings=None,
                 end_mask=None):
