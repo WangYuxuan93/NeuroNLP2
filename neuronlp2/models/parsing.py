@@ -14,6 +14,7 @@ from neuronlp2.tasks import parser
 from neuronlp2.nn.transformer import SelfAttentionConfig, SelfAttentionModel
 from neuronlp2.nn.self_attention import AttentionEncoderConfig, AttentionEncoder
 from torch.autograd import Variable
+from neuronlp2.nn.layers import Biaffine
 
 class PriorOrder(Enum):
     DEPTH = 0
@@ -98,7 +99,7 @@ def orthonormal_initializer(output_size, input_size):
     return np.transpose(Q.astype(np.float32))
 
 class DeepBiAffine(nn.Module):
-    def __init__(self, word_dim, num_words, char_dim, num_chars, pos_dim, num_pos, rnn_mode, 
+    def __init__(self, num_pretrained, word_dim, num_words, char_dim, num_chars, pos_dim, num_pos, rnn_mode, 
                  hidden_size, num_layers, num_labels, arc_space, type_space,
                  basic_word_embedding=True,
                  embedd_word=None, embedd_char=None, embedd_pos=None, p_in=0.33, p_out=0.33, 
@@ -107,19 +108,24 @@ class DeepBiAffine(nn.Module):
                  use_input_layer=True, use_sin_position_embedding=False, 
                  freeze_position_embedding=True, hidden_act="gelu", dropout_type="seq",
                  initializer="default", embedding_dropout_prob=0.33, hidden_dropout_prob=0.2,
-                 inter_dropout_prob=0.1, attention_probs_dropout_prob=0.1):
+                 inter_dropout_prob=0.1, attention_probs_dropout_prob=0.1,
+                 mlp_initializer="orthogonal", emb_initializer="default", 
+                 biaf_initializer="xavier_uniform", ff_first=False):
         super(DeepBiAffine, self).__init__()
 
         self.basic_word_embedding = basic_word_embedding
         self.minimize_logp = minimize_logp
         self.act_func = activation
         self.initializer = initializer
+        self.mlp_initializer = mlp_initializer
+        self.emb_initializer = emb_initializer
         self.p_in = p_in
         if self.basic_word_embedding:
             self.basic_word_embed = nn.Embedding(num_words, word_dim, padding_idx=1)
         else:
             self.basic_word_embed = None
-        self.word_embed = nn.Embedding(num_words, word_dim, _weight=embedd_word, padding_idx=1)
+        self.word_embed = nn.Embedding(num_pretrained, word_dim, _weight=embedd_word, padding_idx=1)
+        self.word_embed.weight.requires_grad=False
         self.pos_embed = nn.Embedding(num_pos, pos_dim, _weight=embedd_pos, padding_idx=1) if pos else None
         if use_char:
             self.char_embed = nn.Embedding(num_chars, char_dim, _weight=embedd_char, padding_idx=1)
@@ -181,7 +187,8 @@ class DeepBiAffine(nn.Module):
                                         freeze_position_embedding=freeze_position_embedding,
                                         max_position_embeddings=256,
                                         initializer=initializer,
-                                        initializer_range=0.02)
+                                        initializer_range=0.02,
+                                        ff_first=ff_first)
             self.input_encoder = AttentionEncoder(self.config)
             #self.input_encoder = SelfAttentionModel(self.config)
             out_dim = hidden_size
@@ -192,12 +199,17 @@ class DeepBiAffine(nn.Module):
         self.arc_h = nn.Linear(out_dim, arc_space)
         self.arc_c = nn.Linear(out_dim, arc_space)
         #self.biaffine = BiAffine(arc_space, arc_space)
-        self.biaffine = BiAffine_v2(arc_space, bias_x=True, bias_y=False)
+        #self.biaffine = BiAffine_v2(arc_space, bias_x=True, bias_y=False)
+
+        self.biaffine = Biaffine(arc_space, arc_space, 1, bias=(True, False), 
+                                    initializer=biaf_initializer)
+        self.bilinear = Biaffine(type_space, type_space, self.num_labels, bias=(True, True), 
+                                    initializer=biaf_initializer)
 
         self.type_h = nn.Linear(out_dim, type_space)
         self.type_c = nn.Linear(out_dim, type_space)
         #self.bilinear = BiLinear(type_space, type_space, self.num_labels)
-        self.bilinear = BiAffine_v2(type_space, n_out=self.num_labels, bias_x=True, bias_y=True)
+        #self.bilinear = BiAffine_v2(type_space, n_out=self.num_labels, bias_x=True, bias_y=True)
 
         if self.minimize_logp:
             self.dep_dense = nn.Linear(out_dim, 1)
@@ -218,9 +230,21 @@ class DeepBiAffine(nn.Module):
         if embedd_char is None and self.char_embed is not None:
             nn.init.uniform_(self.char_embed.weight, -0.1, 0.1)
         if embedd_pos is None and self.pos_embed is not None:
-            nn.init.uniform_(self.pos_embed.weight, -0.1, 0.1)
+            if self.emb_initializer == 'uniform':
+                print ("Intializing pos embed with uniform")
+                nn.init.uniform_(self.pos_embed.weight, -0.1, 0.1)
+            else:
+                print ("Intializing pos embed with randn")
+                pos_num, pos_dim = list(self.pos_embed.weight.size())
+                tag_init = np.random.randn(pos_num, pos_dim).astype(np.float32)
+                self.pos_embed.weight.data.copy_(torch.from_numpy(tag_init))
         if self.basic_word_embed is not None:
-            nn.init.uniform_(self.basic_word_embed.weight, -0.1, 0.1)
+            if self.emb_initializer == 'uniform':
+                print ("Intializing basic word embed with uniform")
+                nn.init.uniform_(self.basic_word_embed.weight, -0.1, 0.1)
+            else:
+                print ("Intializing basic word embed with normal")
+                nn.init.normal_(self.basic_word_embed.weight, 0.0, 1.0 / (200 ** 0.5))
 
         with torch.no_grad():
             self.word_embed.weight[self.word_embed.padding_idx].fill_(0)
@@ -231,17 +255,20 @@ class DeepBiAffine(nn.Module):
             if self.pos_embed is not None:
                 self.pos_embed.weight[self.pos_embed.padding_idx].fill_(0)
 
-        if self.initializer == 'orthogonal':
+        if self.mlp_initializer == 'orthogonal':
+            print ("Intializing mlp linear with orthogonal")
             nn.init.orthogonal_(self.arc_h.weight)
             nn.init.orthogonal_(self.arc_c.weight)
             nn.init.orthogonal_(self.type_h.weight)
             nn.init.orthogonal_(self.type_c.weight)
-        elif self.initializer == 'default':
+        elif self.mlp_initializer == 'default':
+            print ("Intializing mlp linear with kaiming_uniform")
             nn.init.kaiming_uniform_(self.arc_h.weight, a=0.1, nonlinearity='leaky_relu')
             nn.init.kaiming_uniform_(self.arc_c.weight, a=0.1, nonlinearity='leaky_relu')
             nn.init.kaiming_uniform_(self.type_h.weight, a=0.1, nonlinearity='leaky_relu')
             nn.init.kaiming_uniform_(self.type_c.weight, a=0.1, nonlinearity='leaky_relu')
-        elif self.initializer == 'xavier_uniform':
+        elif self.mlp_initializer == 'xavier_uniform':
+            print ("Intializing mlp linear with xavier_uniform")
             nn.init.xavier_uniform_(self.arc_h.weight)
             nn.init.xavier_uniform_(self.arc_c.weight)
             nn.init.xavier_uniform_(self.type_h.weight)
@@ -260,9 +287,9 @@ class DeepBiAffine(nn.Module):
             nn.init.xavier_uniform_(self.input_encoder.weight)
             nn.init.constant_(self.input_encoder.bias, 0.)
 
-    def _get_rnn_output(self, input_word, input_char, input_pos, mask=None):
+    def _get_rnn_output(self, input_word, input_pretrained, input_char, input_pos, mask=None):
         # [batch, length, word_dim]
-        pre_word = self.word_embed(input_word)
+        pre_word = self.word_embed(input_pretrained)
         # apply dropout word on input
         #word = self.dropout_in(word)
         enc_word = pre_word
@@ -336,12 +363,12 @@ class DeepBiAffine(nn.Module):
 
         return (arc_h, arc_c), (type_h, type_c)
 
-    def forward(self, input_word, input_char, input_pos, mask=None):
+    def forward(self, input_word, input_pretrained, input_char, input_pos, mask=None):
         # output from rnn [batch, length, dim]
-        arc, type = self._get_rnn_output(input_word, input_char, input_pos, mask=mask)
+        arc, type = self._get_rnn_output(input_word, input_pretrained, input_char, input_pos, mask=mask)
         # [batch, length_head, length_child]
         #out_arc = self.biaffine(arc[0], arc[1], mask_query=mask, mask_key=mask)
-        out_arc = self.biaffine(arc[1], arc[0])
+        out_arc = self.biaffine(arc[1], arc[0]).squeeze(3)
         return out_arc, type
 
     def _get_arc_loss(self, logits, heads_3D, debug=False):
@@ -419,9 +446,9 @@ class DeepBiAffine(nn.Module):
 
         return arc_correct.cpu().numpy(), type_correct.cpu().numpy(), total_arcs.cpu().numpy()
 
-    def loss(self, input_word, input_char, input_pos, heads, types, mask=None):
+    def loss(self, input_word, input_pretrained, input_char, input_pos, heads, types, mask=None):
         # out_arc shape [batch, length_head, length_child]
-        out_arc, out_type  = self(input_word, input_char, input_pos, mask=mask)
+        out_arc, out_type  = self(input_word, input_pretrained, input_char, input_pos, mask=mask)
         # out_type shape [batch, length, type_space]
         type_h, type_c = out_type
 
@@ -443,6 +470,8 @@ class DeepBiAffine(nn.Module):
         types_3D.scatter_(-1, heads.unsqueeze(-1), types.unsqueeze(-1))
         # (batch, n_rels, seq_len, seq_len)
         out_type = self.bilinear(type_c, type_h)
+        # (batch, seq_len, seq_len, n_rels) => (batch, n_rels, seq_len, seq_len)
+        out_type = out_type.permute(0,3,1,2)
 
         if self.minimize_logp:
             # (batch, seq_len)
@@ -500,7 +529,7 @@ class DeepBiAffine(nn.Module):
 
         return heads.cpu().numpy(), types.cpu().numpy()
 
-    def decode(self, input_word, input_char, input_pos, mask=None, leading_symbolic=0):
+    def decode(self, input_word, input_pretrained, input_char, input_pos, mask=None, leading_symbolic=0):
         """
         Args:
             input_word: Tensor
@@ -523,7 +552,7 @@ class DeepBiAffine(nn.Module):
 
         """
         # out_arc shape [batch, length_h, length_c]
-        out_arc, out_type = self(input_word, input_char, input_pos, mask=mask)
+        out_arc, out_type = self(input_word, input_pretrained, input_char, input_pos, mask=mask)
 
         # out_type shape [batch, length, type_space]
         type_h, type_c = out_type
@@ -535,7 +564,7 @@ class DeepBiAffine(nn.Module):
         #out_type = self.bilinear(type_h, type_c)
         # (batch, n_rels, seq_len_c, seq_len_h)
         # => (batch, length_h, length_c, num_labels)
-        out_type = self.bilinear(type_c, type_h).permute(0,3,2,1)
+        out_type = self.bilinear(type_c, type_h)#.permute(0,3,2,1)
 
         if mask is not None:
             minus_mask = mask.eq(0).unsqueeze(2)
@@ -543,7 +572,7 @@ class DeepBiAffine(nn.Module):
         # loss_arc shape [batch, length_h, length_c]
         loss_arc = F.log_softmax(out_arc, dim=1)
         # loss_type shape [batch, length_h, length_c, num_labels]
-        loss_type = F.log_softmax(out_type, dim=3).permute(0, 3, 1, 2)
+        loss_type = F.log_softmax(out_type, dim=3).permute(0, 3, 2, 1)#.permute(0, 3, 1, 2)
         # [batch, num_labels, length_h, length_c]
         energy = loss_arc.unsqueeze(1) + loss_type
 

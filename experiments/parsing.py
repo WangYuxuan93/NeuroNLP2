@@ -330,8 +330,11 @@ def train(args):
         hidden_dropout_prob = hyps['hidden_dropout_prob']
         inter_dropout_prob = hyps['inter_dropout_prob']
         attention_probs_dropout_prob = hyps['attention_probs_dropout_prob']
+        mlp_initializer = hyps['mlp_initializer']
+        emb_initializer = hyps['emb_initializer']
+        ff_first = hyps['ff_first']
 
-        network = DeepBiAffine(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
+        network = DeepBiAffine(num_pretrained, word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
                                mode, hidden_size, num_layers, num_types, arc_space, type_space,
                                basic_word_embedding=basic_word_embedding,
                                embedd_word=word_table, embedd_char=char_table,
@@ -344,7 +347,9 @@ def train(args):
                                initializer=initializer, embedding_dropout_prob=embedding_dropout_prob,
                                hidden_dropout_prob=hidden_dropout_prob,
                                inter_dropout_prob=inter_dropout_prob,
-                               attention_probs_dropout_prob=attention_probs_dropout_prob)
+                               attention_probs_dropout_prob=attention_probs_dropout_prob,
+                               mlp_initializer=mlp_initializer, emb_initializer=emb_initializer,
+                               ff_first=ff_first)
         network = network.to(device)
     elif model_type == 'DeepBiAffineV2':
         num_layers = hyps['num_layers']
@@ -434,8 +439,7 @@ def train(args):
             logger.info("Dropout type: %s, probs(emb, hid, inter, att): (%.2f, %.2f, %.2f, %.2f)" % (dropout_type, embedding_dropout_prob, hidden_dropout_prob, inter_dropout_prob,
                                                 attention_probs_dropout_prob))
             logger.info("Activation: %s, Linear initializer: %s" % (hidden_act, initializer))
-            if model_type == 'DeepBiAffineV2':
-                logger.info("MLP initializer: %s, Emb initializer: %s, FF Layer First: %s" % (mlp_initializer, emb_initializer, ff_first))
+            logger.info("MLP initializer: %s, Emb initializer: %s, FF Layer First: %s" % (mlp_initializer, emb_initializer, ff_first))
         logger.info("Use Randomly Init Word Emb: %s (Freeze Pre-trained Emb: %s)" % (basic_word_embedding, freeze))
         logger.info("Use Sin Position Emb: %s (Freeze Position Emb: %s)" % (use_sin_position_embedding, freeze_position_embedding))
         logger.info("Use Input Layer: %s" % use_input_layer)
