@@ -389,6 +389,13 @@ def train(args):
         data_train = conllx_stacked_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, prior_order=prior_order)
         data_dev = conllx_stacked_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, prior_order=prior_order)
         data_test = conllx_stacked_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, prior_order=prior_order)
+    
+    if schedule == 'step':
+        logger.info("Scheduler: %s, init lr=%.6f, lr decay=%.6f, decay_steps=%d, warmup_steps=%d" % (schedule, learning_rate, lr_decay, decay_steps, warmup_steps))
+    elif schedule == 'attention':
+        logger.info("Scheduler: %s, init lr=%.6f, warmup_steps=%d" % (schedule, learning_rate, warmup_steps))
+    elif schedule == 'exponential':
+        logger.info("Scheduler: %s, init lr=%.6f, lr decay=%.6f, warmup_steps=%d" % (schedule, learning_rate, lr_decay, warmup_steps))
     num_data = sum(data_train[1])
     logger.info("training: #training data: %d, batch: %d, unk replace: %.2f" % (num_data, batch_size, unk_replace))
 
@@ -533,8 +540,8 @@ def train(args):
             sys.stdout.write("\b" * num_back)
         train_uas = float(overall_arc_correct) * 100.0 / overall_total_arcs
         train_lacc = float(overall_type_correct) * 100.0 / overall_total_arcs
-        print('total: %d (%d), uas: %.2f%%, lacc: %.2f%%,  loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f), time: %.2fs' % (num_insts, num_words,
-                                                                                                       train_uas, train_lacc,
+        print('total: %d (%d), nans:%d, uas: %.2f%%, lacc: %.2f%%,  loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f), time: %.2fs' % (num_insts, num_words,
+                                                                                                       num_nans, train_uas, train_lacc,
                                                                                                        train_loss / num_insts, train_loss / num_words,
                                                                                                        train_arc_loss / num_insts, train_arc_loss / num_words,
                                                                                                        train_type_loss / num_insts, train_type_loss / num_words,
