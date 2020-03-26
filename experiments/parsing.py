@@ -370,7 +370,6 @@ def train(args):
     network = network.to(device)
     model = "{}-{}".format(model_type, mode)
     logger.info("Network: %s, num_layer=%s, hidden=%d, act=%s" % (model, num_layers, hidden_size, activation))
-    logger.info("Use Basic Word Embedding: %s, Freeze Pretrained: %s" % (basic_word_embedding, freeze))
     logger.info("dropout(in, out, rnn): %s(%.2f, %.2f, %s)" % ('variational', p_in, p_out, p_rnn))
     if model_type == 'DeepBiAffine':
         logger.info("##### Input Encoder (Type: %s, Layer: %d) ###" % (mode, num_layers))
