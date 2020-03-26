@@ -244,11 +244,16 @@ def train(args):
 
     def construct_word_embedding_table():
         scale = np.sqrt(3.0 / word_dim)
-        #table = np.empty([word_alphabet.size(), word_dim], dtype=np.float32)
-        table = np.empty([pretrained_alphabet.size(), word_dim], dtype=np.float32)
+        if basic_word_embedding:
+            table = np.empty([pretrained_alphabet.size(), word_dim], dtype=np.float32)
+            items = pretrained_alphabet.items()
+        else:
+            table = np.empty([word_alphabet.size(), word_dim], dtype=np.float32)
+            items = word_alphabet.items()
         table[conllx_data.UNK_ID, :] = np.zeros([1, word_dim]).astype(np.float32) if freeze else np.random.uniform(-scale, scale, [1, word_dim]).astype(np.float32)
         oov = 0
-        for word, index in pretrained_alphabet.items():
+
+        for word, index in items:
             if word in word_dict:
                 embedding = word_dict[word]
             elif word.lower() in word_dict:
@@ -359,11 +364,13 @@ def train(args):
         raise RuntimeError('Unknown model type: %s' % model_type)
 
     if freeze:
+        logger.info("Freezing word_embed")
         freeze_embedding(network.word_embed)
 
     network = network.to(device)
     model = "{}-{}".format(model_type, mode)
     logger.info("Network: %s, num_layer=%s, hidden=%d, act=%s" % (model, num_layers, hidden_size, activation))
+    logger.info("Use Basic Word Embedding: %s, Freeze Pretrained: %s" % (basic_word_embedding, freeze))
     logger.info("dropout(in, out, rnn): %s(%.2f, %.2f, %s)" % ('variational', p_in, p_out, p_rnn))
     if model_type == 'DeepBiAffine':
         logger.info("##### Input Encoder (Type: %s, Layer: %d) ###" % (mode, num_layers))

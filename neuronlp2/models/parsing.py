@@ -84,12 +84,14 @@ class DeepBiAffine(nn.Module):
         self.minimize_logp = minimize_logp
         self.act_func = activation
         self.p_in = p_in
-        #if self.basic_word_embedding:
-        self.basic_word_embed = nn.Embedding(num_words, word_dim, padding_idx=1)
-        #else:
-        #    self.basic_word_embed = None
-        self.word_embed = nn.Embedding(num_pretrained, word_dim, _weight=embedd_word, padding_idx=1)
-        self.word_embed.weight.requires_grad=False
+        if self.basic_word_embedding:
+            self.basic_word_embed = nn.Embedding(num_words, word_dim, padding_idx=1)
+            self.word_embed = nn.Embedding(num_pretrained, word_dim, _weight=embedd_word, padding_idx=1)
+        else:
+            self.basic_word_embed = None
+            self.word_embed = nn.Embedding(num_words, word_dim, _weight=embedd_word, padding_idx=1)
+
+        #self.word_embed.weight.requires_grad=False
         self.pos_embed = nn.Embedding(num_pos, pos_dim, _weight=embedd_pos, padding_idx=1) if pos else None
         if use_char:
             self.char_embed = nn.Embedding(num_chars, char_dim, _weight=embedd_char, padding_idx=1)
@@ -229,17 +231,23 @@ class DeepBiAffine(nn.Module):
         
         #print ("input_word:\n", input_word)
         #print ("input_pretrained:\n", input_pretrained)
-        # [batch, length, word_dim]
-        pre_word = self.word_embed(input_pretrained)
+        
         # apply dropout word on input
         #word = self.dropout_in(word)
-        enc_word = pre_word
+        
         if self.basic_word_embedding:
+            # [batch, length, word_dim]
+            pre_word = self.word_embed(input_pretrained)
+            enc_word = pre_word
             basic_word = self.basic_word_embed(input_word)
             #print ("pre_word:\n", pre_word)
             #print ("basic_word:\n", basic_word)
             #basic_word = self.dropout_in(basic_word)
             enc_word = enc_word + basic_word
+        else:
+            # if not basic word emb, still use input_word as index
+            pre_word = self.word_embed(input_word)
+            enc_word = pre_word
 
         if self.char_embed is not None:
             # [batch, length, char_length, char_dim]
