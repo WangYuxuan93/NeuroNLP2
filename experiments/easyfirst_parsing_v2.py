@@ -66,10 +66,12 @@ def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_
     for data in iterate_data(data, batch_size):
         if is_parse or torch.cuda.device_count() > 1:
             words = data['WORD'].to(device)
+            pres = data['PRETRAINED'].to(device)
             chars = data['CHAR'].to(device)
             postags = data['POS'].to(device)
         else:
             words = data['WORD']
+            pres = data['PRETRAINED']
             chars = data['CHAR']
             postags = data['POS']
         heads = data['HEAD'].numpy()
@@ -77,7 +79,7 @@ def eval(data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_
         lengths = data['LENGTH'].numpy()
         masks = data['MASK'].to(device)
         #print (words)
-        heads_pred, types_pred, recomp_freq, heads_by_layer = network.decode(words, chars, postags, mask=masks, 
+        heads_pred, types_pred, recomp_freq, heads_by_layer = network.decode(words, pres, chars, postags, mask=masks, 
                                                 device=device, get_head_by_layer=get_head_by_layer, 
                                                 random_recomp=random_recomp, recomp_prob=recomp_prob)
         #print (heads_by_layer)
@@ -175,6 +177,7 @@ def train(args):
     dev_path = args.dev
     test_path = args.test
 
+    basic_word_embedding = args.basic_word_embedding
     num_epochs = args.num_epochs
     batch_size = args.batch_size
     step_batch_size = args.step_batch_size
@@ -223,13 +226,16 @@ def train(args):
     word_alphabet, char_alphabet, pos_alphabet, type_alphabet = conllx_data.create_alphabets(alphabet_path, train_path,
                                                                                              data_paths=[dev_path, test_path],
                                                                                              embedd_dict=word_dict, max_vocabulary_size=200000)
+    pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path, word_dict, word_alphabet.instances, max_vocabulary_size=200000)
 
     num_words = word_alphabet.size()
+    num_pretrained = pretrained_alphabet.size()
     num_chars = char_alphabet.size()
     num_pos = pos_alphabet.size()
     num_types = type_alphabet.size()
 
     logger.info("Word Alphabet Size: %d" % num_words)
+    logger.info("Pretrained Alphabet Size: %d" % num_pretrained)
     logger.info("Character Alphabet Size: %d" % num_chars)
     logger.info("POS Alphabet Size: %d" % num_pos)
     logger.info("Type Alphabet Size: %d" % num_types)
@@ -245,10 +251,15 @@ def train(args):
 
     def construct_word_embedding_table():
         scale = np.sqrt(3.0 / word_dim)
-        table = np.empty([word_alphabet.size(), word_dim], dtype=np.float32)
+        if basic_word_embedding:
+            table = np.empty([pretrained_alphabet.size(), word_dim], dtype=np.float32)
+            items = pretrained_alphabet.items()
+        else:
+            table = np.empty([word_alphabet.size(), word_dim], dtype=np.float32)
+            items = word_alphabet.items()
         table[conllx_data.UNK_ID, :] = np.zeros([1, word_dim]).astype(np.float32) if freeze else np.random.uniform(-scale, scale, [1, word_dim]).astype(np.float32)
         oov = 0
-        for word, index in word_alphabet.items():
+        for word, index in items:
             if word in word_dict:
                 embedding = word_dict[word]
             elif word.lower() in word_dict:
@@ -324,13 +335,13 @@ def train(args):
     num_gpu = torch.cuda.device_count()
 
     if model_type == 'EasyFirst':
-        network = EasyFirst(hyps, num_words, num_chars, num_pos,
-                           num_types, device=device, 
+        network = EasyFirst(hyps, num_pretrained, num_words, num_chars, num_pos,
+                           num_types, device=device, basic_word_embedding=basic_word_embedding,
                            embedd_word=word_table, embedd_char=char_table,
                            end_word_id=end_word_id)
     elif model_type == 'EasyFirstV2':
-        network = EasyFirstV2(hyps, num_words, num_chars, num_pos,
-                           num_types, device=device, 
+        network = EasyFirstV2(hyps, num_pretrained, num_words, num_chars, num_pos,
+                           num_types, device=device, basic_word_embedding=basic_word_embedding,
                            embedd_word=word_table, embedd_char=char_table,
                            end_word_id=end_word_id)
     else:
@@ -348,6 +359,7 @@ def train(args):
         network.to(device)
     single_network = network if num_gpu <= 1 else network.module
 
+    logger.info("Freeze Pre-trained Emb: %s" % (freeze))
     if freeze:
         freeze_embedding(network.word_embed)
 
@@ -358,11 +370,11 @@ def train(args):
         exit()
     
     data_train = conllx_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
-                                                mask_out_root=False, symbolic_end=symbolic_end)
+                                                mask_out_root=False, symbolic_end=symbolic_end, pre_alphabet=pretrained_alphabet)
     data_dev = conllx_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
-                                        mask_out_root=False, symbolic_end=symbolic_end)
+                                        mask_out_root=False, symbolic_end=symbolic_end, pre_alphabet=pretrained_alphabet)
     data_test = conllx_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
-                                        mask_out_root=False, symbolic_end=symbolic_end)
+                                        mask_out_root=False, symbolic_end=symbolic_end, pre_alphabet=pretrained_alphabet)
     
     if schedule == 'step':
         logger.info("Scheduler: %s, init lr=%.6f, lr decay=%.6f, decay_steps=%d, warmup_steps=%d" % (schedule, learning_rate, lr_decay, decay_steps, warmup_steps))
@@ -539,12 +551,16 @@ def train(args):
                 
                 if num_gpu > 1:
                     words = data['WORD'].to(device)
+                    pres = data['PRETRAINED'].to(device)
                     chars = data['CHAR'].to(device)
                     postags = data['POS'].to(device)
                 else:
                     words = data['WORD']
+                    pres = data['PRETRAINED']
                     chars = data['CHAR']
                     postags = data['POS']
+                #print ("pretrained:\n", pres)
+                #print ("word:\n", words)
                 heads = data['HEAD'].to(device)
                 types = data['TYPE'].to(device)
                 masks = data['MASK'].to(device)
@@ -554,9 +570,9 @@ def train(args):
                 elif sampler == 'from_model':
                     network.eval()
                     if num_gpu > 1:
-                        order_masks = network.module.inference(words, chars, postags, heads, mask=masks)
+                        order_masks = network.module.inference(words, pres, chars, postags, heads, mask=masks)
                     else:
-                        order_masks = network.inference(words, chars, postags, heads, mask=masks)
+                        order_masks = network.inference(words, pres, chars, postags, heads, mask=masks)
                     order_masks.to(device)
                     network.train()
                 nbatch = words.size(0)
@@ -582,7 +598,7 @@ def train(args):
                     #    input_encoder_output = network.module._get_input_encoder_output(words, chars, postags, masks)
                     #else:
                     #    input_encoder_output = network._get_input_encoder_output(words, chars, postags, masks)
-                    loss_arc, loss_rel, loss_recomp, gen_heads_onehot = network(words, chars, postags, 
+                    loss_arc, loss_rel, loss_recomp, gen_heads_onehot = network(words, pres, chars, postags, 
                             gen_heads_onehot, encode_heads_onehot, heads, types, order_mask, mask=masks, explore=explore)
                     #print ("errors: ", errs)
                     loss_arc = loss_arc.mean()
@@ -848,71 +864,15 @@ def parse(args):
         target_recomp_prob = 1
 
     if model_type == 'EasyFirst':
-        network = EasyFirst(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
-                           hidden_size, num_types, arc_space, type_space,
-                           intermediate_size,
-                           device=device, 
-                           hidden_dropout_prob=hidden_dropout_prob,
-                           attention_probs_dropout_prob=attention_probs_dropout_prob,
-                           gat_hidden_dropout_prob=p_graph_hid,
-                           gat_probs_dropout_prob=p_graph_att,
-                           p_in=p_in, p_out=p_out, pos=use_pos, use_char=use_char, 
-                           activation=activation, dep_prob_depend_on_head=dep_prob_depend_on_head, 
-                           use_top2_margin=use_top2_margin, target_recomp_prob=target_recomp_prob,
-                           extra_self_attention_layer=extra_self_attention_layer,
-                           num_attention_heads=num_attention_heads,
-                           input_encoder=input_encoder, num_layers=num_layers, p_rnn=p_rnn,
-                           input_self_attention_layer=input_self_attention_layer,
-                           num_input_attention_layers=num_input_attention_layers,
-                           maximize_unencoded_arcs_for_norc=maximize_unencoded_arcs_for_norc,
-                           encode_all_arc_for_rel=encode_all_arc_for_rel,
-                           use_input_encode_for_rel=use_input_encode_for_rel,
-                           always_recompute=always_recompute,
-                           use_hard_concrete_dist=use_hard_concrete_dist, 
-                           hard_concrete_temp=hc_temp, hard_concrete_eps=hc_eps,
-                           apply_recomp_prob_first=apply_recomp_prob_first,
-                           num_gat_layers=num_gat_layers,
-                           share_params=share_params, residual_from_input=residual_from_input,
-                           transformer_drop_prob=transformer_drop_prob,
-                           num_gat_heads=num_gat_heads, 
-                           only_value_weight=only_value_weight,
-                           encode_rel_type=encode_rel_type, rel_dim=rel_dim,
-                           use_null_att_pos=use_null_att_pos, end_word_id=end_word_id,
-                           num_arcs_per_pred=num_arcs_per_pred, use_input_layer=use_input_layer, 
-                           use_sin_position_embedding=use_sin_position_embedding)
+        network = EasyFirst(hyps, num_pretrained, num_words, num_chars, num_pos,
+                           num_types, device=device, basic_word_embedding=args.basic_word_embedding,
+                           embedd_word=word_table, embedd_char=char_table,
+                           end_word_id=end_word_id)
     elif model_type == 'EasyFirstV2':
-        network = EasyFirstV2(word_dim, num_words, char_dim, num_chars, pos_dim, num_pos,
-                           hidden_size, num_types, arc_space, type_space,
-                           intermediate_size,
-                           device=device, 
-                           hidden_dropout_prob=hidden_dropout_prob,
-                           attention_probs_dropout_prob=attention_probs_dropout_prob,
-                           gat_hidden_dropout_prob=p_graph_hid,
-                           gat_probs_dropout_prob=p_graph_att,
-                           p_in=p_in, p_out=p_out, pos=use_pos, use_char=use_char, 
-                           activation=activation, dep_prob_depend_on_head=dep_prob_depend_on_head, 
-                           use_top2_margin=use_top2_margin, target_recomp_prob=target_recomp_prob,
-                           extra_self_attention_layer=extra_self_attention_layer,
-                           num_attention_heads=num_attention_heads,
-                           input_encoder=input_encoder, num_layers=num_layers, p_rnn=p_rnn,
-                           input_self_attention_layer=input_self_attention_layer,
-                           num_input_attention_layers=num_input_attention_layers,
-                           maximize_unencoded_arcs_for_norc=maximize_unencoded_arcs_for_norc,
-                           encode_all_arc_for_rel=encode_all_arc_for_rel,
-                           use_input_encode_for_rel=use_input_encode_for_rel,
-                           always_recompute=always_recompute,
-                           use_hard_concrete_dist=use_hard_concrete_dist, 
-                           hard_concrete_temp=hc_temp, hard_concrete_eps=hc_eps,
-                           apply_recomp_prob_first=apply_recomp_prob_first,
-                           num_gat_layers=num_gat_layers,
-                           share_params=share_params, residual_from_input=residual_from_input,
-                           transformer_drop_prob=transformer_drop_prob,
-                           num_gat_heads=num_gat_heads, 
-                           only_value_weight=only_value_weight,
-                           encode_rel_type=encode_rel_type, rel_dim=rel_dim,
-                           use_null_att_pos=use_null_att_pos, end_word_id=end_word_id,
-                           num_arcs_per_pred=num_arcs_per_pred, use_input_layer=use_input_layer, 
-                           use_sin_position_embedding=use_sin_position_embedding)
+        network = EasyFirstV2(hyps, num_pretrained, num_words, num_chars, num_pos,
+                               num_types, device=device, basic_word_embedding=args.basic_word_embedding,
+                               embedd_word=word_table, embedd_char=char_table,
+                               end_word_id=end_word_id)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -988,6 +948,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--sampler', choices=['random', 'from_model'], help='Sample strategy')
     args_parser.add_argument('--punctuation', nargs='+', type=str, help='List of punctuations')
     args_parser.add_argument('--beam', type=int, default=1, help='Beam size for decoding')
+    args_parser.add_argument('--basic_word_embedding', action='store_true', help='Whether to use extra randomly initialized trainable word embedding.')
     args_parser.add_argument('--word_embedding', choices=['glove', 'senna', 'sskip', 'polyglot'], help='Embedding for words')
     args_parser.add_argument('--word_path', help='path for word embedding dict')
     args_parser.add_argument('--char_embedding', choices=['random', 'polyglot'], help='Embedding for characters')

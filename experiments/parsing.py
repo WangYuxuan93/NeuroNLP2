@@ -252,7 +252,6 @@ def train(args):
             items = word_alphabet.items()
         table[conllx_data.UNK_ID, :] = np.zeros([1, word_dim]).astype(np.float32) if freeze else np.random.uniform(-scale, scale, [1, word_dim]).astype(np.float32)
         oov = 0
-
         for word, index in items:
             if word in word_dict:
                 embedding = word_dict[word]
@@ -287,6 +286,13 @@ def train(args):
     char_table = construct_char_embedding_table()
 
     logger.info("constructing network...")
+    random_seed = args.seed
+    if random_seed == -1:
+        random_seed = np.random.randint(1e8)
+        logger.info("Random Seed (rand): %d" % random_seed)
+    else:
+        logger.info("Random Seed (set): %d" % random_seed)
+    torch.manual_seed(random_seed)
 
     hyps = json.load(open(args.config, 'r'))
     json.dump(hyps, open(os.path.join(model_path, 'config.json'), 'w'), indent=2)
@@ -766,6 +772,7 @@ def parse(args):
 if __name__ == '__main__':
     args_parser = argparse.ArgumentParser(description='Tuning with graph-based parsing')
     args_parser.add_argument('--mode', choices=['train', 'parse'], required=True, help='processing mode')
+    args_parser.add_argument('--seed', type=int, default=-1, help='Random seed for torch and numpy (-1 for random)')
     args_parser.add_argument('--config', type=str, help='config file')
     args_parser.add_argument('--num_epochs', type=int, default=200, help='Number of training epochs')
     args_parser.add_argument('--batch_size', type=int, default=16, help='Number of sentences in each batch')

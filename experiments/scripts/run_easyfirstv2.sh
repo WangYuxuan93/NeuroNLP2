@@ -11,4 +11,4 @@ CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=4 python -u easyfirst_parsing_v2.py --mo
  --dev "data/ptb_two_auto.conll" \
  --test "data/ptb_two_auto.conll" \
  --model_path "models/parsing/easyfirst_v2/" --get_head_by_layer \
- --seed 0 #--symbolic_end False #--explore #--batch_by_arc #--fine_tune #--recomp_prob 0.4 --random_recomp 
+ --seed 0 --freeze --basic_word_embedding #--symbolic_end False #--explore #--batch_by_arc #--fine_tune #--recomp_prob 0.4 --random_recomp 
