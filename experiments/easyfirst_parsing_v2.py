@@ -452,6 +452,7 @@ def train(args):
         num_words = 0
         num_back = 0
         num_nans = 0
+        overall_arc_correct, overall_rel_correct, overall_total_arcs, overall_total_rels = 0, 0, 0, 0
         network.train()
         lr = scheduler.get_lr()[0]
         total_step = scheduler.get_total_step()
@@ -601,13 +602,19 @@ def train(args):
                     #    input_encoder_output = network.module._get_input_encoder_output(words, chars, postags, masks)
                     #else:
                     #    input_encoder_output = network._get_input_encoder_output(words, chars, postags, masks)
-                    loss_arc, loss_rel, loss_recomp, gen_heads_onehot = network(words, pres, chars, postags, 
+                    loss_arc, loss_rel, loss_recomp, gen_heads_onehot, arc_corr, rel_corr, total_arcs, total_rels = network(words, pres, chars, postags, 
                             gen_heads_onehot, encode_heads_onehot, heads, types, order_mask, mask=masks, explore=explore)
                     #print ("errors: ", errs)
                     loss_arc = loss_arc.mean()
                     loss_rel = loss_rel.mean()
                     loss_recomp = loss_recomp.mean()
                     loss = 0.5 *((1.0 - loss_interpolation) * loss_arc + loss_interpolation * loss_rel) + recomp_ratio * loss_recomp
+                    
+                    overall_arc_correct += arc_corr.sum().cpu().numpy()
+                    overall_rel_correct += rel_corr.sum().cpu().numpy()
+                    overall_total_arcs += total_arcs.sum().cpu().numpy()
+                    overall_total_rels += total_rels.sum().cpu().numpy()
+
                     #if loss_ty_token:
                     #    loss = loss_total.div(nwords)
                     #else:
@@ -656,7 +663,10 @@ def train(args):
             sys.stdout.write("\b" * num_back)
             sys.stdout.write(" " * num_back)
             sys.stdout.write("\b" * num_back)
-        print('total: %d (%d), steps: %d, loss: %.4f (nans: %d), arc: %.4f, rel: %.4f, recomp: %.4f, time: %.2fs' % (num_insts, num_words, num_steps, train_loss / (num_steps+1e-9),
+        train_uas = float(overall_arc_correct) * 100.0 / overall_total_arcs
+        train_lacc = float(overall_rel_correct) * 100.0 / overall_total_rels
+        print('total: %d (%d), steps: %d, uas: %.2f%%, lacc: %.2f%%, loss: %.4f (nans: %d), arc: %.4f, rel: %.4f, recomp: %.4f, time: %.2fs' % (num_insts, num_words, num_steps, 
+                                                                                                       train_uas, train_lacc, train_loss / (num_steps+1e-9),
                                                                                                        num_nans, train_arc_loss / (num_steps+1e-9),
                                                                                                        train_rel_loss / (num_steps+1e-9),
                                                                                                        train_recomp_loss / (num_steps+1e-9),
