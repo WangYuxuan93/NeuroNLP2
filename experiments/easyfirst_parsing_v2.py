@@ -361,7 +361,10 @@ def train(args):
 
     logger.info("Freeze Pre-trained Emb: %s" % (freeze))
     if freeze:
-        freeze_embedding(network.word_embed)
+        if num_gpu > 1:
+            freeze_embedding(network.module.word_embed)
+        else:
+            freeze_embedding(network.word_embed)
 
     symbolic_end = args.symbolic_end
     logger.info("Reading Data (symbolic end: %s)" % symbolic_end)

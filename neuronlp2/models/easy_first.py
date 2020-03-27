@@ -312,21 +312,22 @@ class EasyFirst(nn.Module):
             nn.init.xavier_uniform_(self.input_encoder.weight)
             nn.init.constant_(self.input_encoder.bias, 0.)
 
-    def _input_encoder(self, input_pretrained, input_word, input_char, input_pos, mask=None, device=torch.device('cpu')):
+    def _input_encoder(self, input_word, input_pretrained, input_char, input_pos, mask=None, device=torch.device('cpu')):
         
         #np.set_printoptions(threshold=np.inf)
         #print ("graph_matrix:\n", graph_matrix.cpu().numpy())
-        #print ("word:\n", input_word)
-        #print ("pre:\n", input_pretrained)
+        #print ("word:\n", input_word.size())
+        #print ("pre:\n", input_pretrained.size())
         if self.basic_word_embedding:
             # [batch, length, word_dim]
             pre_word = self.word_embed(input_pretrained)
-            enc_word = pre_word
+            #enc_word = pre_word
             basic_word = self.basic_word_embed(input_word)
-            #print ("pre_word:\n", pre_word)
-            #print ("basic_word:\n", basic_word)
+            #print ("pre_word:\n", pre_word.size())
+            #print ("basic_word:\n", basic_word.size())
             #basic_word = self.dropout_in(basic_word)
-            enc_word = enc_word + basic_word
+            enc_word = pre_word + basic_word
+            #enc_word = self.dropout_in(enc_word)
         else:
             # if not basic word emb, still use input_word as index
             pre_word = self.word_embed(input_word)
@@ -343,7 +344,7 @@ class EasyFirst(nn.Module):
             # [batch, length, pos_dim]
             enc_pos = self.pos_embed(input_pos)
             # apply dropout on input
-            #pos = self.dropout_in(pos)
+            #enc_pos = self.dropout_in(enc_pos)
             if self.training:
                 #print ("enc_word:\n", enc_word)
                 # mask by token dropout
