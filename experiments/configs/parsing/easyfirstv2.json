@@ -39,6 +39,7 @@
     "use_sin_position_embedding": false,
     "freeze_position_embedding": false,
     "initializer": "default",
+    "encode_arc_type": "hard-2",
     "encode_rel_type": "none",
     "rel_dim": 100
   },

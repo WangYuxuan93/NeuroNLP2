@@ -586,15 +586,17 @@ def train(args):
                 # (batch, seq_len, seq_len)
                 gen_heads_onehot = torch.zeros((cur_batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
                 encode_heads_onehot = torch.zeros_like(gen_heads_onehot)
+                new_encode_heads_onehot = torch.zeros_like(gen_heads_onehot)
                 n_state_step = -1
                 # (batch, seq_len), 1 represent the token whose head is to be generated at this step
                 for i in range(len(order_masks)):
                     # if has predicted k arcs, update the arcs to be encoded with GAT
                     n_state_step += 1
                     if n_state_step == num_arcs_per_pred:
-                        encode_heads_onehot = gen_heads_onehot
+                        #encode_heads_onehot = gen_heads_onehot
+                        encode_heads_onehot = new_encode_heads_onehot
                         n_state_step = 0
-
+                    #print ("encode_heads_onehot:\n", encode_heads_onehot)
                     order_mask = order_masks[i]
                     optimizer.zero_grad()
                     #if num_gpu > 1: 
@@ -602,8 +604,8 @@ def train(args):
                     #    input_encoder_output = network.module._get_input_encoder_output(words, chars, postags, masks)
                     #else:
                     #    input_encoder_output = network._get_input_encoder_output(words, chars, postags, masks)
-                    loss_arc, loss_rel, loss_recomp, gen_heads_onehot, arc_corr, rel_corr, total_arcs, total_rels = network(words, pres, chars, postags, 
-                            gen_heads_onehot, encode_heads_onehot, heads, types, order_mask, mask=masks, explore=explore)
+                    loss_arc, loss_rel, loss_recomp, gen_heads_onehot, new_encode_heads_onehot, arc_corr, rel_corr, total_arcs, total_rels = network(words, pres, chars, postags, 
+                            gen_heads_onehot, encode_heads_onehot, new_encode_heads_onehot, heads, types, order_mask, mask=masks, explore=explore)
                     #print ("errors: ", errs)
                     loss_arc = loss_arc.mean()
                     loss_rel = loss_rel.mean()

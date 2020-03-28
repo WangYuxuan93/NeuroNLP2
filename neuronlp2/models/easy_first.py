@@ -45,6 +45,9 @@ class EasyFirst(nn.Module):
         num_layers = hyps['num_layers']
         p_rnn = hyps['p_rnn']
         # for GAT encoder
+        self.encode_arc_type = hyps['GAT']['encode_arc_type']
+        if self.encode_arc_type.startswith('hard-'):
+            self.encode_arc_topk = int(self.encode_arc_type.split('-')[1])
         self.encode_rel_type = hyps['GAT']['encode_rel_type']
         if self.encode_rel_type == 'gold' or self.encode_rel_type == 'pred':
             self.do_encode_rel = True
@@ -195,6 +198,7 @@ class EasyFirst(nn.Module):
                 hyps['GAT']['hidden_dropout_prob'],hyps['GAT']['inter_dropout_prob'], hyps['GAT']['attention_probs_dropout_prob']))
         logger.info("Only Use Value Weight: %s" % hyps['GAT']['only_value_weight'])
         logger.info("Attend to END if no head: %s" % hyps['GAT']['use_null_att_pos'])
+        logger.info("Encode Arc Type: %s" % (self.encode_arc_type))
         logger.info("Encode Relation Type: %s (rel embed dim: %d)" % (self.encode_rel_type, hyps['GAT']['rel_dim']))
         logger.info("Use Hard Concrete Distribution: %s (Temperature: %.2f, Epsilon: %.2f, Apply Prob First: %s)" % (self.use_hard_concrete_dist,
                                                                         hard_concrete_temp, hard_concrete_eps, self.apply_recomp_prob_first))
@@ -495,7 +499,7 @@ class EasyFirst(nn.Module):
         # compute head logp given dep
         # (batch, seq_len, seq_len)
         head_logits = self.arc_attn(arc_c, arc_h)
-
+        self.head_logits = head_logits
         if debug:
             print ("arc_h:\n", arc_h)
             print ("arc_c:\n", arc_c)
@@ -508,7 +512,7 @@ class EasyFirst(nn.Module):
   
         # (batch, seq_len, seq_len), log softmax over all possible arcs
         head_logp_given_dep = F.log_softmax(head_logits, dim=-1)
-        
+
         # compute dep logp
         if self.dep_prob_depend_on_head:
             # (batch, seq_len, seq_len) * (batch, seq_len, hidden_size) 
@@ -519,7 +523,10 @@ class EasyFirst(nn.Module):
             # (batch, seq_len, hidden_size)
             context_layer = encoder_output.detach()
         # (batch, seq_len)
-        dep_logp = F.log_softmax(self.dep_dense(context_layer).squeeze(-1), dim=-1)
+        dep_logits = self.dep_dense(context_layer).squeeze(-1)
+        self.dep_logits = dep_logits
+        # (batch, seq_len)
+        dep_logp = F.log_softmax(dep_logits, dim=-1)
         if debug:
             print ("head_logits:\n", head_logits)
             print ("head_logp_given_dep:\n", head_logp_given_dep)
@@ -527,7 +534,7 @@ class EasyFirst(nn.Module):
             print ("dep_logp:\n", dep_logp)
         # (batch, seq_len, seq_len)
         head_logp = head_logp_given_dep + dep_logp.unsqueeze(2)
-
+        
         return head_logp
 
 
@@ -1085,8 +1092,23 @@ class EasyFirst(nn.Module):
             # (batch, seq_len)
             allow_mask = (1 - heads_mask) * root_mask
             new_heads_onehot = (new_heads_onehot * allow_mask.unsqueeze(-1)).int()
+
+            if self.encode_arc_type == 'max':
+                # * order_mask to remove out of length arcs
+                gen_heads_onehot = gen_heads_onehot + new_heads_onehot
+            elif self.encode_arc_type.startswith('hard-'):
+                # ignore the end token (-1)
+                if seq_len - 1 < self.encode_arc_topk:
+                    k = seq_len - 1
+                else:
+                    k = self.encode_arc_topk
+                neg_inf = torch.ones_like(self.head_logits) * -1e9
+                head_logits = torch.where(mask.unsqueeze(1).expand_as(self.head_logits)==1, self.head_logits, neg_inf)
+                candidate_tensor = self.get_topk(k, new_heads_onehot, head_logits)
+                gen_heads_onehot = gen_heads_onehot + candidate_tensor
+
             # update the generated head tensor
-            gen_heads_onehot = gen_heads_onehot + new_heads_onehot
+            #gen_heads_onehot = gen_heads_onehot + new_heads_onehot
             # should convert this to 2D (heads_pred & heads_mask)
             # (batch, seq_len)
             new_heads_mask = new_heads_onehot.sum(-1)
@@ -1443,6 +1465,36 @@ class EasyFirstV2(EasyFirst):
 
         return rel_correct, total_rels
 
+    def get_topk(self, k, max_tensor, logits):
+        """
+        Input:
+            max_tensor: (batch, seq_len, seq_len), chosen max arc
+            logits: (batch, seq_len, seq_len), arc logit matrix
+        Return:
+            cand_tensor_3d: (batch, seq_len, seq_len), which top k arc selected in
+                            the max head line
+        """
+        batch_size, seq_len, _ = logits.size()
+        # (batch, seq_len)
+        max_tensor_2d = max_tensor.sum(-1)
+        _, dep_indices = max_tensor_2d.max(-1)
+        dep_indices_ = dep_indices.unsqueeze(1).expand_as(max_tensor_2d).unsqueeze(1)
+        logits_ = logits.gather(1, dep_indices_).squeeze(1)
+        vals, head_indices = logits_.topk(k=k, dim=-1)
+
+        cand_tensor_2d = torch.zeros_like(max_tensor_2d)
+        cand_tensor_2d.scatter_(1, head_indices, 1)
+        cand_tensor_3d = torch.zeros_like(logits).long()
+        cand_tensor_3d.scatter_(1, dep_indices_, cand_tensor_2d.unsqueeze(1))
+
+        #print ("max_tensor_2d:\n", max_tensor_2d)
+        #print ("dep_indices_:\n", dep_indices_)
+        #print ("logits:\n", logits)
+        #print ("head_indices:\n", head_indices)
+        #print ("cand_tensor_2d:\n", cand_tensor_2d)
+        #print ("cand_tensor_3d:\n", cand_tensor_3d)
+        return cand_tensor_3d
+
     def _get_input_encoder_output(self, input_word, input_pretrained, input_char, input_pos, mask):
         batch_size, seq_len = input_word.size()
         # (batch, seq_len), seq mask, where at position 0 is 0
@@ -1451,7 +1503,8 @@ class EasyFirstV2(EasyFirst):
         input_encoder_output = self._input_encoder(input_word, input_pretrained, input_char, input_pos, mask=root_mask, device=mask.device)
         return input_encoder_output
 
-    def forward(self, input_word, input_pretrained, input_char, input_pos, gen_heads_onehot, encode_heads_onehot, 
+    def forward(self, input_word, input_pretrained, input_char, input_pos, gen_heads_onehot, 
+                encode_heads_onehot, new_encode_heads_onehot,
                 heads, rels, order_mask, mask=None, explore=True, debug=False):
         """
         Input:
@@ -1537,16 +1590,30 @@ class EasyFirstV2(EasyFirst):
             arc_correct, total_arcs = self.arc_accuracy(gold_max_tensor, general_max_tensor)
             # (batch), count the number of error predictions
             if explore:
-                # * order_mask to remove out of length arcs
                 # update with max arcs among all
-                gen_heads_onehot = gen_heads_onehot + (general_max_tensor * order_mask.unsqueeze(-1)).int()
+                max_tensor = general_max_tensor
             else:
                 # update with max gold arcs
-                gen_heads_onehot = gen_heads_onehot + (gold_max_tensor * order_mask.unsqueeze(-1)).int()
+                max_tensor = gold_max_tensor
+            gen_heads_onehot = gen_heads_onehot + (max_tensor * order_mask.unsqueeze(-1)).int()
+            if self.encode_arc_type == 'max':
+                # * order_mask to remove out of length arcs
+                new_encode_heads_onehot = gen_heads_onehot
+            elif self.encode_arc_type.startswith('hard-'):
+                # ignore the end token (-1)
+                if seq_len - 1 < self.encode_arc_topk:
+                    k = seq_len - 1
+                else:
+                    k = self.encode_arc_topk
+                neg_inf = torch.ones_like(self.head_logits) * -1e9
+                head_logits = torch.where(mask.unsqueeze(1).expand_as(self.head_logits)==1, self.head_logits, neg_inf)
+                candidate_tensor = self.get_topk(k, max_tensor, head_logits)
+                new_encode_heads_onehot = new_encode_heads_onehot + candidate_tensor
+
             #print ("### gen_heads_onehot:\n",gen_heads_onehot)
         else:
             print ("Not Implemented!")
-        return loss_arc.unsqueeze(0), loss_rel.unsqueeze(0), loss_recomp.unsqueeze(0), gen_heads_onehot.detach(), arc_correct.unsqueeze(0), rel_correct.unsqueeze(0), total_arcs.unsqueeze(0), total_rels.unsqueeze(0)
+        return loss_arc.unsqueeze(0), loss_rel.unsqueeze(0), loss_recomp.unsqueeze(0), gen_heads_onehot.detach(), new_encode_heads_onehot.detach(), arc_correct.unsqueeze(0), rel_correct.unsqueeze(0), total_arcs.unsqueeze(0), total_rels.unsqueeze(0)
 
 
     def inference(self, input_word, input_pretrained, input_char, input_pos, heads, mask=None, explore=True):
