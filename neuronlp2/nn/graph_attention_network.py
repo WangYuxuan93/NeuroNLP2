@@ -192,7 +192,7 @@ class AttentionEmbeddings(nn.Module):
         else:
             self.input_layer = None
         self.use_sin_position_embedding = config.use_sin_position_embedding
-        self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
+        self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.input_size)
         if config.use_sin_position_embedding:
             #self.position_embeddings = SinPositionalEmbedding(config.hidden_size, config.max_position_embeddings)        
             self.position_embeddings.weight.data = position_encoding_init(config.max_position_embeddings, config.hidden_size)
@@ -213,8 +213,6 @@ class AttentionEmbeddings(nn.Module):
         """
         seq_length = input_tensor.size(1)
         batch_size = input_tensor.size(0)
-        if self.input_layer is not None:
-            input_tensor = self.input_layer(input_tensor)
         #if self.use_sin_position_embedding:
         #    embeddings = self.position_embeddings(input_tensor)
         #else:
@@ -222,6 +220,8 @@ class AttentionEmbeddings(nn.Module):
         position_ids = position_ids.unsqueeze(0).expand(batch_size,-1)
         position_embeddings = self.position_embeddings(position_ids)
         embeddings = input_tensor + position_embeddings
+        if self.input_layer is not None:
+            embeddings = self.input_layer(embeddings)
 
         embeddings = self.LayerNorm(embeddings)
         embeddings = self.dropout(embeddings)

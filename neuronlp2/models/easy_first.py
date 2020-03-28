@@ -196,6 +196,7 @@ class EasyFirst(nn.Module):
         
         logger.info("dropout(emb, hidden, inter, att): (%.2f, %.2f, %.2f, %.2f)" % (hyps['GAT']['embedding_dropout_prob'],
                 hyps['GAT']['hidden_dropout_prob'],hyps['GAT']['inter_dropout_prob'], hyps['GAT']['attention_probs_dropout_prob']))
+        logger.info("Use Input Layer: %s" % hyps['GAT']['use_input_layer'])
         logger.info("Only Use Value Weight: %s" % hyps['GAT']['only_value_weight'])
         logger.info("Attend to END if no head: %s" % hyps['GAT']['use_null_att_pos'])
         logger.info("Encode Arc Type: %s" % (self.encode_arc_type))
