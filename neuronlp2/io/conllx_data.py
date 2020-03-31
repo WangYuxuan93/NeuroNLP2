@@ -4,6 +4,7 @@ import os.path
 import numpy as np
 from collections import defaultdict, OrderedDict
 import torch
+import re
 
 from neuronlp2.io.reader import CoNLLXReader
 from neuronlp2.io.alphabet import Alphabet
@@ -31,6 +32,8 @@ def create_alphabets(alphabet_directory, train_path, data_paths=None, max_vocabu
                     line = line.strip()
                     if len(line) == 0:
                         continue
+                    if line.startswith('#'): continue
+                    if re.match('[0-9]+[-.][0-9]+', line): continue
 
                     tokens = line.split('\t')
                     for char in tokens[1]:
@@ -73,6 +76,8 @@ def create_alphabets(alphabet_directory, train_path, data_paths=None, max_vocabu
                 line = line.strip()
                 if len(line) == 0:
                     continue
+                if line.startswith('#'): continue
+                if re.match('[0-9]+[-.][0-9]+', line): continue
 
                 tokens = line.split('\t')
                 for char in tokens[1]:

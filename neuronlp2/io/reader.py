@@ -4,7 +4,7 @@ from neuronlp2.io.instance import DependencyInstance, NERInstance
 from neuronlp2.io.instance import Sentence
 from neuronlp2.io.common import ROOT, ROOT_POS, ROOT_CHAR, ROOT_TYPE, END, END_POS, END_CHAR, END_TYPE
 from neuronlp2.io.common import DIGIT_RE, MAX_CHAR_LENGTH
-
+import re
 
 class CoNLLXReader(object):
     def __init__(self, file_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, 
@@ -30,6 +30,12 @@ class CoNLLXReader(object):
         lines = []
         while len(line.strip()) > 0:
             line = line.strip()
+            if line.startswith('#'):
+                line = self.__source_file.readline()
+                continue
+            if re.match('[0-9]+[-.][0-9]+', line):
+                line = self.__source_file.readline()
+                continue
             lines.append(line.split('\t'))
             line = self.__source_file.readline()
 
