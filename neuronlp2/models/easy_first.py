@@ -355,7 +355,7 @@ class EasyFirst(nn.Module):
                 # mask by token dropout
                 enc_word, enc_pos = drop_input_independent(enc_word, enc_pos, self.p_in)
                 #print ("enc_word (a):\n", enc_word)
-            enc = torch.cat([enc_word, enc_pos], dim=2)
+            enc = torch.cat([enc_word, enc_pos], dim=2).to(device)
         # output from rnn [batch, length, hidden_size]
         if self.input_encoder is not None:
             if self.input_encoder_type == 'Linear':
@@ -1043,7 +1043,7 @@ class EasyFirst(nn.Module):
             rel_ids = rel_logits.argmax(-1)
 
         if self.use_null_att_pos:
-            end_mask = self.get_mask(input_word, target=self.end_word_id)
+            end_mask = self.get_mask(input_word, target=self.end_word_id).to(device)
             #print ("end_mask:\n", end_mask)
         else:
             end_mask = None
@@ -1560,7 +1560,7 @@ class EasyFirstV2(EasyFirst):
             rel_embeddings = None
 
         if self.use_null_att_pos:
-            end_mask = self.get_mask(input_word, target=self.end_word_id)
+            end_mask = self.get_mask(input_word, target=self.end_word_id).to(heads.device)
             #print ("end_mask:\n", end_mask)
         else:
             end_mask = None
