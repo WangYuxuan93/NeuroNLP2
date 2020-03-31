@@ -371,7 +371,7 @@ class AttentionEmbeddings(nn.Module):
         self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.input_size)
         if config.use_sin_position_embedding:
             #self.position_embeddings = SinPositionalEmbedding(config.hidden_size, config.max_position_embeddings)        
-            self.position_embeddings.weight.data = position_encoding_init(config.max_position_embeddings, config.hidden_size)
+            self.position_embeddings.weight.data = position_encoding_init(config.max_position_embeddings, config.input_size)
         if config.freeze_position_embedding:
             if not config.use_sin_position_embedding:
                 print ("### Freeze Position Embedding should use with Sin Position Embedding ###")

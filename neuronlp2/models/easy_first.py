@@ -211,7 +211,7 @@ class EasyFirst(nn.Module):
         logger.info("Encode All Arcs for Relation Prediction: %s" % self.encode_all_arc_for_rel)
         logger.info("Only Use Input Encoder for Relation Prediction: %s" % self.use_input_encode_for_rel)
     
-        graph_attention_dim = hidden_size
+        graph_attention_dim = hyps['GAT']['hidden_size']
         self.arc_h = nn.Linear(graph_attention_dim, arc_space)
         self.arc_c = nn.Linear(graph_attention_dim, arc_space)
         self.arc_attn = BiAffine_v2(arc_space, bias_x=True, bias_y=False)
