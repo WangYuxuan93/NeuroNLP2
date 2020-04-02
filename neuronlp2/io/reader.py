@@ -8,13 +8,14 @@ import re
 
 class CoNLLXReader(object):
     def __init__(self, file_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, 
-                pre_alphabet=None):
+                pre_alphabet=None, pos_idx=4):
         self.__source_file = open(file_path, 'r')
         self.__word_alphabet = word_alphabet
         self.__char_alphabet = char_alphabet
         self.__pos_alphabet = pos_alphabet
         self.__type_alphabet = type_alphabet
         self.__pre_alphabet = pre_alphabet
+        self.pos_idx = pos_idx
 
     def close(self):
         self.__source_file.close()
@@ -86,7 +87,7 @@ class CoNLLXReader(object):
             char_id_seqs.append(char_ids)
 
             word = DIGIT_RE.sub("0", tokens[1]) if normalize_digits else tokens[1]
-            pos = tokens[4]
+            pos = tokens[self.pos_idx]
             head = int(tokens[6])
             type = tokens[7]
 

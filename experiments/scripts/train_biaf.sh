@@ -11,4 +11,5 @@ CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=4 python -u parsing.py --mode train --co
  --dev "data/ptb_two_auto.conll" \
  --test "data/ptb_two_auto.conll" \
  --model_path "models/parsing/deepbiaf/" \
+ #--punctuation 'PUNCT' --pos_idx 3 \
  #--freeze --basic_word_embedding 

@@ -21,7 +21,7 @@ _buckets = [10, 15, 20, 25, 30, 35, 40, 50, 60, 70, 140]
 
 
 def create_alphabets(alphabet_directory, train_path, data_paths=None, max_vocabulary_size=100000, embedd_dict=None,
-                     min_occurrence=1, normalize_digits=True):
+                     min_occurrence=1, normalize_digits=True, pos_idx=4):
 
     def expand_vocab():
         vocab_set = set(vocab_list)
@@ -40,7 +40,7 @@ def create_alphabets(alphabet_directory, train_path, data_paths=None, max_vocabu
                         char_alphabet.add(char)
 
                     word = DIGIT_RE.sub("0", tokens[1]) if normalize_digits else tokens[1]
-                    pos = tokens[4]
+                    pos = tokens[pos_idx]
                     type = tokens[7]
 
                     pos_alphabet.add(pos)
@@ -86,7 +86,7 @@ def create_alphabets(alphabet_directory, train_path, data_paths=None, max_vocabu
                 word = DIGIT_RE.sub("0", tokens[1]) if normalize_digits else tokens[1]
                 vocab[word] += 1
 
-                pos = tokens[4]
+                pos = tokens[pos_idx]
                 pos_alphabet.add(pos)
 
                 type = tokens[7]
@@ -142,13 +142,14 @@ def create_alphabets(alphabet_directory, train_path, data_paths=None, max_vocabu
 
 def read_data(source_path: str, word_alphabet: Alphabet, char_alphabet: Alphabet, pos_alphabet: Alphabet, type_alphabet: Alphabet,
               pre_alphabet=None, max_size=None, normalize_digits=True, symbolic_root=False, symbolic_end=False,
-              mask_out_root=False):
+              mask_out_root=False, pos_idx=4):
     data = []
     max_length = 0
     max_char_length = 0
     print('Reading data from %s' % source_path)
     counter = 0
-    reader = CoNLLXReader(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, pre_alphabet=pre_alphabet)
+    reader = CoNLLXReader(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, 
+                          pre_alphabet=pre_alphabet, pos_idx=pos_idx)
     inst = reader.getNext(normalize_digits=normalize_digits, symbolic_root=symbolic_root, symbolic_end=symbolic_end)
     src_words = []
     while inst is not None and (not max_size or counter < max_size):
@@ -235,12 +236,13 @@ def read_data(source_path: str, word_alphabet: Alphabet, char_alphabet: Alphabet
 
 def read_bucketed_data(source_path: str, word_alphabet: Alphabet, char_alphabet: Alphabet, pos_alphabet: Alphabet, type_alphabet: Alphabet,
                        pre_alphabet=None, max_size=None, normalize_digits=True, symbolic_root=False, symbolic_end=False,
-                       mask_out_root=False):
+                       mask_out_root=False, pos_idx=4):
     data = [[] for _ in _buckets]
     max_char_length = [0 for _ in _buckets]
     print('Reading data from %s' % source_path)
     counter = 0
-    reader = CoNLLXReader(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, pre_alphabet=pre_alphabet)
+    reader = CoNLLXReader(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, 
+                          pre_alphabet=pre_alphabet, pos_idx=pos_idx)
     inst = reader.getNext(normalize_digits=normalize_digits, symbolic_root=symbolic_root, symbolic_end=symbolic_end)
     while inst is not None and (not max_size or counter < max_size):
         counter += 1

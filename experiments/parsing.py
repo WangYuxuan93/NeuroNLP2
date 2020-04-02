@@ -27,7 +27,7 @@ from neuronlp2 import utils
 from neuronlp2.io import CoNLLXWriter
 from neuronlp2.tasks import parser
 from neuronlp2.nn.utils import freeze_embedding
-
+from neuronlp2.io import common
 
 def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgrad, weight_decay, 
                   warmup_steps, schedule='step', hidden_size=200, decay_steps=5000):
@@ -218,7 +218,8 @@ def train(args):
     alphabet_path = os.path.join(model_path, 'alphabets')
     word_alphabet, char_alphabet, pos_alphabet, type_alphabet = conllx_data.create_alphabets(alphabet_path, train_path,
                                                                                              data_paths=[dev_path, test_path],
-                                                                                             embedd_dict=word_dict, max_vocabulary_size=200000)
+                                                                                             embedd_dict=word_dict, max_vocabulary_size=200000,
+                                                                                             pos_idx=args.pos_idx)
     pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path, word_dict, word_alphabet.instances, max_vocabulary_size=200000)
 
     num_words = word_alphabet.size()
@@ -392,11 +393,11 @@ def train(args):
     logger.info("Reading Data")
     if alg == 'graph':
         data_train = conllx_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
-                                                    pre_alphabet=pretrained_alphabet)
+                                                    pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
         data_dev = conllx_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
-                                                    pre_alphabet=pretrained_alphabet)
+                                                    pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
         data_test = conllx_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
-                                                    pre_alphabet=pretrained_alphabet)
+                                                    pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
     else:
         data_train = conllx_stacked_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, prior_order=prior_order)
         data_dev = conllx_stacked_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, prior_order=prior_order)
@@ -665,7 +666,7 @@ def parse(args):
     logger.info("Creating Alphabets")
     alphabet_path = os.path.join(model_path, 'alphabets')
     assert os.path.exists(alphabet_path)
-    word_alphabet, char_alphabet, pos_alphabet, type_alphabet = conllx_data.create_alphabets(alphabet_path, None)
+    word_alphabet, char_alphabet, pos_alphabet, type_alphabet = conllx_data.create_alphabets(alphabet_path, None, pos_idx=args.pos_idx)
 
     num_words = word_alphabet.size()
     num_chars = char_alphabet.size()
@@ -747,9 +748,11 @@ def parse(args):
 
     logger.info("Reading Data")
     if alg == 'graph':
-        data_test = conllx_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True)
+        data_test = conllx_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, 
+                                          type_alphabet, symbolic_root=True, pos_idx=args.pos_idx)
     else:
-        data_test = conllx_stacked_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, prior_order=prior_order)
+        data_test = conllx_stacked_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet,
+                                          type_alphabet, prior_order=prior_order, pos_idx=args.pos_idx)
 
     beam = args.beam
     pred_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, type_alphabet)
@@ -795,6 +798,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--unk_replace', type=float, default=0., help='The rate to replace a singleton word with UNK')
     args_parser.add_argument('--freeze', action='store_true', help='frozen the word embedding (disable fine-tuning).')
     args_parser.add_argument('--punctuation', nargs='+', type=str, help='List of punctuations')
+    args_parser.add_argument('--pos_idx', type=int, default=4, choices=[3, 4], help='Index in Conll file line for Part-of-speech tags')
     args_parser.add_argument('--beam', type=int, default=1, help='Beam size for decoding')
     args_parser.add_argument('--basic_word_embedding', action='store_true', help='Whether to use extra randomly initialized trainable word embedding.')
     args_parser.add_argument('--word_embedding', choices=['glove', 'senna', 'sskip', 'polyglot'], help='Embedding for words')

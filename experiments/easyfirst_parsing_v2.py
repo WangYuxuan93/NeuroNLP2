@@ -225,7 +225,8 @@ def train(args):
     alphabet_path = os.path.join(model_path, 'alphabets')
     word_alphabet, char_alphabet, pos_alphabet, type_alphabet = conllx_data.create_alphabets(alphabet_path, train_path,
                                                                                              data_paths=[dev_path, test_path],
-                                                                                             embedd_dict=word_dict, max_vocabulary_size=200000)
+                                                                                             embedd_dict=word_dict, max_vocabulary_size=200000,
+                                                                                             pos_idx=args.pos_idx)
     pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path, word_dict, word_alphabet.instances, max_vocabulary_size=200000)
 
     num_words = word_alphabet.size()
@@ -373,11 +374,11 @@ def train(args):
         exit()
     
     data_train = conllx_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
-                                                mask_out_root=False, symbolic_end=symbolic_end, pre_alphabet=pretrained_alphabet)
+                                                mask_out_root=False, symbolic_end=symbolic_end, pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
     data_dev = conllx_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
-                                        mask_out_root=False, symbolic_end=symbolic_end, pre_alphabet=pretrained_alphabet)
+                                        mask_out_root=False, symbolic_end=symbolic_end, pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
     data_test = conllx_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
-                                        mask_out_root=False, symbolic_end=symbolic_end, pre_alphabet=pretrained_alphabet)
+                                        mask_out_root=False, symbolic_end=symbolic_end, pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
     
     if schedule == 'step':
         logger.info("Scheduler: %s, init lr=%.6f, lr decay=%.6f, decay_steps=%d, warmup_steps=%d" % (schedule, learning_rate, lr_decay, decay_steps, warmup_steps))
@@ -789,7 +790,7 @@ def parse(args):
     logger.info("Creating Alphabets")
     alphabet_path = os.path.join(model_path, 'alphabets')
     assert os.path.exists(alphabet_path)
-    word_alphabet, char_alphabet, pos_alphabet, type_alphabet = conllx_data.create_alphabets(alphabet_path, None)
+    word_alphabet, char_alphabet, pos_alphabet, type_alphabet = conllx_data.create_alphabets(alphabet_path, None, pos_idx=args.pos_idx)
 
     num_words = word_alphabet.size()
     num_chars = char_alphabet.size()
@@ -899,7 +900,7 @@ def parse(args):
     
     logger.info("Reading Data")
     data_test = conllx_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
-                                        mask_out_root=False, symbolic_end=args.symbolic_end)
+                                        mask_out_root=False, symbolic_end=args.symbolic_end, pos_idx=args.pos_idx)
 
     beam = args.beam
     pred_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, type_alphabet)
@@ -962,6 +963,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--recomp_prob', type=float, default=0.25, help='Probability for random sampling of recompute at test time.')
     args_parser.add_argument('--sampler', choices=['random', 'from_model'], help='Sample strategy')
     args_parser.add_argument('--punctuation', nargs='+', type=str, help='List of punctuations')
+    args_parser.add_argument('--pos_idx', type=int, default=4, choices=[3, 4], help='Index in Conll file line for Part-of-speech tags')
     args_parser.add_argument('--beam', type=int, default=1, help='Beam size for decoding')
     args_parser.add_argument('--basic_word_embedding', action='store_true', help='Whether to use extra randomly initialized trainable word embedding.')
     args_parser.add_argument('--word_embedding', choices=['glove', 'senna', 'sskip', 'polyglot'], help='Embedding for words')
