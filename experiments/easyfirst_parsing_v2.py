@@ -179,6 +179,7 @@ def train(args):
 
     basic_word_embedding = args.basic_word_embedding
     num_epochs = args.num_epochs
+    patient_epochs = args.patient_epochs
     batch_size = args.batch_size
     step_batch_size = args.step_batch_size
     optim = args.optim
@@ -435,6 +436,7 @@ def train(args):
     test_recomp_freq = 0.0
 
     patient = 0
+    num_epochs_without_improvement = 0
     beam = args.beam
     reset = args.reset
     num_batches = num_data // batch_size + 1
@@ -443,6 +445,7 @@ def train(args):
     else:
         opt_info = 'sgd, momentum=0.9, nesterov=True'
     for epoch in range(1, num_epochs + 1):
+        num_epochs_without_improvement += 1
         start_time = time.time()
         train_loss = 0.
         train_arc_loss = 0.
@@ -668,8 +671,8 @@ def train(args):
             sys.stdout.write("\b" * num_back)
         train_uas = float(overall_arc_correct) * 100.0 / overall_total_arcs
         train_lacc = float(overall_rel_correct) * 100.0 / overall_total_rels
-        print('total: %d (%d), steps: %d, uas: %.2f%%, lacc: %.2f%%, loss: %.4f (nans: %d), arc: %.4f, rel: %.4f, recomp: %.4f, time: %.2fs' % (num_insts, num_words, num_steps, 
-                                                                                                       train_uas, train_lacc, train_loss / (num_steps+1e-9),
+        print('total: %d (%d), steps: %d, epochs w/o improve:%d, uas: %.2f%%, lacc: %.2f%%, loss: %.4f (nans: %d), arc: %.4f, rel: %.4f, recomp: %.4f, time: %.2fs' % (num_insts, num_words, num_steps, 
+                                                                                                       num_epochs_without_improvement, train_uas, train_lacc, train_loss / (num_steps+1e-9),
                                                                                                        num_nans, train_arc_loss / (num_steps+1e-9),
                                                                                                        train_rel_loss / (num_steps+1e-9),
                                                                                                        train_recomp_loss / (num_steps+1e-9),
@@ -699,6 +702,7 @@ def train(args):
                 dev_root_corr, dev_total_root, dev_total_inst = dev_stats_root
 
                 if best_lcorrect_nopunc < dev_lcorr_nopunc or (best_lcorrect_nopunc == dev_lcorr_nopunc and best_ucorrect_nopunc < dev_ucorr_nopunc):
+                    num_epochs_without_improvement = 0
                     best_ucorrect_nopunc = dev_ucorr_nopunc
                     best_lcorrect_nopunc = dev_lcorr_nopunc
                     best_ucomlpete_nopunc = dev_ucomlpete_nopunc
@@ -774,6 +778,10 @@ def train(args):
                     single_network.load_state_dict(torch.load(model_name, map_location=device))
                     scheduler.reset_state()
                     patient = 0
+
+        if num_epochs_without_improvement >= patient_epochs:
+            logger.info("More than %d epochs without improvement, exit!" % patient_epochs)
+            exit()
 
 
 def parse(args):
@@ -936,6 +944,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--config', type=str, help='config file')
     args_parser.add_argument('--output_filename', type=str, help='output filename for parse')
     args_parser.add_argument('--num_epochs', type=int, default=200, help='Number of training epochs')
+    args_parser.add_argument('--patient_epochs', type=int, default=100, help='Max number of epochs to exit with no improvement')
     args_parser.add_argument('--batch_size', type=int, default=16, help='Number of sentences in each batch')
     args_parser.add_argument('--batch_by_arc', action='store_true', default=False, help='Whether to count batch by number of arcs.')
     args_parser.add_argument('--update_batch', type=int, default=50, help='Number of errors needed to do one update')
