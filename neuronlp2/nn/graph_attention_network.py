@@ -35,6 +35,7 @@ class GraphAttentionNetworkConfig(object):
                 max_position_embeddings=512,
                 initializer_range=0.02,
                 initializer='default',
+                encode_arc_type='max',
                 rel_dim=100, do_encode_rel=False,
                 use_null_att_pos=False):
         """Constructs BertConfig.
@@ -62,6 +63,7 @@ class GraphAttentionNetworkConfig(object):
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.num_attention_heads = num_attention_heads
+        self.share_params = share_params
         self.num_layers = num_layers
         self.hidden_act = hidden_act
         self.dropout_type = dropout_type
@@ -76,7 +78,7 @@ class GraphAttentionNetworkConfig(object):
         self.max_position_embeddings = max_position_embeddings
         self.initializer_range = initializer_range
         self.initializer = initializer
-        self.share_params = share_params
+        self.encode_arc_type = encode_arc_type
         self.only_value_weight = only_value_weight
         self.rel_dim = rel_dim
         self.do_encode_rel = do_encode_rel
@@ -134,21 +136,21 @@ class Linear(nn.Module):
         super(Linear,self).__init__()
         self.linear = nn.Linear(d_in,d_out,bias=bias)
         if initializer == 'orthogonal':
-            print ("Initializing attention encoder linear with orthogonal ...")
+            #print ("Initializing attention encoder linear with orthogonal ...")
             nn.init.orthogonal_(self.linear.weight)
             if bias:
                 reset_bias_with_orthogonal(self.linear.bias)
         elif initializer == 'xavier_normal':
-            print ("Initializing attention encoder linear with xavier_normal ...")
+            #print ("Initializing attention encoder linear with xavier_normal ...")
             nn.init.xavier_normal_(self.linear.weight)
         elif initializer == 'xavier_uniform':
-            print ("Initializing attention encoder linear with xavier_uniform ...")
+            #print ("Initializing attention encoder linear with xavier_uniform ...")
             nn.init.xavier_uniform_(self.linear.weight)
         elif initializer == 'kaiming_uniform':
-            print ("Initializing attention encoder linear with kaiming_uniform ...")
+            #print ("Initializing attention encoder linear with kaiming_uniform ...")
             nn.init.kaiming_uniform_(self.linear.weight, nonlinearity='relu')
-        else:
-            print ("Initializing attention encoder linear by default ...")
+        #else:
+            #print ("Initializing attention encoder linear by default ...")
         
 
     def forward(self,x):
@@ -256,6 +258,7 @@ def matmul_rel(x, y, z=None):
 class GraphAttention(nn.Module):
     def __init__(self, config, hidden_size, num_attention_heads):
         super(GraphAttention, self).__init__()
+        self.encode_arc_type = config.encode_arc_type
         self.only_value_weight = config.only_value_weight
         self.do_encode_rel = config.do_encode_rel
         self.use_null_att_pos = config.use_null_att_pos
@@ -287,7 +290,7 @@ class GraphAttention(nn.Module):
             rel_embeddings: optional (batch, seq_len, seq_len, rel_dim)
             end_mask: (batch, seq_len)
         """
-        if self.only_value_weight:
+        if self.only_value_weight or self.encode_arc_type == 'soft-copy':
             # input: (batch, seq_len, hidden_size//2)
             value_layer = self.value(input_tensor)
             # This is actually dropping out entire tokens to attend to, which might
@@ -299,11 +302,6 @@ class GraphAttention(nn.Module):
             # => (batch, seq_len, hidden_size//2)
             context_layer = torch.matmul(attention_probs.float(), value_layer)
         else:
-            if self.use_null_att_pos:
-                graph_matrix = graph_matrix + end_mask.unsqueeze(1)
-                #print ("aug matrix:\n", graph_matrix)
-            # (batch, seq_len, seq_len), mask out non-ajacency relations
-            neg_inf_mask = (1-graph_matrix) * -1e9
             # input: (batch, seq_len, hidden_size//2)
             mixed_query_layer = self.query(input_tensor)
             mixed_key_layer = self.key(input_tensor)
@@ -329,8 +327,15 @@ class GraphAttention(nn.Module):
                 attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
             attention_scores = attention_scores / math.sqrt(self.attention_head_size)
 
-            # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
-            attention_scores = attention_scores + neg_inf_mask.unsqueeze(1)
+            if not self.encode_arc_type == 'soft':
+                if self.use_null_att_pos:
+                    graph_matrix = graph_matrix + end_mask.unsqueeze(1)
+                    #print ("aug matrix:\n", graph_matrix)
+                # (batch, seq_len, seq_len), mask out non-ajacency relations
+                neg_inf_mask = (1-graph_matrix) * -1e9
+                # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
+                attention_scores = attention_scores + neg_inf_mask.unsqueeze(1)
+
 
             # Normalize the attention scores to probabilities.
             # (batch, num_head, seq_len, seq_len)

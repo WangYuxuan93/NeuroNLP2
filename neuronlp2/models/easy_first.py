@@ -1610,6 +1610,17 @@ class EasyFirstV2(EasyFirst):
                 head_logits = torch.where(mask.unsqueeze(1).expand_as(self.head_logits)==1, self.head_logits, neg_inf)
                 candidate_tensor = self.get_topk(k, max_tensor, head_logits)
                 new_encode_heads_onehot = new_encode_heads_onehot + candidate_tensor
+            elif self.encode_arc_type.startswith('soft'):
+                # (batch, seq_len, seq_len)
+                head_probs = torch.nn.Softmax(dim=-1)(self.head_logits)
+                # (batch, seq_len)
+                max_tensor_2d = max_tensor.sum(-1)
+                # (batch, seq_len, seq_len)
+                max_mask = max_tensor_2d.unsqueeze(-1).expand_as(head_probs)
+                # (batch, seq_len, seq_len)
+                zeros = torch.zeros_like(head_probs)
+                prob_tensor = torch.where(max_mask == 1, head_probs, zeros)
+                new_encode_heads_onehot = new_encode_heads_onehot + head_probs
 
             #print ("### gen_heads_onehot:\n",gen_heads_onehot)
         else:
