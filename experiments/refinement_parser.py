@@ -312,9 +312,12 @@ def train(args):
     network.to(device)
     single_network = network if num_gpu <= 1 else network.module
 
+    logger.info("Freeze Pre-trained Emb: %s" % (freeze))
     if freeze:
-        logger.info("Freezing word_embed")
-        freeze_embedding(network.word_embed)
+        if num_gpu > 1:
+            freeze_embedding(network.module.word_embed)
+        else:
+            freeze_embedding(network.word_embed)
 
     logger.info("Reading Data")
     if alg == 'graph':
