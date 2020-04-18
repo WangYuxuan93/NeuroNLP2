@@ -12,6 +12,7 @@ from neuronlp2.nn import BiAffine, BiLinear, CharCNN, BiAffine_v2
 from neuronlp2.tasks import parser
 from neuronlp2.nn.self_attention import AttentionEncoderConfig, AttentionEncoder
 from neuronlp2.nn.graph_attention_network import GraphAttentionNetworkConfig, GraphAttentionNetwork
+from neuronlp2.nn.dropout import drop_input_independent
 from torch.autograd import Variable
 
 
@@ -40,27 +41,6 @@ class PositionEmbeddingLayer(nn.Module):
             print ("embeddings:",embeddings)
         return embeddings
 
-
-def drop_input_independent(word_embeddings, tag_embeddings, dropout_emb):
-    batch_size, seq_length, _ = word_embeddings.size()
-    word_masks = word_embeddings.data.new(batch_size, seq_length).fill_(1 - dropout_emb)#6*98 ;0.67
-    #print(word_masks)
-    word_masks = Variable(torch.bernoulli(word_masks), requires_grad=False)#6*78 ;0,1
-    #print(word_masks)
-    tag_masks = tag_embeddings.data.new(batch_size, seq_length).fill_(1 - dropout_emb)
-    tag_masks = Variable(torch.bernoulli(tag_masks), requires_grad=False)
-    scale = 3.0 / (2.0 * word_masks + tag_masks + 1e-12)#batch_size*seq_length 1,1.5,3
-    #print(scale)
-    word_masks *= scale#batch_size*seq_length 0,1,1.5
-    tag_masks *= scale
-    #print(word_masks)
-    word_masks = word_masks.unsqueeze(dim=2)#6*78*1
-    #print(word_masks)
-    tag_masks = tag_masks.unsqueeze(dim=2)
-    word_embeddings = word_embeddings * word_masks
-    tag_embeddings = tag_embeddings * tag_masks
-
-    return word_embeddings, tag_embeddings
 
 class RefinementParser(nn.Module):
     def __init__(self, hyps, num_pretrained, num_words, num_chars, num_pos, num_labels,
@@ -369,32 +349,25 @@ class RefinementParser(nn.Module):
         arc_c = self.activation(self.arc_c(output))
 
         # output size [batch, length, rel_mlp_dim]
-        type_h = self.activation(self.rel_h(output))
-        type_c = self.activation(self.rel_c(output))
+        rel_h = self.activation(self.rel_h(output))
+        rel_c = self.activation(self.rel_c(output))
 
         # apply dropout on arc
         # [batch, length, dim] --> [batch, 2 * length, dim]
         arc = torch.cat([arc_h, arc_c], dim=1)
-        type = torch.cat([type_h, type_c], dim=1)
+        type = torch.cat([rel_h, rel_c], dim=1)
         arc = self.dropout_out(arc.transpose(1, 2)).transpose(1, 2)
         arc_h, arc_c = arc.chunk(2, 1)
 
         # apply dropout on type
         # [batch, length, dim] --> [batch, 2 * length, dim]
         type = self.dropout_out(type.transpose(1, 2)).transpose(1, 2)
-        type_h, type_c = type.chunk(2, 1)
-        type_h = type_h.contiguous()
-        type_c = type_c.contiguous()
+        rel_h, rel_c = type.chunk(2, 1)
+        rel_h = rel_h.contiguous()
+        rel_c = rel_c.contiguous()
 
-        return (arc_h, arc_c), (type_h, type_c)
+        return (arc_h, arc_c), (rel_h, rel_c)
 
-    def forward(self, input_word, input_pretrained, input_char, input_pos, mask=None):
-        # output from rnn [batch, length, dim]
-        arc, type = self._get_rnn_output(input_word, input_pretrained, input_char, input_pos, mask=mask)
-        # [batch, length_head, length_child]
-        #out_arc = self.arc_attention(arc[0], arc[1], mask_query=mask, mask_key=mask)
-        out_arc = self.arc_attention(arc[1], arc[0])
-        return out_arc, type
 
     def _get_arc_loss(self, logits, heads_3D, debug=False):
         # in the original code, the i,j = 1 means i is head of j
@@ -434,53 +407,56 @@ class RefinementParser(nn.Module):
 
         return loss_arc
 
-    def accuracy(self, arc_logits, type_logits, heads, types, mask, debug=False):
+    def accuracy(self, arc_logits, rel_logits, heads, rels, mask, debug=False):
         """
         arc_logits: (batch, seq_len, seq_len)
-        type_logits: (batch, n_rels, seq_len, seq_len)
+        rel_logits: (batch, n_rels, seq_len, seq_len)
         heads: (batch, seq_len)
-        types: (batch, seq_len)
+        rels: (batch, seq_len)
         mask: (batch, seq_len)
         """
         total_arcs = mask.sum()
         # (batch, seq_len)
         arc_preds = arc_logits.argmax(-2)
         # (batch_size, seq_len, seq_len, n_rels)
-        transposed_type_logits = type_logits.permute(0, 2, 3, 1)
+        transposed_rel_logits = rel_logits.permute(0, 2, 3, 1)
         # (batch_size, seq_len, seq_len)
-        type_ids = transposed_type_logits.argmax(-1)
+        rel_ids = transposed_rel_logits.argmax(-1)
         # (batch, seq_len)
-        type_preds = type_ids.gather(-1, heads.unsqueeze(-1)).squeeze()
+        rel_preds = rel_ids.gather(-1, heads.unsqueeze(-1)).squeeze()
 
         ones = torch.ones_like(heads)
         zeros = torch.zeros_like(heads)
         arc_correct = (torch.where(arc_preds==heads, ones, zeros) * mask).sum()
-        type_correct = (torch.where(type_preds==types, ones, zeros) * mask).sum()
+        rel_correct = (torch.where(rel_preds==rels, ones, zeros) * mask).sum()
 
         if debug:
             print ("arc_logits:\n", arc_logits)
             print ("arc_preds:\n", arc_preds)
             print ("heads:\n", heads)
-            print ("type_ids:\n", type_ids)
-            print ("type_preds:\n", type_preds)
-            print ("types:\n", types)
+            print ("rel_ids:\n", rel_ids)
+            print ("rel_preds:\n", rel_preds)
+            print ("rels:\n", rels)
             print ("mask:\n", mask)
             print ("total_arcs:\n", total_arcs)
             print ("arc_correct:\n", arc_correct)
-            print ("type_correct:\n", type_correct)
+            print ("rel_correct:\n", rel_correct)
 
-        return arc_correct.cpu().numpy(), type_correct.cpu().numpy(), total_arcs.cpu().numpy()
+        return arc_correct.cpu().numpy(), rel_correct.cpu().numpy(), total_arcs.cpu().numpy()
 
-    def loss(self, input_word, input_pretrained, input_char, input_pos, heads, types, mask=None):
-        # out_arc shape [batch, length_head, length_child]
-        out_arc, out_type  = self(input_word, input_pretrained, input_char, input_pos, mask=mask)
-        # out_type shape [batch, length, rel_mlp_dim]
-        type_h, type_c = out_type
+
+    def forward(self, input_word, input_pretrained, input_char, input_pos, heads, rels, mask=None):
+        # output from rnn [batch, length, dim]
+        arc_hidden, rel_hidden = self._get_rnn_output(input_word, input_pretrained, input_char, input_pos, mask=mask)
+        # [batch, length_head, length_child]
+        arc_logits = self.arc_attention(arc_hidden[1], arc_hidden[0])
+
+        # [batch, length, rel_mlp_dim]
+        rel_h, rel_c = rel_hidden
 
         # get vector for heads [batch, length, rel_mlp_dim],
-        #type_h = type_h.gather(dim=1, index=heads.unsqueeze(2).expand(type_h.size()))
+        #rel_h = rel_h.gather(dim=1, index=heads.unsqueeze(2).expand(rel_h.size()))
         # compute output for type [batch, length, num_labels]
-        #out_type = self.rel_attention(type_h, type_c)
         batch_size, seq_len = input_word.size()
         # (batch, seq_len), seq mask, where at position 0 is 0
         root_mask = torch.arange(seq_len, device=heads.device).gt(0).float().unsqueeze(0) * mask
@@ -491,68 +467,34 @@ class RefinementParser(nn.Module):
         heads_3D.scatter_(-1, heads.unsqueeze(-1), 1)
         heads_3D = heads_3D * mask_3D
         # (batch, seq_len, seq_len)
-        types_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.long, device=heads.device)
-        types_3D.scatter_(-1, heads.unsqueeze(-1), types.unsqueeze(-1))
+        rels_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.long, device=heads.device)
+        rels_3D.scatter_(-1, heads.unsqueeze(-1), rels.unsqueeze(-1))
         # (batch, n_rels, seq_len, seq_len)
-        out_type = self.rel_attention(type_c, type_h)
+        rel_logits = self.rel_attention(rel_c, rel_h)
 
         if self.minimize_logp:
             # (batch, seq_len)
-            loss_arc = self._get_arc_loss(out_arc, heads_3D)
+            loss_arc = self._get_arc_loss(arc_logits, heads_3D)
         else:
             # mask invalid position to -inf for log_softmax
             if mask is not None:
                 minus_mask = mask.eq(0).unsqueeze(2)
-                out_arc = out_arc.masked_fill(minus_mask, float('-inf'))
+                arc_logits = arc_logits.masked_fill(minus_mask, float('-inf'))
             # loss_arc shape [batch, length_c]
-            loss_arc = self.criterion(out_arc, heads)
-        #loss_type = self.criterion(out_type.transpose(1, 2), types)
-        loss_type = (self.criterion(out_type, types_3D) * heads_3D).sum(-1)
+            loss_arc = self.criterion(arc_logits, heads)
+        #loss_rel = self.criterion(out_type.transpose(1, 2), rels)
+        loss_rel = (self.criterion(rel_logits, rels_3D) * heads_3D).sum(-1)
 
-        arc_correct, type_correct, total_arcs = self.accuracy(out_arc, out_type, heads, types, root_mask)
+        statistics = self.accuracy(arc_logits, rel_logits, heads, rels, root_mask)
 
         # mask invalid position to 0 for sum loss
         if mask is not None:
             loss_arc = loss_arc * mask
-            loss_type = loss_type * mask
+            loss_rel = loss_rel * mask
 
         # [batch, length - 1] -> [batch] remove the symbolic root.
-        return loss_arc[:, 1:].sum(dim=1), loss_type[:, 1:].sum(dim=1), arc_correct, type_correct, total_arcs 
+        return loss_arc[:, 1:].sum(dim=1), loss_rel[:, 1:].sum(dim=1), statistics
 
-    """
-    def _decode_types(self, out_type, heads, leading_symbolic):
-        # out_type shape [batch, length, rel_mlp_dim]
-        type_h, type_c = out_type
-        # get vector for heads [batch, length, rel_mlp_dim],
-        type_h = type_h.gather(dim=1, index=heads.unsqueeze(2).expand(type_h.size()))
-        # compute output for type [batch, length, num_labels]
-        out_type = self.rel_attention(type_h, type_c)
-        # remove the first #leading_symbolic types.
-        out_type = out_type[:, :, leading_symbolic:]
-        # compute the prediction of types [batch, length]
-        _, types = out_type.max(dim=2)
-        return types + leading_symbolic
-
-    def decode_local(self, input_word, input_char, input_pos, mask=None, leading_symbolic=0):
-        # out_arc shape [batch, length_h, length_c]
-        out_arc, out_type = self(input_word, input_char, input_pos, mask=mask)
-        batch, max_len, _ = out_arc.size()
-        # set diagonal elements to -inf
-        diag_mask = torch.eye(max_len, device=out_arc.device, dtype=torch.uint8).unsqueeze(0)
-        out_arc.masked_fill_(diag_mask, float('-inf'))
-        # set invalid positions to -inf
-        if mask is not None:
-            minus_mask = mask.eq(0).unsqueeze(2)
-            out_arc.masked_fill_(minus_mask, float('-inf'))
-
-        # compute naive predictions.
-        # predition shape = [batch, length_c]
-        _, heads = out_arc.max(dim=1)
-
-        types = self._decode_types(out_type, heads, leading_symbolic)
-
-        return heads.cpu().numpy(), types.cpu().numpy()
-    """
 
     def decode(self, input_word, input_pretrained, input_char, input_pos, mask=None, leading_symbolic=0):
         """
@@ -573,33 +515,35 @@ class RefinementParser(nn.Module):
                 number of symbolic labels leading in type alphabets (set it to 0 if you are not sure)
 
         Returns: (Tensor, Tensor)
-                predicted heads and types.
+                predicted heads and rels.
 
         """
-        # out_arc shape [batch, length_h, length_c]
-        out_arc, out_type = self(input_word, input_pretrained, input_char, input_pos, mask=mask)
+        # output from rnn [batch, length, dim]
+        arc_hidden, rel_hidden = self._get_rnn_output(input_word, input_pretrained, input_char, input_pos, mask=mask)
+        # [batch, length_head, length_child]
+        arc_logits = self.arc_attention(arc_hidden[1], arc_hidden[0])
 
         # out_type shape [batch, length, rel_mlp_dim]
-        type_h, type_c = out_type
-        batch, max_len, rel_mlp_dim = type_h.size()
+        rel_h, rel_c = rel_hidden
+        batch, max_len, rel_mlp_dim = rel_h.size()
 
-        #type_h = type_h.unsqueeze(2).expand(batch, max_len, max_len, rel_mlp_dim).contiguous()
-        #type_c = type_c.unsqueeze(1).expand(batch, max_len, max_len, rel_mlp_dim).contiguous()
+        #rel_h = rel_h.unsqueeze(2).expand(batch, max_len, max_len, rel_mlp_dim).contiguous()
+        #rel_c = rel_c.unsqueeze(1).expand(batch, max_len, max_len, rel_mlp_dim).contiguous()
         # compute output for type [batch, length_h, length_c, num_labels]
-        #out_type = self.rel_attention(type_h, type_c)
+        #out_type = self.rel_attention(rel_h, rel_c)
         # (batch, n_rels, seq_len_c, seq_len_h)
         # => (batch, length_h, length_c, num_labels)
-        out_type = self.rel_attention(type_c, type_h).permute(0,3,2,1)
+        rel_logits = self.rel_attention(rel_c, rel_h).permute(0,3,2,1)
 
         if mask is not None:
             minus_mask = mask.eq(0).unsqueeze(2)
-            out_arc.masked_fill_(minus_mask, float('-inf'))
+            arc_logits.masked_fill_(minus_mask, float('-inf'))
         # loss_arc shape [batch, length_h, length_c]
-        loss_arc = F.log_softmax(out_arc, dim=1)
-        # loss_type shape [batch, length_h, length_c, num_labels]
-        loss_type = F.log_softmax(out_type, dim=3).permute(0, 3, 1, 2)
+        loss_arc = F.log_softmax(arc_logits, dim=1)
+        # loss_rel shape [batch, length_h, length_c, num_labels]
+        loss_rel = F.log_softmax(rel_logits, dim=3).permute(0, 3, 1, 2)
         # [batch, num_labels, length_h, length_c]
-        energy = loss_arc.unsqueeze(1) + loss_type
+        energy = loss_arc.unsqueeze(1) + loss_rel
 
         # compute lengths
         length = mask.sum(dim=1).long().cpu().numpy()

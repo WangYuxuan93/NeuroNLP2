@@ -304,11 +304,18 @@ def train(args):
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
+    num_gpu = torch.cuda.device_count()
+    logger.info("GPU Number: %d" % num_gpu)
+    if num_gpu > 1:
+        logger.info("Using Data Parallel")
+        network = torch.nn.DataParallel(network)
+    network.to(device)
+    single_network = network if num_gpu <= 1 else network.module
+
     if freeze:
         logger.info("Freezing word_embed")
         freeze_embedding(network.word_embed)
 
-    network = network.to(device)
     logger.info("Reading Data")
     if alg == 'graph':
         data_train = conllx_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
@@ -406,10 +413,11 @@ def train(args):
                 types = data['TYPE'].to(device)
                 masks = data['MASK'].to(device)
                 nwords = masks.sum() - nbatch
-                loss_arc, loss_type, arc_correct, type_correct, total_arcs = network.loss(words, pres, chars, postags, heads, types, mask=masks)
+                loss_arc, loss_type, statistics = network(words, pres, chars, postags, heads, types, mask=masks)
             loss_arc = loss_arc.sum()
             loss_type = loss_type.sum()
             loss_total = loss_arc + loss_type
+            arc_correct, type_correct, total_arcs = statistics
             overall_arc_correct += arc_correct
             overall_type_correct += type_correct
             overall_total_arcs += total_arcs
@@ -477,7 +485,7 @@ def train(args):
                 #gold_writer.start(gold_filename)
 
                 print('Evaluating dev:')
-                dev_stats, dev_stats_nopunct, dev_stats_root = eval(alg, data_dev, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, 
+                dev_stats, dev_stats_nopunct, dev_stats_root = eval(alg, data_dev, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, 
                                                                     beam=beam, write_to_tmp=False, prev_best_lcorr=best_lcorrect_nopunc,
                                                                     prev_best_ucorr=best_ucorrect_nopunc, pred_filename=pred_filename)
 
@@ -508,7 +516,7 @@ def train(args):
 
                     best_epoch = epoch
                     patient = 0
-                    torch.save(network.state_dict(), model_name)
+                    torch.save(single_network.state_dict(), model_name)
 
                     pred_filename = os.path.join(result_path, 'pred_test%d' % epoch)
                     pred_writer.start(pred_filename)
@@ -516,7 +524,7 @@ def train(args):
                     #gold_writer.start(gold_filename)
 
                     print('Evaluating test:')
-                    test_stats, test_stats_nopunct, test_stats_root = eval(alg, data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam)
+                    test_stats, test_stats_nopunct, test_stats_root = eval(alg, data_test, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam)
 
                     test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total = test_stats
                     test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
@@ -555,7 +563,7 @@ def train(args):
 
                 if reset > 0 and patient >= reset:
                     print ("### Reset optimizer state ###")
-                    network.load_state_dict(torch.load(model_name, map_location=device))
+                    single_network.load_state_dict(torch.load(model_name, map_location=device))
                     scheduler.reset_state()
                     patient = 0
 
