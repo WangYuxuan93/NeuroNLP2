@@ -442,7 +442,7 @@ class RefinementParser(nn.Module):
             print ("arc_correct:\n", arc_correct)
             print ("rel_correct:\n", rel_correct)
 
-        return arc_correct.cpu().numpy(), rel_correct.cpu().numpy(), total_arcs.cpu().numpy()
+        return arc_correct.unsqueeze(0), rel_correct.unsqueeze(0), total_arcs.unsqueeze(0)
 
 
     def forward(self, input_word, input_pretrained, input_char, input_pos, heads, rels, mask=None):

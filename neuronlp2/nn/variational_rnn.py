@@ -30,16 +30,18 @@ class VarRNNBase(nn.Module):
                 cell = self.Cell(layer_input_size, hidden_size, self.bias, p=dropout, **kwargs)
                 self.all_cells.append(cell)
                 self.add_module('cell%d' % (layer * num_directions + direction), cell)
+        self.all_cells = nn.ModuleList(self.all_cells)
 
     def reset_parameters(self):
         for cell in self.all_cells:
             cell.reset_parameters()
 
-    def reset_noise(self, batch_size, device=None):
+    def reset_noise(self, batch_size):
         for cell in self.all_cells:
-            cell.reset_noise(batch_size, device=device)
+            cell.reset_noise(batch_size)
 
     def forward(self, input, mask=None, hx=None):
+        
         batch_size = input.size(0) if self.batch_first else input.size(1)
         if hx is None:
             num_directions = 2 if self.bidirectional else 1
@@ -51,8 +53,7 @@ class VarRNNBase(nn.Module):
                                     batch_first=self.batch_first,
                                     bidirectional=self.bidirectional,
                                     lstm=self.lstm)
-
-        self.reset_noise(batch_size, device=input.device)
+        self.reset_noise(batch_size)
 
         output, hidden = func(input, self.all_cells, hx, None if mask is None else mask.view(mask.size() + (1,)))
         return output, hidden
@@ -749,8 +750,7 @@ class VarFastLSTMCell(VarRNNCellBase):
             self.bias_hh = Parameter(torch.Tensor(4 * hidden_size))
         else:
             self.register_parameter('bias_ih', None)
-            self.register_parameter('bias_hh', None)
-
+            self.register_parameter('bias_hh', None) 
         self.reset_parameters()
         p_in, p_hidden = p
         if p_in < 0 or p_in > 1:
@@ -771,24 +771,24 @@ class VarFastLSTMCell(VarRNNCellBase):
             nn.init.constant_(self.bias_hh, 0.)
             nn.init.constant_(self.bias_ih, 0.)
 
-    def reset_noise(self, batch_size, device=None):
+    def reset_noise(self, batch_size):
         if self.training:
             if self.p_in:
-                noise = self.weight_ih.new_empty((batch_size, self.input_size), device=device)
-                self.noise_in = noise.bernoulli_(1.0 - self.p_in) / (1.0 - self.p_in)
+                noise = self.weight_ih.new_empty((batch_size, self.input_size))
+                self.noise_in = (noise.bernoulli_(1.0 - self.p_in) / (1.0 - self.p_in))
             else:
                 self.noise_in = None
 
             if self.p_hidden:
-                noise = self.weight_hh.new_empty((batch_size, self.hidden_size), device=device)
-                self.noise_hidden = noise.bernoulli_(1.0 - self.p_hidden) / (1.0 - self.p_hidden)
+                noise = self.weight_hh.new_empty((batch_size, self.hidden_size))
+                self.noise_hidden = (noise.bernoulli_(1.0 - self.p_hidden) / (1.0 - self.p_hidden))
             else:
                 self.noise_hidden = None
         else:
             self.noise_in = None
             self.noise_hidden = None
 
-    def forward(self, input, hx):
+    def forward(self, input, hx): 
         return rnn_F.VarFastLSTMCell(
             input, hx,
             self.weight_ih, self.weight_hh,
