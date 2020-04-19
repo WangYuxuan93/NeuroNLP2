@@ -30,6 +30,7 @@ class VarRNNBase(nn.Module):
                 cell = self.Cell(layer_input_size, hidden_size, self.bias, p=dropout, **kwargs)
                 self.all_cells.append(cell)
                 self.add_module('cell%d' % (layer * num_directions + direction), cell)
+        self.all_cells = nn.ModuleList(self.all_cells)
 
     def reset_parameters(self):
         for cell in self.all_cells:

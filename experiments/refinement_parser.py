@@ -71,7 +71,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
     all_words = []
     all_postags = []
     all_heads_pred = []
-    all_types_pred = []
+    all_rels_pred = []
     all_lengths = []
     all_src_words = []
     all_heads_by_layer = []
@@ -82,30 +82,30 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         chars = data['CHAR'].to(device)
         postags = data['POS'].to(device)
         heads = data['HEAD'].numpy()
-        types = data['TYPE'].numpy()
+        rels = data['TYPE'].numpy()
         lengths = data['LENGTH'].numpy()
         if alg == 'graph':
             masks = data['MASK'].to(device)
-            heads_pred, types_pred = network.decode(words, pres, chars, postags, mask=masks, leading_symbolic=conllx_data.NUM_SYMBOLIC_TAGS)
+            heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, leading_symbolic=conllx_data.NUM_SYMBOLIC_TAGS)
 
         words = words.cpu().numpy()
         postags = postags.cpu().numpy()
 
         if write_to_tmp:
-            pred_writer.write(words, postags, heads_pred, types_pred, lengths, symbolic_root=True, src_words=data['SRC'])
+            pred_writer.write(words, postags, heads_pred, rels_pred, lengths, symbolic_root=True, src_words=data['SRC'])
         else:
             all_words.append(words)
             all_postags.append(postags)
             all_heads_pred.append(heads_pred)
-            all_types_pred.append(types_pred)
+            all_rels_pred.append(rels_pred)
             all_lengths.append(lengths)
             all_src_words.append(data['SRC'])
 
-        #gold_writer.write(words, postags, heads, types, lengths, symbolic_root=True)
+        #gold_writer.write(words, postags, heads, rels, lengths, symbolic_root=True)
         #print ("heads_pred:\n", heads_pred)
-        #print ("types_pred:\n", types_pred)
+        #print ("rels_pred:\n", rels_pred)
         #print ("heads:\n", heads)
-        stats, stats_nopunc, stats_root, num_inst = parser.eval(words, postags, heads_pred, types_pred, heads, types,
+        stats, stats_nopunc, stats_root, num_inst = parser.eval(words, postags, heads_pred, rels_pred, heads, rels,
                                                                 word_alphabet, pos_alphabet, lengths, punct_set=punct_set, 
                                                                 symbolic_root=True)
         ucorr, lcorr, total, ucm, lcm = stats
@@ -143,7 +143,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
             print ('### Writing New Best Dev Prediction File ... ###')
             pred_writer.start(pred_filename)
             for i in range(len(all_words)):
-                pred_writer.write(all_words[i], all_postags[i], all_heads_pred[i], all_types_pred[i], 
+                pred_writer.write(all_words[i], all_postags[i], all_heads_pred[i], all_rels_pred[i], 
                                 all_lengths[i], symbolic_root=True, src_words=all_src_words[i])
             pred_writer.close()
 
@@ -179,7 +179,7 @@ def train(args):
     eval_every = args.eval_every
     noscreen = args.noscreen
 
-    loss_ty_token = args.loss_type == 'token'
+    loss_type_token = args.loss_type == 'token'
     unk_replace = args.unk_replace
     freeze = args.freeze
 
@@ -204,7 +204,7 @@ def train(args):
 
     logger.info("Creating Alphabets")
     alphabet_path = os.path.join(model_path, 'alphabets')
-    word_alphabet, char_alphabet, pos_alphabet, type_alphabet = conllx_data.create_alphabets(alphabet_path, train_path,
+    word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = conllx_data.create_alphabets(alphabet_path, train_path,
                                                                                              data_paths=[dev_path, test_path],
                                                                                              embedd_dict=word_dict, max_vocabulary_size=200000,
                                                                                              pos_idx=args.pos_idx)
@@ -214,13 +214,13 @@ def train(args):
     num_pretrained = pretrained_alphabet.size()
     num_chars = char_alphabet.size()
     num_pos = pos_alphabet.size()
-    num_types = type_alphabet.size()
+    num_rels = rel_alphabet.size()
 
     logger.info("Word Alphabet Size: %d" % num_words)
     logger.info("Pretrained Alphabet Size: %d" % num_pretrained)
     logger.info("Character Alphabet Size: %d" % num_chars)
     logger.info("POS Alphabet Size: %d" % num_pos)
-    logger.info("Type Alphabet Size: %d" % num_types)
+    logger.info("Rel Alphabet Size: %d" % num_rels)
 
     result_path = os.path.join(model_path, 'tmp')
     if not os.path.exists(result_path):
@@ -295,11 +295,13 @@ def train(args):
     loss_interpolation = hyps['biaffine']['loss_interpolation']
     use_null_att_pos=hyps['graph_encoder']['use_null_att_pos']
     hidden_size = hyps['input_encoder']['hidden_size']
+    final_loss_weight = hyps['refinement']['final_interpolation']
+    aux_loss_weight = hyps['refinement']['aux_interpolation']
 
     alg = 'graph'
     if model_type == 'Refinement':
         network = RefinementParser(hyps, num_pretrained, num_words, num_chars, num_pos,
-                               num_types, device=device, basic_word_embedding=basic_word_embedding,
+                               num_rels, device=device, basic_word_embedding=basic_word_embedding,
                                embedd_word=word_table, embedd_char=char_table)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
@@ -321,11 +323,11 @@ def train(args):
 
     logger.info("Reading Data")
     if alg == 'graph':
-        data_train = conllx_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
+        data_train = conllx_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, symbolic_root=True,
                                                     pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
-        data_dev = conllx_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
+        data_dev = conllx_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, symbolic_root=True,
                                                     pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
-        data_test = conllx_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, symbolic_root=True,
+        data_test = conllx_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, symbolic_root=True,
                                                     pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
     
     if schedule == 'step':
@@ -337,8 +339,8 @@ def train(args):
     num_data = sum(data_train[1])
     logger.info("training: #training data: %d, batch: %d, unk replace: %.2f" % (num_data, batch_size, unk_replace))
 
-    pred_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, type_alphabet)
-    gold_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, type_alphabet)
+    pred_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
+    gold_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
     optimizer, scheduler = get_optimizer(network.parameters(), optim, learning_rate, lr_decay, 
                                 betas, eps, amsgrad, weight_decay, warmup_steps,
                                 schedule, hidden_size, decay_steps)
@@ -391,12 +393,14 @@ def train(args):
         start_time = time.time()
         train_loss = 0.
         train_arc_loss = 0.
-        train_type_loss = 0.
+        train_rel_loss = 0.
+        train_aux_arc_loss = 0.
+        train_aux_rel_loss = 0.
         num_insts = 0
         num_words = 0
         num_back = 0
         num_nans = 0
-        overall_arc_correct, overall_type_correct, overall_total_arcs = 0, 0, 0
+        overall_arc_correct, overall_rel_correct, overall_total_arcs = 0, 0, 0
         network.train()
         lr = scheduler.get_lr()[0]
         total_step = scheduler.get_total_step()
@@ -413,19 +417,23 @@ def train(args):
             heads = data['HEAD'].to(device)
             nbatch = words.size(0)
             if alg == 'graph':
-                types = data['TYPE'].to(device)
+                rels = data['TYPE'].to(device)
                 masks = data['MASK'].to(device)
                 nwords = masks.sum() - nbatch
-                loss_arc, loss_type, statistics = network(words, pres, chars, postags, heads, types, mask=masks)
-            loss_arc = loss_arc.sum()
-            loss_type = loss_type.sum()
-            loss_total = loss_arc + loss_type
-            arc_correct, type_correct, total_arcs = statistics
+                final_loss, losses, statistics = network(words, pres, chars, postags, heads, rels, mask=masks)
+            arc_loss, rel_loss = final_loss
+            arc_loss = arc_loss.sum()
+            rel_loss = rel_loss.sum()
+            aux_arc_losses, aux_rel_losses = losses
+            aux_arc_loss = sum([l.sum() for l in aux_arc_losses])
+            aux_rel_loss = sum([l.sum() for l in aux_rel_losses])
+            loss_total = final_loss_weight * (arc_loss + rel_loss) + aux_loss_weight * (aux_arc_loss+aux_rel_loss)
+            arc_correct, rel_correct, total_arcs = statistics
             overall_arc_correct += arc_correct
-            overall_type_correct += type_correct
+            overall_rel_correct += rel_correct
             overall_total_arcs += total_arcs
             
-            if loss_ty_token:
+            if loss_type_token:
                 loss = loss_total.div(nwords)
             else:
                 loss = loss_total.div(nbatch)
@@ -445,8 +453,16 @@ def train(args):
                     num_insts += nbatch
                     num_words += nwords
                     train_loss += loss_total.item()
-                    train_arc_loss += loss_arc.item()
-                    train_type_loss += loss_type.item()
+                    train_arc_loss += arc_loss.item()
+                    train_rel_loss += rel_loss.item()
+                    if aux_arc_losses:
+                        train_aux_arc_loss += aux_arc_loss.item()
+                    else:
+                        train_aux_arc_loss += aux_arc_loss
+                    if aux_rel_losses:
+                        train_aux_rel_loss += aux_rel_loss.item()
+                    else:
+                        train_aux_rel_loss += aux_rel_loss
 
             # update log
             if step % 100 == 0:
@@ -458,10 +474,10 @@ def train(args):
                     curr_lr = scheduler.get_lr()[0]
                     num_insts = max(num_insts, 1)
                     num_words = max(num_words, 1)
-                    log_info = '[%d/%d (%.0f%%) lr=%.6f (%d)] loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f)' % (step, num_batches, 100. * step / num_batches, curr_lr, num_nans,
+                    log_info = '[%d/%d (%.0f%%) lr=%.6f (%d)] loss: %.4f (%.4f), arc: %.4f (%.4f), rel: %.4f (%.4f)' % (step, num_batches, 100. * step / num_batches, curr_lr, num_nans,
                                                                                                                          train_loss / num_insts, train_loss / num_words,
                                                                                                                          train_arc_loss / num_insts, train_arc_loss / num_words,
-                                                                                                                        train_type_loss / num_insts, train_type_loss / num_words)
+                                                                                                                        train_rel_loss / num_insts, train_rel_loss / num_words)
                     sys.stdout.write(log_info)
                     sys.stdout.flush()
                     num_back = len(log_info)
@@ -470,12 +486,14 @@ def train(args):
             sys.stdout.write(" " * num_back)
             sys.stdout.write("\b" * num_back)
         train_uas = float(overall_arc_correct) * 100.0 / overall_total_arcs
-        train_lacc = float(overall_type_correct) * 100.0 / overall_total_arcs
-        print('total: %d (%d), epochs w/o improve:%d, nans:%d, uas: %.2f%%, lacc: %.2f%%,  loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f), time: %.2fs' % (num_insts, num_words,
+        train_lacc = float(overall_rel_correct) * 100.0 / overall_total_arcs
+        print('total: %d (%d), epochs w/o improve:%d, nans:%d, uas: %.2f%%, lacc: %.2f%%,  loss: %.4f (%.4f), arc: %.4f (%.4f), rel: %.4f (%.4f), aux-arc: %.4f (%.4f), aux-rel: %.4f (%.4f), time: %.2fs' % (num_insts, num_words,
                                                                                                        num_epochs_without_improvement, num_nans, train_uas, train_lacc,
                                                                                                        train_loss / num_insts, train_loss / num_words,
                                                                                                        train_arc_loss / num_insts, train_arc_loss / num_words,
-                                                                                                       train_type_loss / num_insts, train_type_loss / num_words,
+                                                                                                       train_rel_loss / num_insts, train_rel_loss / num_words,
+                                                                                                       train_aux_arc_loss / num_insts, train_aux_arc_loss / num_words,
+                                                                                                       train_aux_rel_loss / num_insts, train_aux_rel_loss / num_words,
                                                                                                        time.time() - start_time))
         print('-' * 125)
 
@@ -589,17 +607,17 @@ def parse(args):
     logger.info("Creating Alphabets")
     alphabet_path = os.path.join(model_path, 'alphabets')
     assert os.path.exists(alphabet_path)
-    word_alphabet, char_alphabet, pos_alphabet, type_alphabet = conllx_data.create_alphabets(alphabet_path, None, pos_idx=args.pos_idx)
+    word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = conllx_data.create_alphabets(alphabet_path, None, pos_idx=args.pos_idx)
 
     num_words = word_alphabet.size()
     num_chars = char_alphabet.size()
     num_pos = pos_alphabet.size()
-    num_types = type_alphabet.size()
+    num_rels = rel_alphabet.size()
 
     logger.info("Word Alphabet Size: %d" % num_words)
     logger.info("Character Alphabet Size: %d" % num_chars)
     logger.info("POS Alphabet Size: %d" % num_pos)
-    logger.info("Type Alphabet Size: %d" % num_types)
+    logger.info("Rel Alphabet Size: %d" % num_rels)
 
     result_path = os.path.join(model_path, 'tmp')
     if not os.path.exists(result_path):
@@ -626,7 +644,7 @@ def parse(args):
     alg = 'graph'
     if model_type == 'Refinement':
         network = RefinementParser(hyps, num_pretrained, num_words, num_chars, num_pos,
-                               num_types, device=device, basic_word_embedding=basic_word_embedding)
+                               num_rels, device=device, basic_word_embedding=basic_word_embedding)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -636,11 +654,11 @@ def parse(args):
     logger.info("Reading Data")
     if alg == 'graph':
         data_test = conllx_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, 
-                                          type_alphabet, symbolic_root=True, pos_idx=args.pos_idx)
+                                          rel_alphabet, symbolic_root=True, pos_idx=args.pos_idx)
 
     beam = args.beam
-    pred_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, type_alphabet)
-    gold_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, type_alphabet)
+    pred_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
+    gold_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
     pred_filename = os.path.join(result_path, 'pred.txt')
     pred_writer.start(pred_filename)
     gold_filename = os.path.join(result_path, 'gold.txt')
