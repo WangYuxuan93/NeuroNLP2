@@ -429,9 +429,9 @@ def train(args):
             aux_rel_loss = sum([l.sum() for l in aux_rel_losses])
             loss_total = final_loss_weight * (arc_loss + rel_loss) + aux_loss_weight * (aux_arc_loss+aux_rel_loss)
             arc_correct, rel_correct, total_arcs = statistics
-            overall_arc_correct += arc_correct
-            overall_rel_correct += rel_correct
-            overall_total_arcs += total_arcs
+            overall_arc_correct += arc_correct.sum().cpu().numpy()
+            overall_rel_correct += rel_correct.sum().cpu().numpy()
+            overall_total_arcs += total_arcs.sum().cpu().numpy()
             
             if loss_type_token:
                 loss = loss_total.div(nwords)
