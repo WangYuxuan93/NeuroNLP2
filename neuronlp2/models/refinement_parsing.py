@@ -54,6 +54,8 @@ class RefinementParser(nn.Module):
         self.refine_layers = hyps['refinement']['num_layers']
         self.use_separate_first_biaf = hyps['refinement']['use_separate_first_biaf']
         self.use_prev_layer_output = hyps['refinement']['use_prev_layer_output']
+        if self.refine_layers == 1:
+            self.use_separate_first_biaf = False
         # for input embeddings
         use_pos = hyps['input']['use_pos']
         use_char = hyps['input']['use_char']
@@ -233,7 +235,10 @@ class RefinementParser(nn.Module):
             self.rel_attention0 = BiAffine_v2(rel_mlp_dim, n_out=self.num_labels, bias_x=True, bias_y=True)
 
         # for biaffine scorer
-        hid_size = hyps['graph_encoder']['hidden_size']
+        if self.refine_layers == 1:
+            hid_size = out_dim
+        else:
+            hid_size = hyps['graph_encoder']['hidden_size']
         self.arc_h = nn.Linear(hid_size, arc_mlp_dim)
         self.arc_c = nn.Linear(hid_size, arc_mlp_dim)
         #self.arc_attention = BiAffine(arc_mlp_dim, arc_mlp_dim)
