@@ -233,13 +233,14 @@ class RefinementParser(nn.Module):
             self.rel_attention0 = BiAffine_v2(rel_mlp_dim, n_out=self.num_labels, bias_x=True, bias_y=True)
 
         # for biaffine scorer
-        self.arc_h = nn.Linear(out_dim, arc_mlp_dim)
-        self.arc_c = nn.Linear(out_dim, arc_mlp_dim)
+        hid_size = hyps['graph_encoder']['hidden_size']
+        self.arc_h = nn.Linear(hid_size, arc_mlp_dim)
+        self.arc_c = nn.Linear(hid_size, arc_mlp_dim)
         #self.arc_attention = BiAffine(arc_mlp_dim, arc_mlp_dim)
         self.arc_attention = BiAffine_v2(arc_mlp_dim, bias_x=True, bias_y=False)
 
-        self.rel_h = nn.Linear(out_dim, rel_mlp_dim)
-        self.rel_c = nn.Linear(out_dim, rel_mlp_dim)
+        self.rel_h = nn.Linear(hid_size, rel_mlp_dim)
+        self.rel_c = nn.Linear(hid_size, rel_mlp_dim)
         #self.rel_attention = BiLinear(rel_mlp_dim, rel_mlp_dim, self.num_labels)
         self.rel_attention = BiAffine_v2(rel_mlp_dim, n_out=self.num_labels, bias_x=True, bias_y=True)
 
@@ -615,16 +616,10 @@ class RefinementParser(nn.Module):
         if self.do_encode_rel:
             final_rel_loss = rel_losses.pop()
         else:
-            if self.use_separate_first_biaf:
-                # (batch, length, rel_mlp_dim)
-                rel_h, rel_c = self._rel_mlp0(encoder_output)
-                # (batch, n_rels, seq_len, seq_len)
-                rel_logits = self.rel_attention0(rel_c, rel_h)
-            else:
-                # (batch, length, rel_mlp_dim)
-                rel_h, rel_c = self._rel_mlp(encoder_output)
-                # (batch, n_rels, seq_len, seq_len)
-                rel_logits = self.rel_attention(rel_c, rel_h)
+            # (batch, length, rel_mlp_dim)
+            rel_h, rel_c = self._rel_mlp(encoder_output)
+            # (batch, n_rels, seq_len, seq_len)
+            rel_logits = self.rel_attention(rel_c, rel_h)
             #rel_loss = self.criterion(out_type.transpose(1, 2), rels)
             rel_loss = (self.criterion(rel_logits, rels_3D) * heads_3D).sum(-1)
             if mask is not None:
@@ -702,16 +697,10 @@ class RefinementParser(nn.Module):
                 rel_logits = self.rel_attention(rel_c, rel_h)
 
         if not self.do_encode_rel:
-            if self.use_separate_first_biaf:
-                # (batch, length, rel_mlp_dim)
-                rel_h, rel_c = self._rel_mlp0(encoder_output)
-                # (batch, n_rels, seq_len, seq_len)
-                rel_logits = self.rel_attention0(rel_c, rel_h)
-            else:
-                # (batch, length, rel_mlp_dim)
-                rel_h, rel_c = self._rel_mlp(encoder_output)
-                # (batch, n_rels, seq_len, seq_len)
-                rel_logits = self.rel_attention(rel_c, rel_h)
+            # (batch, length, rel_mlp_dim)
+            rel_h, rel_c = self._rel_mlp(encoder_output)
+            # (batch, n_rels, seq_len, seq_len)
+            rel_logits = self.rel_attention(rel_c, rel_h)
         # (batch, n_rels, seq_len_c, seq_len_h)
         # => (batch, length_h, length_c, num_labels)
         rel_logits = rel_logits.permute(0,3,2,1)
