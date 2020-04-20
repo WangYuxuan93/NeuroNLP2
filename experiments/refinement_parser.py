@@ -297,6 +297,7 @@ def train(args):
     hidden_size = hyps['input_encoder']['hidden_size']
     final_loss_weight = hyps['refinement']['final_interpolation']
     aux_loss_weight = hyps['refinement']['aux_interpolation']
+    refine_layers = hyps['refinement']['num_layers']
 
     alg = 'graph'
     if model_type == 'Refinement':
@@ -400,7 +401,8 @@ def train(args):
         num_words = 0
         num_back = 0
         num_nans = 0
-        overall_arc_correct, overall_rel_correct, overall_total_arcs = 0, 0, 0
+        overall_arc_correct, overall_rel_correct, overall_total_arcs = [0]*refine_layers, [0]*refine_layers, [0]*refine_layers
+        total_aux_arc_losses, total_aux_rel_losses = [0.0]*refine_layers, [0.0]*refine_layers
         network.train()
         lr = scheduler.get_lr()[0]
         total_step = scheduler.get_total_step()
@@ -425,13 +427,21 @@ def train(args):
             arc_loss = arc_loss.sum()
             rel_loss = rel_loss.sum()
             aux_arc_losses, aux_rel_losses = losses
-            aux_arc_loss = sum([l.sum() for l in aux_arc_losses])
-            aux_rel_loss = sum([l.sum() for l in aux_rel_losses])
+            aux_arc_losses = [l.sum() for l in aux_arc_losses]
+            aux_arc_loss = sum(aux_arc_losses)
+            aux_rel_losses = [l.sum() for l in aux_rel_losses]
+            aux_rel_loss = sum(aux_rel_losses)
             loss_total = final_loss_weight * (arc_loss + rel_loss) + aux_loss_weight * (aux_arc_loss+aux_rel_loss)
-            arc_correct, rel_correct, total_arcs = statistics
-            overall_arc_correct += arc_correct.sum().cpu().numpy()
-            overall_rel_correct += rel_correct.sum().cpu().numpy()
-            overall_total_arcs += total_arcs.sum().cpu().numpy()
+            for i, results in enumerate(statistics):
+                arc_correct, rel_correct, total_arcs = results
+                overall_arc_correct[i] += arc_correct.sum().cpu().numpy()
+                overall_rel_correct[i] += rel_correct.sum().cpu().numpy()
+                overall_total_arcs[i] += total_arcs.sum().cpu().numpy()
+            for i in range(refine_layers-1):
+                if aux_arc_losses:
+                    total_aux_arc_losses[i] += aux_arc_losses[i].item()
+                if aux_rel_losses:
+                    total_aux_rel_losses[i] += aux_rel_losses[i].item()
             
             if loss_type_token:
                 loss = loss_total.div(nwords)
@@ -485,8 +495,9 @@ def train(args):
             sys.stdout.write("\b" * num_back)
             sys.stdout.write(" " * num_back)
             sys.stdout.write("\b" * num_back)
-        train_uas = float(overall_arc_correct) * 100.0 / overall_total_arcs
-        train_lacc = float(overall_rel_correct) * 100.0 / overall_total_arcs
+
+        train_uas = float(overall_arc_correct[-1]) * 100.0 / overall_total_arcs[-1]
+        train_lacc = float(overall_rel_correct[-1]) * 100.0 / overall_total_arcs[-1]
         print('total: %d (%d), epochs w/o improve:%d, nans:%d, uas: %.2f%%, lacc: %.2f%%,  loss: %.4f (%.4f), arc: %.4f (%.4f), rel: %.4f (%.4f), aux-arc: %.4f (%.4f), aux-rel: %.4f (%.4f), time: %.2fs' % (num_insts, num_words,
                                                                                                        num_epochs_without_improvement, num_nans, train_uas, train_lacc,
                                                                                                        train_loss / num_insts, train_loss / num_words,
@@ -495,6 +506,12 @@ def train(args):
                                                                                                        train_aux_arc_loss / num_insts, train_aux_arc_loss / num_words,
                                                                                                        train_aux_rel_loss / num_insts, train_aux_rel_loss / num_words,
                                                                                                        time.time() - start_time))
+        for i in range(refine_layers):
+            train_uas = float(overall_arc_correct[i]) * 100.0 / overall_total_arcs[i]
+            train_lacc = float(overall_rel_correct[i]) * 100.0 / overall_total_arcs[i]
+            print ('layer: %d, uas: %.2f%%, lacc: %.2f%%, loss: arc: %.4f (%.4f), rel: %.4f (%.4f)' % (i,train_uas,train_lacc,
+                                                                                                    total_aux_arc_losses[i] / num_insts, total_aux_arc_losses[i] / num_words,
+                                                                                                    total_aux_rel_losses[i] / num_insts, total_aux_rel_losses[i] / num_words,))
         print('-' * 125)
 
         if epoch % eval_every == 0:

@@ -52,6 +52,8 @@ class RefinementParser(nn.Module):
         self.device = device
         # for refinement
         self.refine_layers = hyps['refinement']['num_layers']
+        self.use_separate_first_biaf = hyps['refinement']['use_separate_first_biaf']
+        self.use_prev_layer_output = hyps['refinement']['use_prev_layer_output']
         # for input embeddings
         use_pos = hyps['input']['use_pos']
         use_char = hyps['input']['use_char']
@@ -90,6 +92,8 @@ class RefinementParser(nn.Module):
         model = "{}-{}-{}".format(hyps['model'], input_encoder_name, graph_encoder_name)
         logger.info("Network: %s, hidden=%d, act=%s" % (model, hidden_size, activation))
         logger.info("##### Refinement (Layer: %d) #####" % self.refine_layers)
+        logger.info("Use separate first BiAffine: %s" % self.use_separate_first_biaf)
+        logger.info("Use previous layer output: %s" % self.use_prev_layer_output)
         logger.info("##### Embeddings (POS tag: %s, Char: %s) #####" % (use_pos, use_char))
         logger.info("dropout(in, out): (%.2f, %.2f)" % (p_in, p_out))
         logger.info("Use Randomly Init Word Emb: %s" % (basic_word_embedding))
@@ -216,6 +220,18 @@ class RefinementParser(nn.Module):
         logger.info("Encode Arc Type: %s" % (self.encode_arc_type))
         logger.info("Encode Relation Type: %s (rel embed dim: %d)" % (self.encode_rel_type, hyps['graph_encoder']['rel_dim']))
 
+        if self.use_separate_first_biaf:
+            # for input biaffine scorer
+            self.arc_h0 = nn.Linear(out_dim, arc_mlp_dim)
+            self.arc_c0 = nn.Linear(out_dim, arc_mlp_dim)
+            #self.arc_attention = BiAffine(arc_mlp_dim, arc_mlp_dim)
+            self.arc_attention0 = BiAffine_v2(arc_mlp_dim, bias_x=True, bias_y=False)
+
+            self.rel_h0 = nn.Linear(out_dim, rel_mlp_dim)
+            self.rel_c0 = nn.Linear(out_dim, rel_mlp_dim)
+            #self.rel_attention = BiLinear(rel_mlp_dim, rel_mlp_dim, self.num_labels)
+            self.rel_attention0 = BiAffine_v2(rel_mlp_dim, n_out=self.num_labels, bias_x=True, bias_y=True)
+
         # for biaffine scorer
         self.arc_h = nn.Linear(out_dim, arc_mlp_dim)
         self.arc_c = nn.Linear(out_dim, arc_mlp_dim)
@@ -259,6 +275,22 @@ class RefinementParser(nn.Module):
                 self.char_embed.weight[self.char_embed.padding_idx].fill_(0)
             if self.pos_embed is not None:
                 self.pos_embed.weight[self.pos_embed.padding_idx].fill_(0)
+
+        if self.use_separate_first_biaf:
+            if self.act_func == 'leaky_relu':
+                nn.init.kaiming_uniform_(self.arc_h0.weight, a=0.1, nonlinearity='leaky_relu')
+                nn.init.kaiming_uniform_(self.arc_c0.weight, a=0.1, nonlinearity='leaky_relu')
+                nn.init.kaiming_uniform_(self.rel_h0.weight, a=0.1, nonlinearity='leaky_relu')
+                nn.init.kaiming_uniform_(self.rel_c0.weight, a=0.1, nonlinearity='leaky_relu')
+            else:
+                nn.init.xavier_uniform_(self.arc_h0.weight)
+                nn.init.xavier_uniform_(self.arc_c0.weight)
+                nn.init.xavier_uniform_(self.rel_h0.weight)
+                nn.init.xavier_uniform_(self.rel_c0.weight)
+            nn.init.constant_(self.arc_h0.bias, 0.)
+            nn.init.constant_(self.arc_c0.bias, 0.)
+            nn.init.constant_(self.rel_h0.bias, 0.)
+            nn.init.constant_(self.rel_c0.bias, 0.)
 
         if self.act_func == 'leaky_relu':
             nn.init.kaiming_uniform_(self.arc_h.weight, a=0.1, nonlinearity='leaky_relu')
@@ -347,6 +379,35 @@ class RefinementParser(nn.Module):
         output = self.dropout_out(output.transpose(1, 2)).transpose(1, 2)
         self.encoder_output = output
         return output
+
+    def _arc_mlp0(self, hidden):
+        # output size [batch, length, arc_mlp_dim]
+        arc_h = self.activation(self.arc_h0(hidden))
+        arc_c = self.activation(self.arc_c0(hidden))
+
+        # apply dropout on arc
+        # [batch, length, dim] --> [batch, 2 * length, dim]
+        arc = torch.cat([arc_h, arc_c], dim=1)
+        arc = self.dropout_out(arc.transpose(1, 2)).transpose(1, 2)
+        arc_h, arc_c = arc.chunk(2, 1)
+
+        return arc_h, arc_c
+
+    def _rel_mlp0(self, hidden):
+        # output size [batch, length, rel_mlp_dim]
+        rel_h = self.activation(self.rel_h0(hidden))
+        rel_c = self.activation(self.rel_c0(hidden))
+
+        # apply dropout on rel
+        # [batch, length, dim] --> [batch, 2 * length, dim]
+        rel = torch.cat([rel_h, rel_c], dim=1)
+        rel = self.dropout_out(rel.transpose(1, 2)).transpose(1, 2)
+        rel_h, rel_c = rel.chunk(2, 1)
+        rel_h = rel_h.contiguous()
+        rel_c = rel_c.contiguous()
+
+        return rel_h, rel_c
+
 
     def _arc_mlp(self, hidden):
         # output size [batch, length, arc_mlp_dim]
@@ -465,6 +526,7 @@ class RefinementParser(nn.Module):
         graph_matrix.scatter_(-1, index, 1)
         return graph_matrix.detach()
 
+
     def forward(self, input_word, input_pretrained, input_char, input_pos, heads, rels, mask=None):
         # Pre-process
         batch_size, seq_len = input_word.size()
@@ -481,20 +543,32 @@ class RefinementParser(nn.Module):
         rels_3D.scatter_(-1, heads.unsqueeze(-1), rels.unsqueeze(-1))
 
         arc_losses, rel_losses = [], []
+        statistics = []
         # (batch, seq_len, hidden_size)
-        encoder_output = self._input_encoder(input_word, input_pretrained, input_char, input_pos, mask=mask)
+        _encoder_output = self._input_encoder(input_word, input_pretrained, input_char, input_pos, mask=mask)
         for n_layer in range(self.refine_layers):
-            if n_layer >= 1:
+            if n_layer == 0:
+                encoder_output = _encoder_output
+            else:
+                # use input encoder output always
+                if not self.use_prev_layer_output:
+                    encoder_output = _encoder_output
                 # skip the first layer
                 all_encoder_layers = self.graph_attention(encoder_output, graph_matrix, 
                                                           root_mask)
                 # (batch, seq_len, hidden_size)
                 encoder_output = all_encoder_layers[-1]
 
-            # (batch, seq_len, arc_mlp_dim)
-            arc_h, arc_c = self._arc_mlp(encoder_output)
-            # (batch, seq_len, seq_len)
-            arc_logits = self.arc_attention(arc_c, arc_h)
+            if n_layer == 0 and self.use_separate_first_biaf:
+                # (batch, seq_len, arc_mlp_dim)
+                arc_h, arc_c = self._arc_mlp0(encoder_output)
+                # (batch, seq_len, seq_len)
+                arc_logits = self.arc_attention0(arc_c, arc_h)
+            else:
+                # (batch, seq_len, arc_mlp_dim)
+                arc_h, arc_c = self._arc_mlp(encoder_output)
+                # (batch, seq_len, seq_len)
+                arc_logits = self.arc_attention(arc_c, arc_h)
             if self.encode_arc_type == 'hard-1':
                 graph_matrix = self._argmax(arc_logits)
             else:
@@ -517,6 +591,9 @@ class RefinementParser(nn.Module):
             # [batch, length - 1] -> [batch] remove the symbolic root
             arc_losses.append(arc_loss[:, 1:].sum(dim=1))
 
+            #print ('graph_matrix:\n', graph_matrix)
+            #print ('arc_loss:', arc_losses[-1].sum())
+
             if self.do_encode_rel:
                 # (batch, length, rel_mlp_dim)
                 rel_h, rel_c = self._rel_mlp(encoder_output)
@@ -527,23 +604,36 @@ class RefinementParser(nn.Module):
                 if mask is not None:
                     rel_loss = rel_loss * mask
                 rel_losses.append(rel_loss[:, 1:].sum(dim=1))
+            else:
+                rel_logits = torch.zeros((batch_size, self.num_labels, seq_len, seq_len), dtype=torch.long, device=heads.device)
+
+            if n_layer < self.refine_layers - 1:
+                statistics.append(self.accuracy(arc_logits, rel_logits, heads, rels, root_mask))
 
         final_arc_loss = arc_losses.pop()
 
         if self.do_encode_rel:
             final_rel_loss = rel_losses.pop()
         else:
-            # (batch, length, rel_mlp_dim)
-            rel_h, rel_c = self._rel_mlp(encoder_output)
-            # (batch, n_rels, seq_len, seq_len)
-            rel_logits = self.rel_attention(rel_c, rel_h)
+            if self.use_separate_first_biaf:
+                # (batch, length, rel_mlp_dim)
+                rel_h, rel_c = self._rel_mlp0(encoder_output)
+                # (batch, n_rels, seq_len, seq_len)
+                rel_logits = self.rel_attention0(rel_c, rel_h)
+            else:
+                # (batch, length, rel_mlp_dim)
+                rel_h, rel_c = self._rel_mlp(encoder_output)
+                # (batch, n_rels, seq_len, seq_len)
+                rel_logits = self.rel_attention(rel_c, rel_h)
             #rel_loss = self.criterion(out_type.transpose(1, 2), rels)
             rel_loss = (self.criterion(rel_logits, rels_3D) * heads_3D).sum(-1)
             if mask is not None:
                 rel_loss = rel_loss * mask
             final_rel_loss = rel_loss[:, 1:].sum(dim=1)
+
+        statistics.append(self.accuracy(arc_logits, rel_logits, heads, rels, root_mask))
         
-        statistics = self.accuracy(arc_logits, rel_logits, heads, rels, root_mask)
+        #statistics = self.accuracy(arc_logits, rel_logits, heads, rels, root_mask)
 
         return (final_arc_loss, final_rel_loss), (arc_losses, rel_losses), statistics
 
@@ -576,19 +666,29 @@ class RefinementParser(nn.Module):
         root_mask = torch.arange(seq_len, device=input_word.device).gt(0).float().unsqueeze(0) * mask
 
         # (batch, seq_len, hidden_size)
-        encoder_output = self._input_encoder(input_word, input_pretrained, input_char, input_pos, mask=mask)
+        _encoder_output = self._input_encoder(input_word, input_pretrained, input_char, input_pos, mask=mask)
         for n_layer in range(self.refine_layers):
-            if n_layer >= 1:
+            if n_layer == 0:
+                encoder_output = _encoder_output
+            else:
+                if not self.use_prev_layer_output:
+                    encoder_output = _encoder_output
                 # skip the first layer
                 all_encoder_layers = self.graph_attention(encoder_output, graph_matrix, 
                                                           root_mask)
                 # (batch, seq_len, hidden_size)
-                encoder_output = all_encoder_layers[-1]
+                encoder_output = all_encoder_layers[-1]  
 
-            # (batch, seq_len, arc_mlp_dim)
-            arc_h, arc_c = self._arc_mlp(encoder_output)
-            # (batch, seq_len, seq_len)
-            arc_logits = self.arc_attention(arc_c, arc_h)
+            if n_layer == 0 and self.use_separate_first_biaf:
+                # (batch, seq_len, arc_mlp_dim)
+                arc_h, arc_c = self._arc_mlp0(encoder_output)
+                # (batch, seq_len, seq_len)
+                arc_logits = self.arc_attention0(arc_c, arc_h)
+            else:
+                # (batch, seq_len, arc_mlp_dim)
+                arc_h, arc_c = self._arc_mlp(encoder_output)
+                # (batch, seq_len, seq_len)
+                arc_logits = self.arc_attention(arc_c, arc_h)
             if self.encode_arc_type == 'hard-1':
                 graph_matrix = self._argmax(arc_logits)
             else:
@@ -602,11 +702,16 @@ class RefinementParser(nn.Module):
                 rel_logits = self.rel_attention(rel_c, rel_h)
 
         if not self.do_encode_rel:
-            # (batch, length, rel_mlp_dim)
-            rel_h, rel_c = self._rel_mlp(encoder_output)
-            # (batch, n_rels, seq_len, seq_len)
-            rel_logits = self.rel_attention(rel_c, rel_h)
-
+            if self.use_separate_first_biaf:
+                # (batch, length, rel_mlp_dim)
+                rel_h, rel_c = self._rel_mlp0(encoder_output)
+                # (batch, n_rels, seq_len, seq_len)
+                rel_logits = self.rel_attention0(rel_c, rel_h)
+            else:
+                # (batch, length, rel_mlp_dim)
+                rel_h, rel_c = self._rel_mlp(encoder_output)
+                # (batch, n_rels, seq_len, seq_len)
+                rel_logits = self.rel_attention(rel_c, rel_h)
         # (batch, n_rels, seq_len_c, seq_len_h)
         # => (batch, length_h, length_c, num_labels)
         rel_logits = rel_logits.permute(0,3,2,1)
