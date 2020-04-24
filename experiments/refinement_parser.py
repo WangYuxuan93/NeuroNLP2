@@ -20,7 +20,7 @@ from torch.optim.adamw import AdamW
 from torch.optim import SGD, Adam
 from torch.nn.utils import clip_grad_norm_
 from neuronlp2.nn.utils import total_grad_norm
-from neuronlp2.io import get_logger, conllx_data, conllx_stacked_data, iterate_data
+from neuronlp2.io import get_logger, conllx_data, ud_data, conllx_stacked_data, iterate_data
 from neuronlp2.models import RefinementParser
 from neuronlp2.optim import ExponentialScheduler, StepScheduler, AttentionScheduler
 from neuronlp2 import utils
@@ -86,7 +86,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         lengths = data['LENGTH'].numpy()
         if alg == 'graph':
             masks = data['MASK'].to(device)
-            heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, leading_symbolic=conllx_data.NUM_SYMBOLIC_TAGS)
+            heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
 
         words = words.cpu().numpy()
         postags = postags.cpu().numpy()
@@ -157,9 +157,20 @@ def train(args):
 
     args.cuda = torch.cuda.is_available()
     device = torch.device('cuda', 0) if args.cuda else torch.device('cpu')
-    train_path = args.train
-    dev_path = args.dev
-    test_path = args.test
+    data_format = args.format
+    if data_format == 'conllx':
+        data_reader = conllx_data
+        train_path = args.train
+        dev_path = args.dev
+        test_path = args.test
+    elif data_format == 'ud':
+        data_reader = ud_data
+        train_path = args.train.split(';')
+        dev_path = args.dev.split(';')
+        test_path = args.test.split(';')
+    else:
+        print ("### Unrecognized data formate: %s ###" % data_format)
+        exit()
 
     basic_word_embedding = args.basic_word_embedding
     num_epochs = args.num_epochs
@@ -192,6 +203,7 @@ def train(args):
     char_embedding = args.char_embedding
     char_path = args.char_path
 
+
     print(args)
 
     word_dict, word_dim = utils.load_embedding_dict(word_embedding, word_path)
@@ -204,8 +216,12 @@ def train(args):
 
     logger.info("Creating Alphabets")
     alphabet_path = os.path.join(model_path, 'alphabets')
-    word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = conllx_data.create_alphabets(alphabet_path, train_path,
-                                                                                             data_paths=[dev_path, test_path],
+    if data_format == "conllx":
+        data_paths=[dev_path, test_path]
+    elif data_format == "ud":
+        data_paths=dev_path + test_path
+    word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = data_reader.create_alphabets(alphabet_path, train_path,
+                                                                                             data_paths=data_paths,
                                                                                              embedd_dict=word_dict, max_vocabulary_size=200000,
                                                                                              pos_idx=args.pos_idx)
     pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path, word_dict, word_alphabet.instances, max_vocabulary_size=200000)
@@ -239,7 +255,7 @@ def train(args):
         else:
             table = np.empty([word_alphabet.size(), word_dim], dtype=np.float32)
             items = word_alphabet.items()
-        table[conllx_data.UNK_ID, :] = np.zeros([1, word_dim]).astype(np.float32) if freeze else np.random.uniform(-scale, scale, [1, word_dim]).astype(np.float32)
+        table[data_reader.UNK_ID, :] = np.zeros([1, word_dim]).astype(np.float32) if freeze else np.random.uniform(-scale, scale, [1, word_dim]).astype(np.float32)
         oov = 0
         for word, index in items:
             if word in word_dict:
@@ -259,7 +275,7 @@ def train(args):
 
         scale = np.sqrt(3.0 / char_dim)
         table = np.empty([num_chars, char_dim], dtype=np.float32)
-        table[conllx_data.UNK_ID, :] = np.random.uniform(-scale, scale, [1, char_dim]).astype(np.float32)
+        table[common.UNK_ID, :] = np.random.uniform(-scale, scale, [1, char_dim]).astype(np.float32)
         oov = 0
         for char, index, in char_alphabet.items():
             if char in char_dict:
@@ -324,11 +340,11 @@ def train(args):
 
     logger.info("Reading Data")
     if alg == 'graph':
-        data_train = conllx_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, symbolic_root=True,
+        data_train = data_reader.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, symbolic_root=True,
                                                     pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
-        data_dev = conllx_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, symbolic_root=True,
+        data_dev = data_reader.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, symbolic_root=True,
                                                     pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
-        data_test = conllx_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, symbolic_root=True,
+        data_test = data_reader.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, symbolic_root=True,
                                                     pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
     
     if schedule == 'step':
@@ -614,7 +630,12 @@ def parse(args):
     logger = get_logger("Parsing")
     args.cuda = torch.cuda.is_available()
     device = torch.device('cuda', 0) if args.cuda else torch.device('cpu')
-    test_path = args.test
+    if data_format == 'conllx':
+        data_reader = conllx_data
+        test_path = args.test
+    elif data_format == 'ud':
+        data_reader = ud_data
+        test_path = args.test.split(';')
 
     model_path = args.model_path
     model_name = os.path.join(model_path, 'model.pt')
@@ -624,7 +645,7 @@ def parse(args):
     logger.info("Creating Alphabets")
     alphabet_path = os.path.join(model_path, 'alphabets')
     assert os.path.exists(alphabet_path)
-    word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = conllx_data.create_alphabets(alphabet_path, None, pos_idx=args.pos_idx)
+    word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = data_reader.create_alphabets(alphabet_path, None, pos_idx=args.pos_idx)
 
     num_words = word_alphabet.size()
     num_chars = char_alphabet.size()
@@ -670,7 +691,7 @@ def parse(args):
 
     logger.info("Reading Data")
     if alg == 'graph':
-        data_test = conllx_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, 
+        data_test = data_reader.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, 
                                           rel_alphabet, symbolic_root=True, pos_idx=args.pos_idx)
 
     beam = args.beam
@@ -725,6 +746,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--word_path', help='path for word embedding dict')
     args_parser.add_argument('--char_embedding', choices=['random', 'polyglot'], help='Embedding for characters')
     args_parser.add_argument('--char_path', help='path for character embedding dict')
+    args_parser.add_argument('--format', type=str, choices=['conllx', 'ud'], default='conllx', help='data format')
     args_parser.add_argument('--train', help='path for training file.')
     args_parser.add_argument('--dev', help='path for dev file.')
     args_parser.add_argument('--test', help='path for test file.', required=True)
