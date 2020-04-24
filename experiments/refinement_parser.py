@@ -165,9 +165,9 @@ def train(args):
         test_path = args.test
     elif data_format == 'ud':
         data_reader = ud_data
-        train_path = args.train.split(';')
-        dev_path = args.dev.split(';')
-        test_path = args.test.split(';')
+        train_path = args.train.split(':')
+        dev_path = args.dev.split(':')
+        test_path = args.test.split(':')
     else:
         print ("### Unrecognized data formate: %s ###" % data_format)
         exit()
@@ -635,7 +635,7 @@ def parse(args):
         test_path = args.test
     elif data_format == 'ud':
         data_reader = ud_data
-        test_path = args.test.split(';')
+        test_path = args.test.split(':')
 
     model_path = args.model_path
     model_name = os.path.join(model_path, 'model.pt')

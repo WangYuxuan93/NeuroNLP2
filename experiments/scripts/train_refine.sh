@@ -8,9 +8,9 @@ CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=4 python -u refinement_parser.py --mode 
  --noscreen \
  --punctuation '.' '``' "''" ':' ',' \
  --format ud \
- --train "data/ptb_two_auto.conll;data/ptb_small_auto.conll" \
- --dev "data/ptb_two_auto.conll;data/ptb_small_auto.conll" \
- --test "data/ptb_two_auto.conll;data/ptb_small_auto.conll" \
+ --train "data/ptb_two_auto.conll:data/ptb_small_auto.conll" \
+ --dev "data/ptb_two_auto.conll:data/ptb_small_auto.conll" \
+ --test "data/ptb_two_auto.conll:data/ptb_small_auto.conll" \
  --model_path "models/parsing/refine" \
  #--punctuation 'PUNCT' --pos_idx 3 \
  #--freeze --basic_word_embedding 
