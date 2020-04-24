@@ -222,9 +222,9 @@ def train(args):
         data_paths=dev_path + test_path
     word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = data_reader.create_alphabets(alphabet_path, train_path,
                                                                                              data_paths=data_paths,
-                                                                                             embedd_dict=word_dict, max_vocabulary_size=200000,
+                                                                                             embedd_dict=word_dict, max_vocabulary_size=400000,
                                                                                              pos_idx=args.pos_idx)
-    pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path, word_dict, word_alphabet.instances, max_vocabulary_size=200000)
+    pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path, word_dict, word_alphabet.instances, max_vocabulary_size=400000)
 
     num_words = word_alphabet.size()
     num_pretrained = pretrained_alphabet.size()
