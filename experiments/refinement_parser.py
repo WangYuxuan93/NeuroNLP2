@@ -540,7 +540,7 @@ def train(args):
 
                 print('Evaluating dev:')
                 dev_stats, dev_stats_nopunct, dev_stats_root = eval(alg, data_dev, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, 
-                                                                    beam=beam, write_to_tmp=False, prev_best_lcorr=best_lcorrect_nopunc,
+                                                                    beam=beam, batch_size=args.eval_batch_size, write_to_tmp=False, prev_best_lcorr=best_lcorrect_nopunc,
                                                                     prev_best_ucorr=best_ucorrect_nopunc, pred_filename=pred_filename)
 
                 #pred_writer.close()
@@ -578,7 +578,9 @@ def train(args):
                     #gold_writer.start(gold_filename)
 
                     print('Evaluating test:')
-                    test_stats, test_stats_nopunct, test_stats_root = eval(alg, data_test, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam)
+                    test_stats, test_stats_nopunct, test_stats_root = eval(alg, data_test, 
+                            single_network, pred_writer, gold_writer, punct_set, word_alphabet, 
+                            pos_alphabet, device, beam=beam, batch_size=args.eval_batch_size)
 
                     test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total = test_stats
                     test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
@@ -719,6 +721,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--config', type=str, help='config file')
     args_parser.add_argument('--num_epochs', type=int, default=200, help='Number of training epochs')
     args_parser.add_argument('--batch_size', type=int, default=16, help='Number of sentences in each batch')
+    args_parser.add_argument('--eval_batch_size', type=int, default=64, help='Number of sentences in each batch while evaluating')
     args_parser.add_argument('--patient_epochs', type=int, default=100, help='Max number of epochs to exit with no improvement')
     args_parser.add_argument('--loss_type', choices=['sentence', 'token'], default='sentence', help='loss type (default: sentence)')
     args_parser.add_argument('--optim', choices=['sgd', 'adamw', 'adam'], help='type of optimizer')
