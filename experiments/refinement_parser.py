@@ -28,6 +28,8 @@ from neuronlp2.io import CoNLLXWriter
 from neuronlp2.tasks import parser
 from neuronlp2.nn.utils import freeze_embedding
 from neuronlp2.io import common
+from transformers import *
+from neuronlp2.io.common import PAD, ROOT, END
 
 def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgrad, weight_decay, 
                   warmup_steps, schedule='step', hidden_size=200, decay_steps=5000):
@@ -49,9 +51,53 @@ def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgra
     return optimizer, scheduler
 
 
+def convert_tokens_to_ids(tokenizer, tokens):
+
+    all_wordpiece_list = []
+    all_first_index_list = []
+
+    for toks in tokens:
+        wordpiece_list = []
+        first_index_list = []
+        for token in toks:
+            if token == PAD:
+                token = tokenizer.pad_token
+            elif token == ROOT:
+                token = tokenizer.bos_token
+            elif token == END:
+                token = tokenizer.eos_token
+            wordpiece = tokenizer.tokenize(token)
+            # add 1 for cls_token <s>
+            first_index_list.append(len(wordpiece_list)+1)
+            wordpiece_list += wordpiece
+            #print (wordpiece)
+        #print (wordpiece_list)
+        #print (first_index_list)
+        bpe_ids = tokenizer.convert_tokens_to_ids(wordpiece_list)
+        #print (bpe_ids)
+        bpe_ids = tokenizer.build_inputs_with_special_tokens(bpe_ids)
+        #print (bpe_ids)
+        all_wordpiece_list.append(bpe_ids)
+        all_first_index_list.append(first_index_list)
+
+    all_wordpiece_max_len = max([len(w) for w in all_wordpiece_list])
+    all_wordpiece = np.stack(
+          [np.pad(a, (0, all_wordpiece_max_len - len(a)), 'constant', constant_values=tokenizer.pad_token_id) for a in all_wordpiece_list])
+    all_first_index_max_len = max([len(i) for i in all_first_index_list])
+    all_first_index = np.stack(
+          [np.pad(a, (0, all_first_index_max_len - len(a)), 'constant', constant_values=0) for a in all_first_index_list])
+
+    # (batch, max_bpe_len)
+    input_ids = torch.from_numpy(all_wordpiece)
+    # (batch, seq_len)
+    first_indices = torch.from_numpy(all_first_index)
+
+    return input_ids, first_indices
+
+
 def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, 
         device, beam=1, batch_size=256, write_to_tmp=True, prev_best_lcorr=0, prev_best_ucorr=0,
-        pred_filename=None):
+        pred_filename=None, tokenizer=None):
     network.eval()
     accum_ucorr = 0.0
     accum_lcorr = 0.0
@@ -77,6 +123,12 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
     all_heads_by_layer = []
 
     for data in iterate_data(data, batch_size):
+        if tokenizer:
+            bpes, first_idx = convert_tokens_to_ids(tokenizer, data['SRC'])
+            bpes = bpes.to(device)
+            first_idx = first_idx.to(device)
+        else:
+            bpes = first_idx = None
         words = data['WORD'].to(device)
         pres = data['PRETRAINED'].to(device)
         chars = data['CHAR'].to(device)
@@ -86,7 +138,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         lengths = data['LENGTH'].numpy()
         if alg == 'graph':
             masks = data['MASK'].to(device)
-            heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
+            heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, bpes=bpes, first_idx=first_idx, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
 
         words = words.cpu().numpy()
         postags = postags.cpu().numpy()
@@ -202,7 +254,8 @@ def train(args):
     word_path = args.word_path
     char_embedding = args.char_embedding
     char_path = args.char_path
-
+    pretrained_lm = args.pretrained_lm
+    lm_path = args.lm_path
 
     print(args)
 
@@ -221,8 +274,9 @@ def train(args):
     elif data_format == "ud":
         data_paths=dev_path + test_path
     word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = data_reader.create_alphabets(alphabet_path, train_path,
-                                                                                             data_paths=data_paths,
+                                                                                             data_paths=data_paths, 
                                                                                              embedd_dict=word_dict, max_vocabulary_size=400000,
+                                                                                             normalize_digits=args.normalize_digits,
                                                                                              pos_idx=args.pos_idx)
     pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path, word_dict, word_alphabet.instances, max_vocabulary_size=400000)
 
@@ -315,11 +369,17 @@ def train(args):
     aux_loss_weight = hyps['refinement']['aux_interpolation']
     refine_layers = hyps['refinement']['num_layers']
 
+    if pretrained_lm == 'xlm-r':
+        tokenizer = XLMRobertaTokenizer.from_pretrained(lm_path)
+    else:
+        tokenizer = None
+
     alg = 'graph'
     if model_type == 'Refinement':
         network = RefinementParser(hyps, num_pretrained, num_words, num_chars, num_pos,
                                num_rels, device=device, basic_word_embedding=basic_word_embedding,
-                               embedd_word=word_table, embedd_char=char_table)
+                               embedd_word=word_table, embedd_char=char_table, 
+                               pretrained_lm=pretrained_lm, lm_path=lm_path)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -340,11 +400,14 @@ def train(args):
 
     logger.info("Reading Data")
     if alg == 'graph':
-        data_train = data_reader.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, symbolic_root=True,
+        data_train = data_reader.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, 
+                                                    normalize_digits=args.normalize_digits, symbolic_root=True,
                                                     pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
-        data_dev = data_reader.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, symbolic_root=True,
+        data_dev = data_reader.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                    normalize_digits=args.normalize_digits, symbolic_root=True,
                                                     pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
-        data_test = data_reader.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, symbolic_root=True,
+        data_test = data_reader.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                    normalize_digits=args.normalize_digits, symbolic_root=True,
                                                     pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
     
     if schedule == 'step':
@@ -434,11 +497,20 @@ def train(args):
             postags = data['POS'].to(device)
             heads = data['HEAD'].to(device)
             nbatch = words.size(0)
+            if args.pretrained_lm == 'xlm-r':
+                bpes, first_idx = convert_tokens_to_ids(tokenizer, data['SRC'])
+                bpes = bpes.to(device)
+                first_idx = first_idx.to(device)
+                assert first_idx.size() == words.size()
+                #print (bpes)
+                #print (first_idx)
+            else:
+                bpes = first_idx = None
             if alg == 'graph':
                 rels = data['TYPE'].to(device)
                 masks = data['MASK'].to(device)
                 nwords = masks.sum() - nbatch
-                final_loss, losses, statistics = network(words, pres, chars, postags, heads, rels, mask=masks)
+                final_loss, losses, statistics = network(words, pres, chars, postags, heads, rels, mask=masks, bpes=bpes, first_idx=first_idx)
             arc_loss, rel_loss = final_loss
             arc_loss = arc_loss.sum()
             rel_loss = rel_loss.sum()
@@ -541,7 +613,7 @@ def train(args):
                 print('Evaluating dev:')
                 dev_stats, dev_stats_nopunct, dev_stats_root = eval(alg, data_dev, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, 
                                                                     beam=beam, batch_size=args.eval_batch_size, write_to_tmp=False, prev_best_lcorr=best_lcorrect_nopunc,
-                                                                    prev_best_ucorr=best_ucorrect_nopunc, pred_filename=pred_filename)
+                                                                    prev_best_ucorr=best_ucorrect_nopunc, pred_filename=pred_filename, tokenizer=tokenizer)
 
                 #pred_writer.close()
                 #gold_writer.close()
@@ -580,7 +652,7 @@ def train(args):
                     print('Evaluating test:')
                     test_stats, test_stats_nopunct, test_stats_root = eval(alg, data_test, 
                             single_network, pred_writer, gold_writer, punct_set, word_alphabet, 
-                            pos_alphabet, device, beam=beam, batch_size=args.eval_batch_size)
+                            pos_alphabet, device, beam=beam, batch_size=args.eval_batch_size, tokenizer=tokenizer)
 
                     test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total = test_stats
                     test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
@@ -647,7 +719,8 @@ def parse(args):
     logger.info("Creating Alphabets")
     alphabet_path = os.path.join(model_path, 'alphabets')
     assert os.path.exists(alphabet_path)
-    word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = data_reader.create_alphabets(alphabet_path, None, pos_idx=args.pos_idx)
+    word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = data_reader.create_alphabets(alphabet_path, None, 
+                                    normalize_digits=args.normalize_digits, pos_idx=args.pos_idx)
 
     num_words = word_alphabet.size()
     num_chars = char_alphabet.size()
@@ -681,10 +754,16 @@ def parse(args):
     use_null_att_pos=hyps['graph_encoder']['use_null_att_pos']
     hidden_size = hyps['input_encoder']['hidden_size']
 
+    if args.pretrained_lm == 'xlm-r':
+        tokenizer = XLMRobertaTokenizer.from_pretrained(lm_path)
+    else:
+        tokenizer = None
+
     alg = 'graph'
     if model_type == 'Refinement':
         network = RefinementParser(hyps, num_pretrained, num_words, num_chars, num_pos,
-                               num_rels, device=device, basic_word_embedding=basic_word_embedding)
+                               num_rels, device=device, basic_word_embedding=basic_word_embedding, 
+                               pretrained_lm=args.pretrained_lm, lm_path=args.lm_path)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -694,7 +773,8 @@ def parse(args):
     logger.info("Reading Data")
     if alg == 'graph':
         data_test = data_reader.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, 
-                                          rel_alphabet, symbolic_root=True, pos_idx=args.pos_idx)
+                                          rel_alphabet, normalize_digits=args.normalize_digits, 
+                                          symbolic_root=True, pos_idx=args.pos_idx)
 
     beam = args.beam
     pred_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
@@ -707,7 +787,8 @@ def parse(args):
     with torch.no_grad():
         print('Parsing...')
         start_time = time.time()
-        eval(alg, data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam, batch_size=args.batch_size)
+        eval(alg, data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, 
+            pos_alphabet, device, beam, batch_size=args.batch_size, tokenizer=tokenizer)
         print('Time: %.2fs' % (time.time() - start_time))
 
     pred_writer.close()
@@ -749,6 +830,9 @@ if __name__ == '__main__':
     args_parser.add_argument('--word_path', help='path for word embedding dict')
     args_parser.add_argument('--char_embedding', choices=['random', 'polyglot'], help='Embedding for characters')
     args_parser.add_argument('--char_path', help='path for character embedding dict')
+    args_parser.add_argument('--pretrained_lm', default='none', choices=['none', 'xlm-r'], help='Pre-trained language model')
+    args_parser.add_argument('--lm_path', help='path for pretrained language model')
+    args_parser.add_argument('--normalize_digits', default=False, action='store_true', help='normalize digits to 0 ?')
     args_parser.add_argument('--format', type=str, choices=['conllx', 'ud'], default='conllx', help='data format')
     args_parser.add_argument('--train', help='path for training file.')
     args_parser.add_argument('--dev', help='path for dev file.')

@@ -34,10 +34,11 @@ class CoNLLXReader(object):
             if line.startswith('#'):
                 line = self.__source_file.readline()
                 continue
-            if re.match('[0-9]+[-.][0-9]+', line):
+            items = line.split('\t')
+            if re.match('[0-9]+[-.][0-9]+', items[0]):
                 line = self.__source_file.readline()
                 continue
-            lines.append(line.split('\t'))
+            lines.append(items)
             line = self.__source_file.readline()
 
         length = len(lines)

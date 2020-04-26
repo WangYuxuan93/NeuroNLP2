@@ -33,9 +33,9 @@ def create_alphabets(alphabet_directory, train_paths, data_paths=None, max_vocab
                     if len(line) == 0:
                         continue
                     if line.startswith('#'): continue
-                    if re.match('[0-9]+[-.][0-9]+', line): continue
-
                     tokens = line.split('\t')
+                    if re.match('[0-9]+[-.][0-9]+', tokens[0]): continue
+
                     for char in tokens[1]:
                         char_alphabet.add(char)
 
@@ -78,9 +78,9 @@ def create_alphabets(alphabet_directory, train_paths, data_paths=None, max_vocab
                     if len(line) == 0:
                         continue
                     if line.startswith('#'): continue
-                    if re.match('[0-9]+[-.][0-9]+', line): continue
-
                     tokens = line.split('\t')
+                    if re.match('[0-9]+[-.][0-9]+', tokens[0]): continue
+
                     for char in tokens[1]:
                         char_alphabet.add(char)
 
@@ -233,7 +233,7 @@ def read_data(source_paths: [str], word_alphabet: Alphabet, char_alphabet: Alpha
     pres = torch.from_numpy(preid_inputs)
 
     data_tensor = {'WORD': words, 'CHAR': chars, 'POS': pos, 'HEAD': heads, 'TYPE': types,
-                   'MASK': masks, 'SINGLE': single, 'LENGTH': lengths, 'SRC': src_words,
+                   'MASK': masks, 'SINGLE': single, 'LENGTH': lengths, 'SRC': np.array(src_words),
                    'PRETRAINED': pres}
     return data_tensor, data_size
 
@@ -244,6 +244,7 @@ def read_bucketed_data(source_paths: [str], word_alphabet: Alphabet, char_alphab
     data = [[] for _ in _buckets]
     max_char_length = [0 for _ in _buckets]
     counter = 0
+    src_words = [[] for _ in _buckets]
 
     for set_id, source_path in enumerate(source_paths):
         print('Reading data from %s' % source_path)
@@ -260,6 +261,7 @@ def read_bucketed_data(source_paths: [str], word_alphabet: Alphabet, char_alphab
             for bucket_id, bucket_size in enumerate(_buckets):
                 if inst_size < bucket_size:
                     data[bucket_id].append([sent.word_ids, sent.char_id_seqs, inst.pos_ids, inst.heads, inst.type_ids, sent.pre_ids])
+                    src_words[bucket_id].append(sent.words)
                     max_len = max([len(char_seq) for char_seq in sent.char_seqs])
                     if max_char_length[bucket_id] < max_len:
                         max_char_length[bucket_id] = max_len
@@ -338,6 +340,7 @@ def read_bucketed_data(source_paths: [str], word_alphabet: Alphabet, char_alphab
         pres = torch.from_numpy(preid_inputs)
 
         data_tensor = {'WORD': words, 'CHAR': chars, 'POS': pos, 'HEAD': heads, 'TYPE': types,
-                       'MASK': masks, 'SINGLE': single, 'LENGTH': lengths, 'PRETRAINED': pres}
+                       'MASK': masks, 'SINGLE': single, 'LENGTH': lengths, 'PRETRAINED': pres,
+                       'SRC': np.array(src_words[bucket_id])}
         data_tensors.append(data_tensor)
     return data_tensors, bucket_sizes

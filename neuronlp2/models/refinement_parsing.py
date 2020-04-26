@@ -14,7 +14,7 @@ from neuronlp2.nn.self_attention import AttentionEncoderConfig, AttentionEncoder
 from neuronlp2.nn.graph_attention_network import GraphAttentionNetworkConfig, GraphAttentionNetwork
 from neuronlp2.nn.dropout import drop_input_independent
 from torch.autograd import Variable
-
+from transformers import *
 
 class PositionEmbeddingLayer(nn.Module):
     def __init__(self, embedding_size, dropout_prob=0, max_position_embeddings=256):
@@ -45,7 +45,8 @@ class PositionEmbeddingLayer(nn.Module):
 class RefinementParser(nn.Module):
     def __init__(self, hyps, num_pretrained, num_words, num_chars, num_pos, num_labels,
                  device=torch.device('cpu'), basic_word_embedding=True, 
-                 embedd_word=None, embedd_char=None, embedd_pos=None):
+                 embedd_word=None, embedd_char=None, embedd_pos=None,
+                 pretrained_lm='none', lm_path=None):
         super(RefinementParser, self).__init__()
 
         self.hyps = hyps
@@ -63,6 +64,7 @@ class RefinementParser(nn.Module):
         pos_dim = hyps['input']['pos_dim']
         char_dim = hyps['input']['char_dim']
         self.basic_word_embedding = basic_word_embedding
+        self.pretrained_lm = pretrained_lm
         # for biaffine layer
         arc_mlp_dim = hyps['biaffine']['arc_mlp_dim']
         rel_mlp_dim = hyps['biaffine']['rel_mlp_dim']
@@ -102,7 +104,15 @@ class RefinementParser(nn.Module):
         logger.info("##### Input Encoder (Type: %s, Layer: %d, Hidden: %d) #####" % (input_encoder_name, num_layers, hidden_size))
 
         # Initialization
-        if self.basic_word_embedding:
+        if self.pretrained_lm == 'xlm-r':
+            #self.tokenizer = XLMRobertaTokenizer.from_pretrained(lm_path)
+            self.lm_encoder = XLMRobertaModel.from_pretrained(lm_path)
+            lm_hidden_size = self.lm_encoder.config.hidden_size
+            #assert lm_hidden_size == word_dim
+            #lm_hidden_size = 768
+            self.basic_word_embed = None
+            self.word_embed = None
+        elif self.basic_word_embedding:
             self.basic_word_embed = nn.Embedding(num_words, word_dim, padding_idx=1)
             self.word_embed = nn.Embedding(num_pretrained, word_dim, _weight=embedd_word, padding_idx=1)
         else:
@@ -122,7 +132,10 @@ class RefinementParser(nn.Module):
         self.dropout_out = nn.Dropout2d(p=p_out)
         self.num_labels = num_labels
 
-        enc_dim = word_dim
+        if self.pretrained_lm == 'xlm-r':
+            enc_dim = lm_hidden_size
+        else:
+            enc_dim = word_dim
         if use_char:
             enc_dim += char_dim
         if use_pos:
@@ -264,7 +277,7 @@ class RefinementParser(nn.Module):
         logger.info('# of Parameters: %d' % (sum([param.numel() for param in self.parameters()])))
 
     def reset_parameters(self, embedd_word, embedd_char, embedd_pos):
-        if embedd_word is None:
+        if embedd_word is None and self.word_embed is not None:
             nn.init.uniform_(self.word_embed.weight, -0.1, 0.1)
         if embedd_char is None and self.char_embed is not None:
             nn.init.uniform_(self.char_embed.weight, -0.1, 0.1)
@@ -274,7 +287,8 @@ class RefinementParser(nn.Module):
             nn.init.uniform_(self.basic_word_embed.weight, -0.1, 0.1)
 
         with torch.no_grad():
-            self.word_embed.weight[self.word_embed.padding_idx].fill_(0)
+            if self.word_embed is not None:
+                self.word_embed.weight[self.word_embed.padding_idx].fill_(0)
             if self.basic_word_embed is not None:
                 self.basic_word_embed.weight[self.basic_word_embed.padding_idx].fill_(0)
             if self.char_embed is not None:
@@ -322,15 +336,24 @@ class RefinementParser(nn.Module):
             nn.init.xavier_uniform_(self.input_encoder.weight)
             nn.init.constant_(self.input_encoder.bias, 0.)
 
-    def _input_encoder(self, input_word, input_pretrained, input_char, input_pos, mask=None):
-        
-        #print ("input_word:\n", input_word)
-        #print ("input_pretrained:\n", input_pretrained)
-        
-        # apply dropout word on input
-        #word = self.dropout_in(word)
-        
-        if self.basic_word_embedding:
+
+    def _xlm_embed(self, input_ids=None, first_indices=None, debug=True):
+
+        # (batch, max_bpe_len, hidden_size)
+        xlm_output = self.lm_encoder(input_ids)[0]
+        size = list(first_index.size()) + [xlm_output.size()[-1]]
+        # (batch, seq_len, hidden_size)
+        output = xlm_output.gather(1, first_index.unsqueeze(-1).expand(size))
+        if debug:
+            print (xlm_output.size())
+            print (output.size())
+        return output
+
+    def _embed(self, input_word, input_pretrained, input_char, input_pos, bpes=None, first_idx=None):
+
+        if self.pretrained_lm == 'xlm-r':
+            enc_word = self._xlm_embed(bpes, first_idx)
+        elif self.basic_word_embedding:
             # [batch, length, word_dim]
             pre_word = self.word_embed(input_pretrained)
             enc_word = pre_word
@@ -362,22 +385,34 @@ class RefinementParser(nn.Module):
                 enc_word, enc_pos = drop_input_independent(enc_word, enc_pos, self.p_in)
                 #print ("enc_word (a):\n", enc_word)
             enc = torch.cat([enc_word, enc_pos], dim=2)
+
+        return enc
+
+    def _input_encoder(self, embeddings, mask=None):
+        
+        #print ("input_word:\n", input_word)
+        #print ("input_pretrained:\n", input_pretrained)
+        
+        # apply dropout word on input
+        #word = self.dropout_in(word)
+        
+        
         # output from rnn [batch, length, hidden_size]
         if self.input_encoder_name == 'Linear':
             # sequence shared mask dropout
-            enc = self.dropout_in(enc.transpose(1, 2)).transpose(1, 2)
-            enc = self.position_embedding_layer(enc)
+            enc = self.dropout_in(embeddings.transpose(1, 2)).transpose(1, 2)
+            enc = self.position_embeembeddingsdding_layer(enc)
             output = self.input_encoder(enc)
         elif self.input_encoder_name == 'Transformer':
             # sequence shared mask dropout
             # apply this dropout in transformer after added position embedding
             #enc = self.dropout_in(enc.transpose(1, 2)).transpose(1, 2)
-            all_encoder_layers = self.input_encoder(enc, mask)
+            all_encoder_layers = self.input_encoder(embeddings, mask)
             # [batch, length, hidden_size]
             output = all_encoder_layers[-1]
         else:
             # sequence shared mask dropout
-            enc = self.dropout_in(enc.transpose(1, 2)).transpose(1, 2)
+            enc = self.dropout_in(embeddings.transpose(1, 2)).transpose(1, 2)
             output, _ = self.input_encoder(enc, mask)
 
         # apply dropout for output
@@ -533,7 +568,7 @@ class RefinementParser(nn.Module):
         return graph_matrix.detach()
 
 
-    def forward(self, input_word, input_pretrained, input_char, input_pos, heads, rels, mask=None):
+    def forward(self, input_word, input_pretrained, input_char, input_pos, heads, rels, bpes=None, first_idx=None, mask=None):
         # Pre-process
         batch_size, seq_len = input_word.size()
         # (batch, seq_len), seq mask, where at position 0 is 0
@@ -550,8 +585,10 @@ class RefinementParser(nn.Module):
 
         arc_losses, rel_losses = [], []
         statistics = []
+        # (batch, seq_len, embed_size)
+        embeddings = self._embed(input_word, input_pretrained, input_char, input_pos, bpes=bpes, first_idx=first_idx)
         # (batch, seq_len, hidden_size)
-        _encoder_output = self._input_encoder(input_word, input_pretrained, input_char, input_pos, mask=mask)
+        _encoder_output = self._input_encoder(embeddings, mask=mask)
         for n_layer in range(self.refine_layers):
             if n_layer == 0:
                 encoder_output = _encoder_output
@@ -638,7 +675,7 @@ class RefinementParser(nn.Module):
         return (final_arc_loss, final_rel_loss), (arc_losses, rel_losses), statistics
 
 
-    def decode(self, input_word, input_pretrained, input_char, input_pos, mask=None, leading_symbolic=0):
+    def decode(self, input_word, input_pretrained, input_char, input_pos, mask=None, bpes=None, first_idx=None, leading_symbolic=0):
         """
         Args:
             input_word: Tensor
@@ -665,8 +702,10 @@ class RefinementParser(nn.Module):
         # (batch, seq_len), seq mask, where at position 0 is 0
         root_mask = torch.arange(seq_len, device=input_word.device).gt(0).float().unsqueeze(0) * mask
 
+        # (batch, seq_len, embed_size)
+        embeddings = self._embed(input_word, input_pretrained, input_char, input_pos, bpes=bpes, first_idx=first_idx)
         # (batch, seq_len, hidden_size)
-        _encoder_output = self._input_encoder(input_word, input_pretrained, input_char, input_pos, mask=mask)
+        _encoder_output = self._input_encoder(embeddings, mask=mask)
         for n_layer in range(self.refine_layers):
             if n_layer == 0:
                 encoder_output = _encoder_output
