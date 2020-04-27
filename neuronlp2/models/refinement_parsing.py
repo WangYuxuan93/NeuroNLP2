@@ -337,7 +337,7 @@ class RefinementParser(nn.Module):
             nn.init.constant_(self.input_encoder.bias, 0.)
 
 
-    def _xlm_embed(self, input_ids=None, first_indices=None, debug=True):
+    def _xlm_embed(self, input_ids=None, first_index=None, debug=False):
 
         # (batch, max_bpe_len, hidden_size)
         xlm_output = self.lm_encoder(input_ids)[0]
