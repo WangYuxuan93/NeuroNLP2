@@ -16,8 +16,8 @@ import argparse
 import math
 import numpy as np
 import torch
-from torch.optim.adamw import AdamW
-from torch.optim import SGD, Adam
+#from torch.optim.adamw import AdamW
+from torch.optim import SGD, Adam, AdamW
 from torch.nn.utils import clip_grad_norm_
 from neuronlp2.nn.utils import total_grad_norm
 from neuronlp2.io import get_logger, conllx_data, ud_data, conllx_stacked_data, iterate_data
@@ -398,6 +398,24 @@ def train(args):
         else:
             freeze_embedding(network.word_embed)
 
+    if schedule == 'step':
+        logger.info("Scheduler: %s, init lr=%.6f, lr decay=%.6f, decay_steps=%d, warmup_steps=%d" % (schedule, learning_rate, lr_decay, decay_steps, warmup_steps))
+    elif schedule == 'attention':
+        logger.info("Scheduler: %s, init lr=%.6f, warmup_steps=%d" % (schedule, learning_rate, warmup_steps))
+    elif schedule == 'exponential':
+        logger.info("Scheduler: %s, init lr=%.6f, lr decay=%.6f, warmup_steps=%d" % (schedule, learning_rate, lr_decay, warmup_steps))
+    if pretrained_lm == 'xlm-r':
+        optim_parameters = [{'params':single_network._basic_parameters()},
+                            {'params':single_network.lm_encoder.parameters(), 'lr':args.lm_lr}]
+        logger.info("Language model lr: %.6f" % args.lm_lr)
+    else:
+        optim_parameters = single_network._basic_parameters() #single_network.parameters()
+        print (optim_parameters)
+    optimizer, scheduler = get_optimizer(optim_parameters, optim, learning_rate, lr_decay, 
+                                betas, eps, amsgrad, weight_decay, warmup_steps,
+                                schedule, hidden_size, decay_steps)
+
+
     logger.info("Reading Data")
     if alg == 'graph':
         data_train = data_reader.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, 
@@ -410,21 +428,12 @@ def train(args):
                                                     normalize_digits=args.normalize_digits, symbolic_root=True,
                                                     pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
     
-    if schedule == 'step':
-        logger.info("Scheduler: %s, init lr=%.6f, lr decay=%.6f, decay_steps=%d, warmup_steps=%d" % (schedule, learning_rate, lr_decay, decay_steps, warmup_steps))
-    elif schedule == 'attention':
-        logger.info("Scheduler: %s, init lr=%.6f, warmup_steps=%d" % (schedule, learning_rate, warmup_steps))
-    elif schedule == 'exponential':
-        logger.info("Scheduler: %s, init lr=%.6f, lr decay=%.6f, warmup_steps=%d" % (schedule, learning_rate, lr_decay, warmup_steps))
     num_data = sum(data_train[1])
     logger.info("training: #training data: %d, batch: %d, unk replace: %.2f" % (num_data, batch_size, unk_replace))
 
     pred_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
     gold_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
-    optimizer, scheduler = get_optimizer(network.parameters(), optim, learning_rate, lr_decay, 
-                                betas, eps, amsgrad, weight_decay, warmup_steps,
-                                schedule, hidden_size, decay_steps)
-
+    
     best_ucorrect = 0.0
     best_lcorrect = 0.0
     best_ucomlpete = 0.0
@@ -486,6 +495,8 @@ def train(args):
         lr = scheduler.get_lr()[0]
         total_step = scheduler.get_total_step()
         print('Epoch %d, Step %d (%s, scheduler: %s, lr=%.6f, lr decay=%.6f, grad clip=%.1f, l2=%.1e): ' % (epoch, total_step, opt_info,  schedule, lr, lr_decay, grad_clip, weight_decay))
+        if pretrained_lm == 'xlm-r':
+            print ('language model lr=%.6f' % scheduler.get_lr()[1])
         #if args.cuda:
         #    torch.cuda.empty_cache()
         gc.collect()
@@ -832,6 +843,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--char_path', help='path for character embedding dict')
     args_parser.add_argument('--pretrained_lm', default='none', choices=['none', 'xlm-r'], help='Pre-trained language model')
     args_parser.add_argument('--lm_path', help='path for pretrained language model')
+    args_parser.add_argument('--lm_lr', type=float, default=2e-5, help='Learning rate of pretrained language model')
     args_parser.add_argument('--normalize_digits', default=False, action='store_true', help='normalize digits to 0 ?')
     args_parser.add_argument('--format', type=str, choices=['conllx', 'ud'], default='conllx', help='data format')
     args_parser.add_argument('--train', help='path for training file.')

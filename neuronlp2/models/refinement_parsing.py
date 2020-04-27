@@ -15,6 +15,7 @@ from neuronlp2.nn.graph_attention_network import GraphAttentionNetworkConfig, Gr
 from neuronlp2.nn.dropout import drop_input_independent
 from torch.autograd import Variable
 from transformers import *
+import itertools
 
 class PositionEmbeddingLayer(nn.Module):
     def __init__(self, embedding_size, dropout_prob=0, max_position_embeddings=256):
@@ -48,7 +49,7 @@ class RefinementParser(nn.Module):
                  embedd_word=None, embedd_char=None, embedd_pos=None,
                  pretrained_lm='none', lm_path=None):
         super(RefinementParser, self).__init__()
-
+        
         self.hyps = hyps
         self.device = device
         # for refinement
@@ -104,6 +105,8 @@ class RefinementParser(nn.Module):
         logger.info("##### Input Encoder (Type: %s, Layer: %d, Hidden: %d) #####" % (input_encoder_name, num_layers, hidden_size))
 
         # Initialization
+        # to collect all params other than langauge model
+        self.basic_parameters = []
         if self.pretrained_lm == 'xlm-r':
             #self.tokenizer = XLMRobertaTokenizer.from_pretrained(lm_path)
             self.lm_encoder = XLMRobertaModel.from_pretrained(lm_path)
@@ -115,15 +118,21 @@ class RefinementParser(nn.Module):
         elif self.basic_word_embedding:
             self.basic_word_embed = nn.Embedding(num_words, word_dim, padding_idx=1)
             self.word_embed = nn.Embedding(num_pretrained, word_dim, _weight=embedd_word, padding_idx=1)
+            self.basic_parameters.append(self.basic_word_embed)
+            self.basic_parameters.append(self.word_embed)
         else:
             self.basic_word_embed = None
             self.word_embed = nn.Embedding(num_words, word_dim, _weight=embedd_word, padding_idx=1)
+            self.basic_parameters.append(self.word_embed)
 
         #self.word_embed.weight.requires_grad=False
         self.pos_embed = nn.Embedding(num_pos, pos_dim, _weight=embedd_pos, padding_idx=1) if use_pos else None
+        self.basic_parameters.append(self.pos_embed)
         if use_char:
             self.char_embed = nn.Embedding(num_chars, char_dim, _weight=embedd_char, padding_idx=1)
             self.char_cnn = CharCNN(2, char_dim, char_dim, hidden_channels=char_dim * 4, activation=activation)
+            self.basic_parameters.append(self.char_embed)
+            self.basic_parameters.append(self.char_cnn)
         else:
             self.char_embed = None
             self.char_cnn = None
@@ -146,9 +155,12 @@ class RefinementParser(nn.Module):
             self.input_encoder = nn.Linear(enc_dim, hidden_size)
             self.position_embedding_layer = PositionEmbeddingLayer(enc_dim, dropout_prob=0, 
                                                                 max_position_embeddings=256)
+            self.basic_parameters.append(self.input_encoder)
+            self.basic_parameters.append(self.position_embedding_layer)
             out_dim = hidden_size
         elif input_encoder_name == 'FastLSTM':
             self.input_encoder = VarFastLSTM(enc_dim, hidden_size, num_layers=num_layers, batch_first=True, bidirectional=True, dropout=p_rnn)
+            self.basic_parameters.append(self.input_encoder)
             out_dim = hidden_size * 2
             logger.info("dropout(p_rnn): (%.2f, %.2f)" % (p_rnn[0], p_rnn[1]))
         elif input_encoder_name == 'Transformer':
@@ -186,6 +198,7 @@ class RefinementParser(nn.Module):
                                                     initializer=initializer,
                                                     initializer_range=0.02)
             self.input_encoder = AttentionEncoder(self.attention_config)
+            self.basic_parameters.append(self.input_encoder)
             out_dim = hidden_size
             logger.info("dropout(emb, hidden, inter, att): (%.2f, %.2f, %.2f, %.2f)" % (embedding_dropout_prob, 
                                 hidden_dropout_prob, inter_dropout_prob, attention_probs_dropout_prob))
@@ -201,7 +214,9 @@ class RefinementParser(nn.Module):
         # for graph encoder
         logger.info("##### Graph Encoder (Type: %s, Layers: %d, Hidden: %d, Share:%s) #####"% (graph_encoder_name,
          hyps['graph_encoder']['num_layers'], hyps['graph_encoder']['hidden_size'], hyps['graph_encoder']['share_params']))
-        if graph_encoder_name == 'GAT':
+        if graph_encoder_name == 'none':
+            logger.info("No graph encoder")
+        elif graph_encoder_name == 'GAT':
             self.gat_config = GraphAttentionNetworkConfig(input_size=out_dim,
                                                 hidden_size=hyps['graph_encoder']['hidden_size'],
                                                 num_layers=hyps['graph_encoder']['num_layers'],
@@ -224,28 +239,35 @@ class RefinementParser(nn.Module):
                                                 use_null_att_pos=hyps['graph_encoder']['use_null_att_pos'])
 
             self.graph_attention = GraphAttentionNetwork(self.gat_config)
+            self.basic_parameters.append(self.graph_attention)
+            logger.info("dropout(emb, hidden, inter, att): (%.2f, %.2f, %.2f, %.2f)" % (hyps['graph_encoder']['embedding_dropout_prob'],
+                hyps['graph_encoder']['hidden_dropout_prob'],hyps['graph_encoder']['inter_dropout_prob'], hyps['graph_encoder']['attention_probs_dropout_prob']))
+            logger.info("Use Input Layer: %s" % hyps['graph_encoder']['use_input_layer'])
+            logger.info("Only Use Value Weight: %s" % hyps['graph_encoder']['only_value_weight'])
+            logger.info("Attend to END if no head: %s" % hyps['graph_encoder']['use_null_att_pos'])
+            logger.info("Encode Arc Type: %s" % (self.encode_arc_type))
+            logger.info("Encode Relation Type: %s (rel embed dim: %d)" % (self.encode_rel_type, hyps['graph_encoder']['rel_dim']))
         else:
             logger.info("Unrecognized graph encoder: %s", graph_encoder_name)
+            exit()
         
-        logger.info("dropout(emb, hidden, inter, att): (%.2f, %.2f, %.2f, %.2f)" % (hyps['graph_encoder']['embedding_dropout_prob'],
-                hyps['graph_encoder']['hidden_dropout_prob'],hyps['graph_encoder']['inter_dropout_prob'], hyps['graph_encoder']['attention_probs_dropout_prob']))
-        logger.info("Use Input Layer: %s" % hyps['graph_encoder']['use_input_layer'])
-        logger.info("Only Use Value Weight: %s" % hyps['graph_encoder']['only_value_weight'])
-        logger.info("Attend to END if no head: %s" % hyps['graph_encoder']['use_null_att_pos'])
-        logger.info("Encode Arc Type: %s" % (self.encode_arc_type))
-        logger.info("Encode Relation Type: %s (rel embed dim: %d)" % (self.encode_rel_type, hyps['graph_encoder']['rel_dim']))
-
-        if self.use_separate_first_biaf:
+        if not graph_encoder_name == 'none' and self.use_separate_first_biaf:
             # for input biaffine scorer
             self.arc_h0 = nn.Linear(out_dim, arc_mlp_dim)
             self.arc_c0 = nn.Linear(out_dim, arc_mlp_dim)
             #self.arc_attention = BiAffine(arc_mlp_dim, arc_mlp_dim)
             self.arc_attention0 = BiAffine_v2(arc_mlp_dim, bias_x=True, bias_y=False)
+            self.basic_parameters.append(self.arc_h0)
+            self.basic_parameters.append(self.arc_c0)
+            self.basic_parameters.append(self.arc_attention0)
 
             self.rel_h0 = nn.Linear(out_dim, rel_mlp_dim)
             self.rel_c0 = nn.Linear(out_dim, rel_mlp_dim)
             #self.rel_attention = BiLinear(rel_mlp_dim, rel_mlp_dim, self.num_labels)
             self.rel_attention0 = BiAffine_v2(rel_mlp_dim, n_out=self.num_labels, bias_x=True, bias_y=True)
+            self.basic_parameters.append(self.rel_h0)
+            self.basic_parameters.append(self.rel_c0)
+            self.basic_parameters.append(self.rel_attention0)
 
         # for biaffine scorer
         if self.refine_layers == 1:
@@ -256,14 +278,21 @@ class RefinementParser(nn.Module):
         self.arc_c = nn.Linear(hid_size, arc_mlp_dim)
         #self.arc_attention = BiAffine(arc_mlp_dim, arc_mlp_dim)
         self.arc_attention = BiAffine_v2(arc_mlp_dim, bias_x=True, bias_y=False)
+        self.basic_parameters.append(self.arc_h)
+        self.basic_parameters.append(self.arc_c)
+        self.basic_parameters.append(self.arc_attention)
 
         self.rel_h = nn.Linear(hid_size, rel_mlp_dim)
         self.rel_c = nn.Linear(hid_size, rel_mlp_dim)
         #self.rel_attention = BiLinear(rel_mlp_dim, rel_mlp_dim, self.num_labels)
         self.rel_attention = BiAffine_v2(rel_mlp_dim, n_out=self.num_labels, bias_x=True, bias_y=True)
+        self.basic_parameters.append(self.rel_h)
+        self.basic_parameters.append(self.rel_c)
+        self.basic_parameters.append(self.rel_attention)
 
         if self.minimize_logp:
             self.dep_dense = nn.Linear(out_dim, 1)
+            self.basic_parameters.append(self.dep_dense)
 
         assert activation in ['elu', 'leaky_relu', 'tanh']
         if activation == 'elu':
@@ -275,6 +304,11 @@ class RefinementParser(nn.Module):
         self.criterion = nn.CrossEntropyLoss(reduction='none')
         self.reset_parameters(embedd_word, embedd_char, embedd_pos)
         logger.info('# of Parameters: %d' % (sum([param.numel() for param in self.parameters()])))
+
+    def _basic_parameters(self):
+        params = [p.parameters() for p in self.basic_parameters]
+        #print (params)
+        return itertools.chain(*params)
 
     def reset_parameters(self, embedd_word, embedd_char, embedd_pos):
         if embedd_word is None and self.word_embed is not None:
