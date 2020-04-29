@@ -2,7 +2,7 @@ __author__ = 'max'
 
 import numpy as np
 import torch
-
+import random
 
 def get_batch(data, batch_size, unk_replace=0.):
     data, data_size = data
@@ -66,7 +66,7 @@ def get_bucketed_batch(data, batch_size, unk_replace=0.):
     batch.update({key: field[index, :2 * max_length - 1] for key, field in data.items() if key in stack_keys})
     return batch
 
-def multi_language_iterate_batch(datas, batch_size, unk_replace=0., shuffle=False):
+def multi_language_iterate_batch(datas, batch_size, unk_replace=0., shuffle=False, switch_lan=False):
     datas, data_sizes = datas
     iterators = []
     for data, data_size in zip(datas, data_sizes):
@@ -78,26 +78,35 @@ def multi_language_iterate_batch(datas, batch_size, unk_replace=0., shuffle=Fals
             yield it['lan_id'], batch
             batch = next(it['iter'], None)
 
-def multi_language_iterate_bucketed_batch(datas, batch_size, unk_replace=0., shuffle=False):
+def multi_language_iterate_bucketed_batch(datas, batch_size, unk_replace=0., shuffle=False, switch_lan=False):
     datas, data_sizes = datas
     iterators = []
     for data, bucket_sizes in zip(datas, data_sizes):
         lan_id = data[0]['LANG']
         iterators.append({'lan_id':lan_id, 'iter': iterate_bucketed_batch((data, bucket_sizes), batch_size, unk_replace=0., shuffle=False)})
-    print (iterators)
-    for it in iterators:
-        print ("in batch:", it['lan_id'])
-        #for batch in it['iter']:
-        batch = next(it['iter'], None)
-        while batch:
-            yield it['lan_id'], batch
+    #print (iterators)
+    if switch_lan:
+        while iterators:
+            cur_idx = random.randint(0, len(iterators)-1)
+            it = iterators[cur_idx]
             batch = next(it['iter'], None)
-
-def multi_language_iterate_data(datas, batch_size, bucketed=False, unk_replace=0., shuffle=False):
-    if bucketed:
-        return multi_language_iterate_bucketed_batch(datas, batch_size, unk_replace=unk_replace, shuffle=shuffle)
+            if batch:
+                yield it['lan_id'], batch
+            else:
+                del iterators[cur_idx]
+                #print (iterators)
     else:
-        return multi_language_iterate_batch(datas, batch_size, unk_replace=unk_replace, shuffle=shuffle)
+        for it in iterators:
+            batch = next(it['iter'], None)
+            while batch:
+                yield it['lan_id'], batch
+                batch = next(it['iter'], None)
+
+def multi_language_iterate_data(datas, batch_size, bucketed=False, unk_replace=0., shuffle=False, switch_lan=False):
+    if bucketed:
+        return multi_language_iterate_bucketed_batch(datas, batch_size, unk_replace=unk_replace, shuffle=shuffle, switch_lan=switch_lan)
+    else:
+        return multi_language_iterate_batch(datas, batch_size, unk_replace=unk_replace, shuffle=shuffle, switch_lan=switch_lan)
 
 
 def iterate_batch(data, batch_size, unk_replace=0., shuffle=False):
@@ -175,9 +184,7 @@ def iterate_bucketed_batch(data, batch_size, unk_replace=0., shuffle=False):
             yield batch
 
 
-
-
-def iterate_data(data, batch_size, bucketed=False, unk_replace=0., shuffle=False):
+def iterate_data(data, batch_size, bucketed=False, unk_replace=0., shuffle=False, **kwargs):
     if bucketed:
         return iterate_bucketed_batch(data, batch_size, unk_replace=unk_replace, shuffle=shuffle)
     else:

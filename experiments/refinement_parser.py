@@ -20,7 +20,7 @@ import torch
 from torch.optim import SGD, Adam, AdamW
 from torch.nn.utils import clip_grad_norm_
 from neuronlp2.nn.utils import total_grad_norm
-from neuronlp2.io import get_logger, conllx_data, ud_data, conllx_stacked_data, iterate_data
+from neuronlp2.io import get_logger, conllx_data, ud_data, conllx_stacked_data #, iterate_data
 from neuronlp2.models import RefinementParser
 from neuronlp2.optim import ExponentialScheduler, StepScheduler, AttentionScheduler
 from neuronlp2 import utils
@@ -30,7 +30,7 @@ from neuronlp2.nn.utils import freeze_embedding
 from neuronlp2.io import common
 from transformers import *
 from neuronlp2.io.common import PAD, ROOT, END
-from neuronlp2.io.batcher import multi_language_iterate_data
+from neuronlp2.io.batcher import multi_language_iterate_data, iterate_data
 from neuronlp2.io import multi_ud_data
 
 def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgrad, weight_decay, 
@@ -128,6 +128,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         iterate = multi_language_iterate_data
     else:
         iterate = iterate_data
+        lan_id = None
 
     for data in iterate(data, batch_size):
         if multi_lan_iter:
@@ -387,6 +388,7 @@ def train(args):
         languages = set(lans_train + lans_dev + lans_test)
         language_alphabet = utils.creat_language_alphabet(alphabet_path, languages)
         num_lans = language_alphabet.size()
+        assert len(languages)+1 == num_lans
         data_reader = multi_ud_data
     if pretrained_lm == 'xlm-r':
         tokenizer = XLMRobertaTokenizer.from_pretrained(lm_path)
@@ -519,6 +521,7 @@ def train(args):
     else:
         iterate = iterate_data
         multi_lan_iter = False
+        lan_id = None
     for epoch in range(1, num_epochs + 1):
         num_epochs_without_improvement += 1
         start_time = time.time()
@@ -543,12 +546,11 @@ def train(args):
         #    torch.cuda.empty_cache()
         gc.collect()
         #for step, data in enumerate(iterate_data(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True)):
-        for step, data in enumerate(iterate(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True)):
+        for step, data in enumerate(iterate(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True, switch_lan=True)):
             if hyps['input_encoder']['name'] == 'CPGLSTM':
                 lan_id, data = data
                 lan_id = torch.LongTensor([lan_id]).to(device)
-            print ("lan_id:",lan_id)
-            #print ("data:", data)
+                #print ("lan_id:",lan_id)
             optimizer.zero_grad()
             words = data['WORD'].to(device)
             pres = data['PRETRAINED'].to(device)

@@ -151,6 +151,7 @@ class RefinementParser(nn.Module):
         if use_pos:
             enc_dim += pos_dim
 
+        self.language_embed = None
         self.input_encoder_name = input_encoder_name
         if input_encoder_name == 'Linear':
             self.input_encoder = nn.Linear(enc_dim, hidden_size)
@@ -460,7 +461,7 @@ class RefinementParser(nn.Module):
         elif self.input_encoder_name == 'CPGLSTM':
             enc = self.dropout_in(embeddings.transpose(1, 2)).transpose(1, 2)
             lan_emb = self.language_embed(lan_id)
-            print (lan_emb)
+            #print (lan_emb)
             output, _ = self.input_encoder(lan_emb, enc, mask)
         else: # for 'FastLSTM'
             # sequence shared mask dropout
