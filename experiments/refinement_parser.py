@@ -30,6 +30,8 @@ from neuronlp2.nn.utils import freeze_embedding
 from neuronlp2.io import common
 from transformers import *
 from neuronlp2.io.common import PAD, ROOT, END
+from neuronlp2.io.batcher import multi_language_iterate_data
+from neuronlp2.io import multi_ud_data
 
 def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgrad, weight_decay, 
                   warmup_steps, schedule='step', hidden_size=200, decay_steps=5000):
@@ -97,7 +99,7 @@ def convert_tokens_to_ids(tokenizer, tokens):
 
 def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, 
         device, beam=1, batch_size=256, write_to_tmp=True, prev_best_lcorr=0, prev_best_ucorr=0,
-        pred_filename=None, tokenizer=None):
+        pred_filename=None, tokenizer=None, multi_lan_iter=False):
     network.eval()
     accum_ucorr = 0.0
     accum_lcorr = 0.0
@@ -122,7 +124,15 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
     all_src_words = []
     all_heads_by_layer = []
 
-    for data in iterate_data(data, batch_size):
+    if multi_lan_iter:
+        iterate = multi_language_iterate_data
+    else:
+        iterate = iterate_data
+
+    for data in iterate(data, batch_size):
+        if multi_lan_iter:
+            lan_id, data = data
+            lan_id = torch.LongTensor([lan_id]).to(device)
         if tokenizer:
             bpes, first_idx = convert_tokens_to_ids(tokenizer, data['SRC'])
             bpes = bpes.to(device)
@@ -138,7 +148,8 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         lengths = data['LENGTH'].numpy()
         if alg == 'graph':
             masks = data['MASK'].to(device)
-            heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, bpes=bpes, first_idx=first_idx, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
+            heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, 
+                bpes=bpes, first_idx=first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
 
         words = words.cpu().numpy()
         postags = postags.cpu().numpy()
@@ -368,7 +379,15 @@ def train(args):
     final_loss_weight = hyps['refinement']['final_interpolation']
     aux_loss_weight = hyps['refinement']['aux_interpolation']
     refine_layers = hyps['refinement']['num_layers']
-
+    num_lans = 1
+    if hyps['input_encoder']['name'] == 'CPGLSTM':
+        lans_train = args.lan_train.split(':')
+        lans_dev = args.lan_dev.split(':')
+        lans_test = args.lan_test.split(':')
+        languages = set(lans_train + lans_dev + lans_test)
+        language_alphabet = utils.creat_language_alphabet(alphabet_path, languages)
+        num_lans = language_alphabet.size()
+        data_reader = multi_ud_data
     if pretrained_lm == 'xlm-r':
         tokenizer = XLMRobertaTokenizer.from_pretrained(lm_path)
     else:
@@ -379,7 +398,8 @@ def train(args):
         network = RefinementParser(hyps, num_pretrained, num_words, num_chars, num_pos,
                                num_rels, device=device, basic_word_embedding=basic_word_embedding,
                                embedd_word=word_table, embedd_char=char_table, 
-                               pretrained_lm=pretrained_lm, lm_path=lm_path)
+                               pretrained_lm=pretrained_lm, lm_path=lm_path,
+                               num_lans=num_lans)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -410,7 +430,6 @@ def train(args):
         logger.info("Language model lr: %.6f" % args.lm_lr)
     else:
         optim_parameters = single_network._basic_parameters() #single_network.parameters()
-        print (optim_parameters)
     optimizer, scheduler = get_optimizer(optim_parameters, optim, learning_rate, lr_decay, 
                                 betas, eps, amsgrad, weight_decay, warmup_steps,
                                 schedule, hidden_size, decay_steps)
@@ -418,17 +437,34 @@ def train(args):
 
     logger.info("Reading Data")
     if alg == 'graph':
-        data_train = data_reader.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, 
-                                                    normalize_digits=args.normalize_digits, symbolic_root=True,
-                                                    pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
-        data_dev = data_reader.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
-                                                    normalize_digits=args.normalize_digits, symbolic_root=True,
-                                                    pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
-        data_test = data_reader.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
-                                                    normalize_digits=args.normalize_digits, symbolic_root=True,
-                                                    pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
+        if hyps['input_encoder']['name'] == 'CPGLSTM':
+            data_train = data_reader.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, 
+                                                        normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                        pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx,
+                                                        lans=lans_train, lan_alphabet=language_alphabet)
+            data_dev = data_reader.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                        normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                        pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx,
+                                                        lans=lans_dev, lan_alphabet=language_alphabet)
+            data_test = data_reader.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                        normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                        pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx,
+                                                        lans=lans_test, lan_alphabet=language_alphabet)
+        else:
+            data_train = data_reader.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, 
+                                                        normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                        pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
+            data_dev = data_reader.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                        normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                        pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
+            data_test = data_reader.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                        normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                        pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
     
-    num_data = sum(data_train[1])
+    if hyps['input_encoder']['name'] == 'CPGLSTM':
+        num_data = sum([sum(d) for d in data_train[1]])
+    else:
+        num_data = sum(data_train[1])
     logger.info("training: #training data: %d, batch: %d, unk replace: %.2f" % (num_data, batch_size, unk_replace))
 
     pred_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
@@ -477,6 +513,12 @@ def train(args):
         opt_info = 'adam, betas=(%.1f, %.3f), eps=%.1e' % (betas[0], betas[1], eps)
     elif optim == 'sgd':
         opt_info = 'sgd, momentum=0.9, nesterov=True'
+    if hyps['input_encoder']['name'] == 'CPGLSTM':
+        iterate = multi_language_iterate_data
+        multi_lan_iter = True
+    else:
+        iterate = iterate_data
+        multi_lan_iter = False
     for epoch in range(1, num_epochs + 1):
         num_epochs_without_improvement += 1
         start_time = time.time()
@@ -500,7 +542,13 @@ def train(args):
         #if args.cuda:
         #    torch.cuda.empty_cache()
         gc.collect()
-        for step, data in enumerate(iterate_data(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True)):
+        #for step, data in enumerate(iterate_data(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True)):
+        for step, data in enumerate(iterate(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True)):
+            if hyps['input_encoder']['name'] == 'CPGLSTM':
+                lan_id, data = data
+                lan_id = torch.LongTensor([lan_id]).to(device)
+            print ("lan_id:",lan_id)
+            #print ("data:", data)
             optimizer.zero_grad()
             words = data['WORD'].to(device)
             pres = data['PRETRAINED'].to(device)
@@ -518,10 +566,12 @@ def train(args):
             else:
                 bpes = first_idx = None
             if alg == 'graph':
+                
                 rels = data['TYPE'].to(device)
                 masks = data['MASK'].to(device)
                 nwords = masks.sum() - nbatch
-                final_loss, losses, statistics = network(words, pres, chars, postags, heads, rels, mask=masks, bpes=bpes, first_idx=first_idx)
+                final_loss, losses, statistics = network(words, pres, chars, postags, heads, rels, 
+                            mask=masks, bpes=bpes, first_idx=first_idx, lan_id=lan_id)
             arc_loss, rel_loss = final_loss
             arc_loss = arc_loss.sum()
             rel_loss = rel_loss.sum()
@@ -624,7 +674,8 @@ def train(args):
                 print('Evaluating dev:')
                 dev_stats, dev_stats_nopunct, dev_stats_root = eval(alg, data_dev, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, 
                                                                     beam=beam, batch_size=args.eval_batch_size, write_to_tmp=False, prev_best_lcorr=best_lcorrect_nopunc,
-                                                                    prev_best_ucorr=best_ucorrect_nopunc, pred_filename=pred_filename, tokenizer=tokenizer)
+                                                                    prev_best_ucorr=best_ucorrect_nopunc, pred_filename=pred_filename, tokenizer=tokenizer, 
+                                                                    multi_lan_iter=multi_lan_iter)
 
                 #pred_writer.close()
                 #gold_writer.close()
@@ -663,7 +714,8 @@ def train(args):
                     print('Evaluating test:')
                     test_stats, test_stats_nopunct, test_stats_root = eval(alg, data_test, 
                             single_network, pred_writer, gold_writer, punct_set, word_alphabet, 
-                            pos_alphabet, device, beam=beam, batch_size=args.eval_batch_size, tokenizer=tokenizer)
+                            pos_alphabet, device, beam=beam, batch_size=args.eval_batch_size, 
+                            tokenizer=tokenizer, multi_lan_iter=multi_lan_iter)
 
                     test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total = test_stats
                     test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
@@ -846,6 +898,9 @@ if __name__ == '__main__':
     args_parser.add_argument('--lm_lr', type=float, default=2e-5, help='Learning rate of pretrained language model')
     args_parser.add_argument('--normalize_digits', default=False, action='store_true', help='normalize digits to 0 ?')
     args_parser.add_argument('--format', type=str, choices=['conllx', 'ud'], default='conllx', help='data format')
+    args_parser.add_argument('--lan_train', type=str, default='en', help='lc for training files (split with \':\')')
+    args_parser.add_argument('--lan_dev', type=str, default='en', help='lc for dev files (split with \':\')')
+    args_parser.add_argument('--lan_test', type=str, default='en', help='lc for test files (split with \':\')')
     args_parser.add_argument('--train', help='path for training file.')
     args_parser.add_argument('--dev', help='path for dev file.')
     args_parser.add_argument('--test', help='path for test file.', required=True)

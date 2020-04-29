@@ -8,12 +8,12 @@ import os
 from neuronlp2.io.logger import get_logger
 
 class Alphabet(object):
-    def __init__(self, name, defualt_value=False, keep_growing=True, singleton=False):
+    def __init__(self, name, default_value=False, keep_growing=True, singleton=False):
         self.__name = name
 
         self.instance2index = {}
         self.instances = []
-        self.default_value = defualt_value
+        self.default_value = default_value
         self.offset = 1 if self.default_value else 0
         self.keep_growing = keep_growing
         self.singletons = set() if singleton else None

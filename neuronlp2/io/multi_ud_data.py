@@ -143,15 +143,16 @@ def create_alphabets(alphabet_directory, train_paths, data_paths=None, max_vocab
 
 def read_data(source_paths: [str], word_alphabet: Alphabet, char_alphabet: Alphabet, pos_alphabet: Alphabet, type_alphabet: Alphabet,
               pre_alphabet=None, max_size=None, normalize_digits=True, symbolic_root=False, symbolic_end=False,
-              mask_out_root=False, pos_idx=4):
-    data = []
-    max_length = 0
-    max_char_length = 0
-    counter = 0
-    src_words = []
-
+              mask_out_root=False, pos_idx=4, lans=['en'], lan_alphabet=None):
+    all_tensors = []
+    data_sizes = []
     for set_id, source_path in enumerate(source_paths):
-        print('Reading data from %s' % source_path)
+        data = []
+        max_length = 0
+        max_char_length = 0
+        counter = 0
+        src_words = []
+        print('Reading language %s data from %s' % (lans[set_id], source_path))
         reader = CoNLLXReader(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, 
                               pre_alphabet=pre_alphabet, pos_idx=pos_idx)
         inst = reader.getNext(normalize_digits=normalize_digits, symbolic_root=symbolic_root, symbolic_end=symbolic_end)
@@ -172,129 +173,23 @@ def read_data(source_paths: [str], word_alphabet: Alphabet, char_alphabet: Alpha
             inst = reader.getNext(normalize_digits=normalize_digits, symbolic_root=symbolic_root, symbolic_end=symbolic_end)
         reader.close()
 
-    print("Total number of data: %d" % counter)
+        print("Total number of data: %d" % counter)
 
-    data_size = len(data)
-    char_length = min(MAX_CHAR_LENGTH, max_char_length)
-    wid_inputs = np.empty([data_size, max_length], dtype=np.int64)
-    cid_inputs = np.empty([data_size, max_length, char_length], dtype=np.int64)
-    pid_inputs = np.empty([data_size, max_length], dtype=np.int64)
-    hid_inputs = np.empty([data_size, max_length], dtype=np.int64)
-    tid_inputs = np.empty([data_size, max_length], dtype=np.int64)
-    preid_inputs = np.empty([data_size, max_length], dtype=np.int64)
+        data_size = len(data)
+        data_sizes.append(data_size)
+        char_length = min(MAX_CHAR_LENGTH, max_char_length)
+        wid_inputs = np.empty([data_size, max_length], dtype=np.int64)
+        cid_inputs = np.empty([data_size, max_length, char_length], dtype=np.int64)
+        pid_inputs = np.empty([data_size, max_length], dtype=np.int64)
+        hid_inputs = np.empty([data_size, max_length], dtype=np.int64)
+        tid_inputs = np.empty([data_size, max_length], dtype=np.int64)
+        preid_inputs = np.empty([data_size, max_length], dtype=np.int64)
 
-    masks = np.zeros([data_size, max_length], dtype=np.float32)
-    single = np.zeros([data_size, max_length], dtype=np.int64)
-    lengths = np.empty(data_size, dtype=np.int64)
+        masks = np.zeros([data_size, max_length], dtype=np.float32)
+        single = np.zeros([data_size, max_length], dtype=np.int64)
+        lengths = np.empty(data_size, dtype=np.int64)
 
-    for i, inst in enumerate(data):
-        wids, cid_seqs, pids, hids, tids, preids = inst
-        inst_size = len(wids)
-        lengths[i] = inst_size
-        # word ids
-        wid_inputs[i, :inst_size] = wids
-        wid_inputs[i, inst_size:] = PAD_ID_WORD
-        if pre_alphabet:
-            preid_inputs[i, :inst_size] = preids
-            preid_inputs[i, inst_size:] = PAD_ID_WORD
-        for c, cids in enumerate(cid_seqs):
-            cid_inputs[i, c, :len(cids)] = cids
-            cid_inputs[i, c, len(cids):] = PAD_ID_CHAR
-        cid_inputs[i, inst_size:, :] = PAD_ID_CHAR
-        # pos ids
-        pid_inputs[i, :inst_size] = pids
-        pid_inputs[i, inst_size:] = PAD_ID_TAG
-        # type ids
-        tid_inputs[i, :inst_size] = tids
-        tid_inputs[i, inst_size:] = PAD_ID_TAG
-        # heads
-        hid_inputs[i, :inst_size] = hids
-        hid_inputs[i, inst_size:] = PAD_ID_TAG
-        # masks
-        if symbolic_end:
-            # mask out the end token
-            masks[i, :inst_size-1] = 1.0
-        else:
-            masks[i, :inst_size] = 1.0
-        for j, wid in enumerate(wids):
-            if word_alphabet.is_singleton(wid):
-                single[i, j] = 1
-    if mask_out_root:
-        masks[:,0] = 0
-
-    words = torch.from_numpy(wid_inputs)
-    chars = torch.from_numpy(cid_inputs)
-    pos = torch.from_numpy(pid_inputs)
-    heads = torch.from_numpy(hid_inputs)
-    types = torch.from_numpy(tid_inputs)
-    masks = torch.from_numpy(masks)
-    single = torch.from_numpy(single)
-    lengths = torch.from_numpy(lengths)
-    pres = torch.from_numpy(preid_inputs)
-
-    data_tensor = {'WORD': words, 'CHAR': chars, 'POS': pos, 'HEAD': heads, 'TYPE': types,
-                   'MASK': masks, 'SINGLE': single, 'LENGTH': lengths, 'SRC': np.array(src_words),
-                   'PRETRAINED': pres}
-    return data_tensor, data_size
-
-
-def read_bucketed_data(source_paths: [str], word_alphabet: Alphabet, char_alphabet: Alphabet, pos_alphabet: Alphabet, type_alphabet: Alphabet,
-                       pre_alphabet=None, max_size=None, normalize_digits=True, symbolic_root=False, symbolic_end=False,
-                       mask_out_root=False, pos_idx=4):
-    data = [[] for _ in _buckets]
-    max_char_length = [0 for _ in _buckets]
-    counter = 0
-    src_words = [[] for _ in _buckets]
-
-    for set_id, source_path in enumerate(source_paths):
-        print('Reading data from %s' % source_path)
-        reader = CoNLLXReader(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, 
-                              pre_alphabet=pre_alphabet, pos_idx=pos_idx)
-        inst = reader.getNext(normalize_digits=normalize_digits, symbolic_root=symbolic_root, symbolic_end=symbolic_end)
-        while inst is not None and (not max_size or counter < max_size):
-            counter += 1
-            if counter % 10000 == 0:
-                print("reading data: %d" % counter)
-
-            inst_size = inst.length()
-            sent = inst.sentence
-            for bucket_id, bucket_size in enumerate(_buckets):
-                if inst_size < bucket_size:
-                    data[bucket_id].append([sent.word_ids, sent.char_id_seqs, inst.pos_ids, inst.heads, inst.type_ids, sent.pre_ids])
-                    src_words[bucket_id].append(sent.words)
-                    max_len = max([len(char_seq) for char_seq in sent.char_seqs])
-                    if max_char_length[bucket_id] < max_len:
-                        max_char_length[bucket_id] = max_len
-                    break
-
-            inst = reader.getNext(normalize_digits=normalize_digits, symbolic_root=symbolic_root, symbolic_end=symbolic_end)
-        reader.close()
-
-
-    print("Total number of data: %d" % counter)
-
-    bucket_sizes = [len(data[b]) for b in range(len(_buckets))]
-    data_tensors = []
-    for bucket_id in range(len(_buckets)):
-        bucket_size = bucket_sizes[bucket_id]
-        if bucket_size == 0:
-            data_tensors.append((1, 1))
-            continue
-
-        bucket_length = _buckets[bucket_id]
-        char_length = min(MAX_CHAR_LENGTH, max_char_length[bucket_id])
-        wid_inputs = np.empty([bucket_size, bucket_length], dtype=np.int64)
-        cid_inputs = np.empty([bucket_size, bucket_length, char_length], dtype=np.int64)
-        pid_inputs = np.empty([bucket_size, bucket_length], dtype=np.int64)
-        hid_inputs = np.empty([bucket_size, bucket_length], dtype=np.int64)
-        tid_inputs = np.empty([bucket_size, bucket_length], dtype=np.int64)
-        preid_inputs = np.empty([bucket_size, bucket_length], dtype=np.int64)
-
-        masks = np.zeros([bucket_size, bucket_length], dtype=np.float32)
-        single = np.zeros([bucket_size, bucket_length], dtype=np.int64)
-        lengths = np.empty(bucket_size, dtype=np.int64)
-
-        for i, inst in enumerate(data[bucket_id]):
+        for i, inst in enumerate(data):
             wids, cid_seqs, pids, hids, tids, preids = inst
             inst_size = len(wids)
             lengths[i] = inst_size
@@ -340,7 +235,119 @@ def read_bucketed_data(source_paths: [str], word_alphabet: Alphabet, char_alphab
         pres = torch.from_numpy(preid_inputs)
 
         data_tensor = {'WORD': words, 'CHAR': chars, 'POS': pos, 'HEAD': heads, 'TYPE': types,
-                       'MASK': masks, 'SINGLE': single, 'LENGTH': lengths, 'PRETRAINED': pres,
-                       'SRC': np.array(src_words[bucket_id])}
-        data_tensors.append(data_tensor)
-    return data_tensors, bucket_sizes
+                       'MASK': masks, 'SINGLE': single, 'LENGTH': lengths, 'SRC': np.array(src_words),
+                       'PRETRAINED': pres, 'LANG': lan_alphabet.get_index(lans[set_id])}
+        all_tensors.append(data_tensor)
+    return all_tensors, data_sizes
+
+
+def read_bucketed_data(source_paths: [str], word_alphabet: Alphabet, char_alphabet: Alphabet, pos_alphabet: Alphabet, type_alphabet: Alphabet,
+                       pre_alphabet=None, max_size=None, normalize_digits=True, symbolic_root=False, symbolic_end=False,
+                       mask_out_root=False, pos_idx=4, lans=['en'], lan_alphabet=None):
+    
+    all_tensors = []
+    all_bucket_sizes = []
+    for set_id, source_path in enumerate(source_paths):
+        data = [[] for _ in _buckets]
+        max_char_length = [0 for _ in _buckets]
+        counter = 0
+        src_words = [[] for _ in _buckets]
+        print('Reading language %s data from %s' % (lans[set_id], source_path))
+        reader = CoNLLXReader(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, 
+                              pre_alphabet=pre_alphabet, pos_idx=pos_idx)
+        inst = reader.getNext(normalize_digits=normalize_digits, symbolic_root=symbolic_root, symbolic_end=symbolic_end)
+        while inst is not None and (not max_size or counter < max_size):
+            counter += 1
+            if counter % 10000 == 0:
+                print("reading data: %d" % counter)
+
+            inst_size = inst.length()
+            sent = inst.sentence
+            for bucket_id, bucket_size in enumerate(_buckets):
+                if inst_size < bucket_size:
+                    data[bucket_id].append([sent.word_ids, sent.char_id_seqs, inst.pos_ids, inst.heads, inst.type_ids, sent.pre_ids])
+                    src_words[bucket_id].append(sent.words)
+                    max_len = max([len(char_seq) for char_seq in sent.char_seqs])
+                    if max_char_length[bucket_id] < max_len:
+                        max_char_length[bucket_id] = max_len
+                    break
+
+            inst = reader.getNext(normalize_digits=normalize_digits, symbolic_root=symbolic_root, symbolic_end=symbolic_end)
+        reader.close()
+
+        print("Total number of data: %d" % counter)
+
+        bucket_sizes = [len(data[b]) for b in range(len(_buckets))]
+        all_bucket_sizes.append(bucket_sizes)
+        data_tensors = []
+        for bucket_id in range(len(_buckets)):
+            bucket_size = bucket_sizes[bucket_id]
+            if bucket_size == 0:
+                data_tensors.append((1, 1))
+                continue
+
+            bucket_length = _buckets[bucket_id]
+            char_length = min(MAX_CHAR_LENGTH, max_char_length[bucket_id])
+            wid_inputs = np.empty([bucket_size, bucket_length], dtype=np.int64)
+            cid_inputs = np.empty([bucket_size, bucket_length, char_length], dtype=np.int64)
+            pid_inputs = np.empty([bucket_size, bucket_length], dtype=np.int64)
+            hid_inputs = np.empty([bucket_size, bucket_length], dtype=np.int64)
+            tid_inputs = np.empty([bucket_size, bucket_length], dtype=np.int64)
+            preid_inputs = np.empty([bucket_size, bucket_length], dtype=np.int64)
+
+            masks = np.zeros([bucket_size, bucket_length], dtype=np.float32)
+            single = np.zeros([bucket_size, bucket_length], dtype=np.int64)
+            lengths = np.empty(bucket_size, dtype=np.int64)
+
+            for i, inst in enumerate(data[bucket_id]):
+                wids, cid_seqs, pids, hids, tids, preids = inst
+                inst_size = len(wids)
+                lengths[i] = inst_size
+                # word ids
+                wid_inputs[i, :inst_size] = wids
+                wid_inputs[i, inst_size:] = PAD_ID_WORD
+                if pre_alphabet:
+                    preid_inputs[i, :inst_size] = preids
+                    preid_inputs[i, inst_size:] = PAD_ID_WORD
+                for c, cids in enumerate(cid_seqs):
+                    cid_inputs[i, c, :len(cids)] = cids
+                    cid_inputs[i, c, len(cids):] = PAD_ID_CHAR
+                cid_inputs[i, inst_size:, :] = PAD_ID_CHAR
+                # pos ids
+                pid_inputs[i, :inst_size] = pids
+                pid_inputs[i, inst_size:] = PAD_ID_TAG
+                # type ids
+                tid_inputs[i, :inst_size] = tids
+                tid_inputs[i, inst_size:] = PAD_ID_TAG
+                # heads
+                hid_inputs[i, :inst_size] = hids
+                hid_inputs[i, inst_size:] = PAD_ID_TAG
+                # masks
+                if symbolic_end:
+                    # mask out the end token
+                    masks[i, :inst_size-1] = 1.0
+                else:
+                    masks[i, :inst_size] = 1.0
+                for j, wid in enumerate(wids):
+                    if word_alphabet.is_singleton(wid):
+                        single[i, j] = 1
+            if mask_out_root:
+                masks[:,0] = 0
+
+            words = torch.from_numpy(wid_inputs)
+            chars = torch.from_numpy(cid_inputs)
+            pos = torch.from_numpy(pid_inputs)
+            heads = torch.from_numpy(hid_inputs)
+            types = torch.from_numpy(tid_inputs)
+            masks = torch.from_numpy(masks)
+            single = torch.from_numpy(single)
+            lengths = torch.from_numpy(lengths)
+            pres = torch.from_numpy(preid_inputs)
+
+            data_tensor = {'WORD': words, 'CHAR': chars, 'POS': pos, 'HEAD': heads, 'TYPE': types,
+                           'MASK': masks, 'SINGLE': single, 'LENGTH': lengths, 'PRETRAINED': pres,
+                           'SRC': np.array(src_words[bucket_id]), 
+                           'LANG': lan_alphabet.get_index(lans[set_id])}
+            data_tensors.append(data_tensor)
+        all_tensors.append(data_tensors)
+    return all_tensors, all_bucket_sizes

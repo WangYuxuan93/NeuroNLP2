@@ -112,7 +112,7 @@ def load_embedding_dict(embedding, embedding_path, normalize_digits=True):
 def create_alphabet_from_embedding(alphabet_directory, embedd_dict, vocabs, max_vocabulary_size=100000):
     _START_VOCAB = [PAD, ROOT, END]
     logger = get_logger("Create Pretrained Alphabets")
-    pretrained_alphabet = Alphabet('pretrained', defualt_value=True)
+    pretrained_alphabet = Alphabet('pretrained', default_value=True)
     file = os.path.join(alphabet_directory, 'pretrained.json')
     if not os.path.exists(file):
         logger.info("Creating Pretrained Alphabets: %s" % alphabet_directory)
@@ -142,3 +142,21 @@ def create_alphabet_from_embedding(alphabet_directory, embedd_dict, vocabs, max_
     pretrained_alphabet.close()
 
     return pretrained_alphabet
+
+def creat_language_alphabet(alphabet_directory, languages):
+    logger = get_logger("Create Language Alphabets")
+    lan_alphabet = Alphabet('language', default_value=True)
+    file = os.path.join(alphabet_directory, 'language.json')
+    if not os.path.exists(file):
+        logger.info("Creating Language Alphabets: %s" % alphabet_directory)
+        for l in languages:
+            lan_alphabet.add(l)
+        lan_alphabet.save(alphabet_directory)
+    else:
+        lan_alphabet.load(alphabet_directory)
+    #print (lan_alphabet.items())
+    logger.info("Total Languages: %d" % (lan_alphabet.size()))
+        
+    lan_alphabet.close()
+
+    return lan_alphabet

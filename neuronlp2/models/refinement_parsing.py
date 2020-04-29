@@ -16,6 +16,7 @@ from neuronlp2.nn.dropout import drop_input_independent
 from torch.autograd import Variable
 from transformers import *
 import itertools
+from neuronlp2.nn.cpg_lstm import CPG_LSTM
 
 class PositionEmbeddingLayer(nn.Module):
     def __init__(self, embedding_size, dropout_prob=0, max_position_embeddings=256):
@@ -47,7 +48,7 @@ class RefinementParser(nn.Module):
     def __init__(self, hyps, num_pretrained, num_words, num_chars, num_pos, num_labels,
                  device=torch.device('cpu'), basic_word_embedding=True, 
                  embedd_word=None, embedd_char=None, embedd_pos=None,
-                 pretrained_lm='none', lm_path=None):
+                 pretrained_lm='none', lm_path=None, num_lans=1):
         super(RefinementParser, self).__init__()
         
         self.hyps = hyps
@@ -163,6 +164,16 @@ class RefinementParser(nn.Module):
             self.basic_parameters.append(self.input_encoder)
             out_dim = hidden_size * 2
             logger.info("dropout(p_rnn): (%.2f, %.2f)" % (p_rnn[0], p_rnn[1]))
+        elif input_encoder_name == 'CPGLSTM':
+            lan_emb_size = hyps['input_encoder']['lan_emb_size']
+            self.language_embed = nn.Embedding(num_lans, lan_emb_size)
+            self.basic_parameters.append(self.language_embed)
+            self.input_encoder = CPG_LSTM(enc_dim, hidden_size, lan_emb_size, num_layers=num_layers, 
+                                    batch_first=True, bidirectional=True, dropout_in=p_rnn[0], dropout_out=p_rnn[1])
+            self.basic_parameters.append(self.input_encoder)
+            out_dim = hidden_size * 2
+            logger.info("dropout(p_rnn): (%.2f, %.2f)" % (p_rnn[0], p_rnn[1]))
+            logger.info("Langauge embedding size: %d" % lan_emb_size)
         elif input_encoder_name == 'Transformer':
             num_attention_heads = hyps['input_encoder']['num_attention_heads']
             intermediate_size = hyps['input_encoder']['intermediate_size']
@@ -319,6 +330,8 @@ class RefinementParser(nn.Module):
             nn.init.uniform_(self.pos_embed.weight, -0.1, 0.1)
         if self.basic_word_embed is not None:
             nn.init.uniform_(self.basic_word_embed.weight, -0.1, 0.1)
+        if self.language_embed is not None:
+            nn.init.uniform_(self.language_embed.weight, -0.1, 0.1)
 
         with torch.no_grad():
             if self.word_embed is not None:
@@ -422,7 +435,7 @@ class RefinementParser(nn.Module):
 
         return enc
 
-    def _input_encoder(self, embeddings, mask=None):
+    def _input_encoder(self, embeddings, mask=None, lan_id=None):
         
         #print ("input_word:\n", input_word)
         #print ("input_pretrained:\n", input_pretrained)
@@ -444,7 +457,12 @@ class RefinementParser(nn.Module):
             all_encoder_layers = self.input_encoder(embeddings, mask)
             # [batch, length, hidden_size]
             output = all_encoder_layers[-1]
-        else:
+        elif self.input_encoder_name == 'CPGLSTM':
+            enc = self.dropout_in(embeddings.transpose(1, 2)).transpose(1, 2)
+            lan_emb = self.language_embed(lan_id)
+            print (lan_emb)
+            output, _ = self.input_encoder(lan_emb, enc, mask)
+        else: # for 'FastLSTM'
             # sequence shared mask dropout
             enc = self.dropout_in(embeddings.transpose(1, 2)).transpose(1, 2)
             output, _ = self.input_encoder(enc, mask)
@@ -602,7 +620,8 @@ class RefinementParser(nn.Module):
         return graph_matrix.detach()
 
 
-    def forward(self, input_word, input_pretrained, input_char, input_pos, heads, rels, bpes=None, first_idx=None, mask=None):
+    def forward(self, input_word, input_pretrained, input_char, input_pos, heads, rels, 
+                bpes=None, first_idx=None, mask=None, lan_id=None):
         # Pre-process
         batch_size, seq_len = input_word.size()
         # (batch, seq_len), seq mask, where at position 0 is 0
@@ -622,7 +641,7 @@ class RefinementParser(nn.Module):
         # (batch, seq_len, embed_size)
         embeddings = self._embed(input_word, input_pretrained, input_char, input_pos, bpes=bpes, first_idx=first_idx)
         # (batch, seq_len, hidden_size)
-        _encoder_output = self._input_encoder(embeddings, mask=mask)
+        _encoder_output = self._input_encoder(embeddings, mask=mask, lan_id=lan_id)
         for n_layer in range(self.refine_layers):
             if n_layer == 0:
                 encoder_output = _encoder_output
@@ -709,7 +728,8 @@ class RefinementParser(nn.Module):
         return (final_arc_loss, final_rel_loss), (arc_losses, rel_losses), statistics
 
 
-    def decode(self, input_word, input_pretrained, input_char, input_pos, mask=None, bpes=None, first_idx=None, leading_symbolic=0):
+    def decode(self, input_word, input_pretrained, input_char, input_pos, mask=None, 
+                bpes=None, first_idx=None, lan_id=None, leading_symbolic=0):
         """
         Args:
             input_word: Tensor
@@ -739,7 +759,7 @@ class RefinementParser(nn.Module):
         # (batch, seq_len, embed_size)
         embeddings = self._embed(input_word, input_pretrained, input_char, input_pos, bpes=bpes, first_idx=first_idx)
         # (batch, seq_len, hidden_size)
-        _encoder_output = self._input_encoder(embeddings, mask=mask)
+        _encoder_output = self._input_encoder(embeddings, mask=mask, lan_id=lan_id)
         for n_layer in range(self.refine_layers):
             if n_layer == 0:
                 encoder_output = _encoder_output
