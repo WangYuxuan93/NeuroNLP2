@@ -13,5 +13,6 @@ CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=4 python -u refinement_parser.py --mode 
  --test "data/ptb_two_auto.conll" \
  --lan_train en:de:it --lan_dev en:de --lan_test en \
  --model_path "models/parsing/refine" \
+ #--mix_datasets \
  #--punctuation 'PUNCT' --pos_idx 3 \
  #--freeze --basic_word_embedding 

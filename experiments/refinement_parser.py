@@ -381,7 +381,7 @@ def train(args):
     aux_loss_weight = hyps['refinement']['aux_interpolation']
     refine_layers = hyps['refinement']['num_layers']
     num_lans = 1
-    if hyps['input_encoder']['name'] == 'CPGLSTM':
+    if not args.mix_datasets:
         lans_train = args.lan_train.split(':')
         lans_dev = args.lan_dev.split(':')
         lans_test = args.lan_test.split(':')
@@ -439,7 +439,7 @@ def train(args):
 
     logger.info("Reading Data")
     if alg == 'graph':
-        if hyps['input_encoder']['name'] == 'CPGLSTM':
+        if not args.mix_datasets:
             data_train = data_reader.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, 
                                                         normalize_digits=args.normalize_digits, symbolic_root=True,
                                                         pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx,
@@ -463,7 +463,7 @@ def train(args):
                                                         normalize_digits=args.normalize_digits, symbolic_root=True,
                                                         pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
     
-    if hyps['input_encoder']['name'] == 'CPGLSTM':
+    if not args.mix_datasets:
         num_data = sum([sum(d) for d in data_train[1]])
     else:
         num_data = sum(data_train[1])
@@ -515,7 +515,7 @@ def train(args):
         opt_info = 'adam, betas=(%.1f, %.3f), eps=%.1e' % (betas[0], betas[1], eps)
     elif optim == 'sgd':
         opt_info = 'sgd, momentum=0.9, nesterov=True'
-    if hyps['input_encoder']['name'] == 'CPGLSTM':
+    if not args.mix_datasets:
         iterate = multi_language_iterate_data
         multi_lan_iter = True
     else:
@@ -547,7 +547,7 @@ def train(args):
         gc.collect()
         #for step, data in enumerate(iterate_data(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True)):
         for step, data in enumerate(iterate(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True, switch_lan=True)):
-            if hyps['input_encoder']['name'] == 'CPGLSTM':
+            if not args.mix_datasets:
                 lan_id, data = data
                 lan_id = torch.LongTensor([lan_id]).to(device)
                 #print ("lan_id:",lan_id)
@@ -769,16 +769,22 @@ def parse(args):
     logger = get_logger("Parsing")
     args.cuda = torch.cuda.is_available()
     device = torch.device('cuda', 0) if args.cuda else torch.device('cpu')
+    data_format = args.format
     if data_format == 'conllx':
         data_reader = conllx_data
         test_path = args.test
     elif data_format == 'ud':
         data_reader = ud_data
         test_path = args.test.split(':')
+    else:
+        print ("### Unrecognized data formate: %s ###" % data_format)
+        exit()
 
     model_path = args.model_path
     model_name = os.path.join(model_path, 'model.pt')
     punctuation = args.punctuation
+    pretrained_lm = args.pretrained_lm
+    lm_path = args.lm_path
     print(args)
 
     logger.info("Creating Alphabets")
@@ -786,11 +792,13 @@ def parse(args):
     assert os.path.exists(alphabet_path)
     word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = data_reader.create_alphabets(alphabet_path, None, 
                                     normalize_digits=args.normalize_digits, pos_idx=args.pos_idx)
+    pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path)
 
     num_words = word_alphabet.size()
     num_chars = char_alphabet.size()
     num_pos = pos_alphabet.size()
     num_rels = rel_alphabet.size()
+    num_pretrained = pretrained_alphabet.size()
 
     logger.info("Word Alphabet Size: %d" % num_words)
     logger.info("Character Alphabet Size: %d" % num_chars)
@@ -810,14 +818,17 @@ def parse(args):
     hyps = json.load(open(os.path.join(model_path, 'config.json'), 'r'))
     model_type = hyps['model']
     assert model_type in ['Refinement']
-    assert word_dim == hyps['input']['word_dim']
-    if char_dim is not None:
-        assert char_dim == hyps['input']['char_dim']
-    else:
-        char_dim = hyps['input']['char_dim']
-    loss_interpolation = hyps['biaffine']['loss_interpolation']
     use_null_att_pos=hyps['graph_encoder']['use_null_att_pos']
-    hidden_size = hyps['input_encoder']['hidden_size']
+
+    num_lans = 1
+    if not args.mix_datasets:
+        lans_train = args.lan_train.split(':')
+        lans_dev = args.lan_dev.split(':')
+        lans_test = args.lan_test.split(':')
+        #languages = set(lans_train + lans_dev + lans_test)
+        language_alphabet = utils.creat_language_alphabet(alphabet_path)
+        num_lans = language_alphabet.size()
+        data_reader = multi_ud_data
 
     if args.pretrained_lm == 'xlm-r':
         tokenizer = XLMRobertaTokenizer.from_pretrained(lm_path)
@@ -827,8 +838,9 @@ def parse(args):
     alg = 'graph'
     if model_type == 'Refinement':
         network = RefinementParser(hyps, num_pretrained, num_words, num_chars, num_pos,
-                               num_rels, device=device, basic_word_embedding=basic_word_embedding, 
-                               pretrained_lm=args.pretrained_lm, lm_path=args.lm_path)
+                               num_rels, device=device, basic_word_embedding=args.basic_word_embedding, 
+                               pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
+                               num_lans=num_lans)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
 
@@ -837,23 +849,39 @@ def parse(args):
 
     logger.info("Reading Data")
     if alg == 'graph':
-        data_test = data_reader.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, 
+        if not args.mix_datasets:
+            data_test = data_reader.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, 
+                                            rel_alphabet, normalize_digits=args.normalize_digits, 
+                                            symbolic_root=True, pre_alphabet=pretrained_alphabet, 
+                                            pos_idx=args.pos_idx, lans=lans_test, 
+                                            lan_alphabet=language_alphabet)
+        else:
+            data_test = data_reader.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, 
                                           rel_alphabet, normalize_digits=args.normalize_digits, 
-                                          symbolic_root=True, pos_idx=args.pos_idx)
+                                          symbolic_root=True, pre_alphabet=pretrained_alphabet, 
+                                          pos_idx=args.pos_idx)
 
     beam = args.beam
     pred_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
     gold_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
-    pred_filename = os.path.join(result_path, 'pred.txt')
+    if args.output_filename:
+        pred_filename = args.output_filename
+    else:
+        pred_filename = os.path.join(result_path, 'pred.txt')
     pred_writer.start(pred_filename)
-    gold_filename = os.path.join(result_path, 'gold.txt')
+    #gold_filename = os.path.join(result_path, 'gold.txt')
     #gold_writer.start(gold_filename)
 
+    if not args.mix_datasets:
+        multi_lan_iter = True
+    else:
+        multi_lan_iter = False
     with torch.no_grad():
         print('Parsing...')
         start_time = time.time()
         eval(alg, data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, 
-            pos_alphabet, device, beam, batch_size=args.batch_size, tokenizer=tokenizer)
+            pos_alphabet, device, beam, batch_size=args.batch_size, tokenizer=tokenizer, 
+            multi_lan_iter=multi_lan_iter)
         print('Time: %.2fs' % (time.time() - start_time))
 
     pred_writer.close()
@@ -899,6 +927,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--lm_path', help='path for pretrained language model')
     args_parser.add_argument('--lm_lr', type=float, default=2e-5, help='Learning rate of pretrained language model')
     args_parser.add_argument('--normalize_digits', default=False, action='store_true', help='normalize digits to 0 ?')
+    args_parser.add_argument('--mix_datasets', default=False, action='store_true', help='Mix dataset from different languages ? (should be False for CPGLSTM)')
     args_parser.add_argument('--format', type=str, choices=['conllx', 'ud'], default='conllx', help='data format')
     args_parser.add_argument('--lan_train', type=str, default='en', help='lc for training files (split with \':\')')
     args_parser.add_argument('--lan_dev', type=str, default='en', help='lc for dev files (split with \':\')')
@@ -907,6 +936,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--dev', help='path for dev file.')
     args_parser.add_argument('--test', help='path for test file.', required=True)
     args_parser.add_argument('--model_path', help='path for saving model file.', required=True)
+    args_parser.add_argument('--output_filename', type=str, help='output filename for parse')
 
     args = args_parser.parse_args()
     if args.mode == 'train':
