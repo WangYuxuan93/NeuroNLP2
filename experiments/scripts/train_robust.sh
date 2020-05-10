@@ -8,10 +8,10 @@ CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=4 python -u robust_parser.py --mode trai
  --pretrained_lm none --lm_path "/mnt/hgfs/share/xlm-roberta-base" --noscreen \
  --punctuation '.' '``' "''" ':' ',' \
  --format ud \
- --train "data/ptb_two_auto.conll" \
- --dev "data/ptb_two_auto.conll" \
+ --train "data/ptb_two_auto.conll:data/ptb_small_auto.conll:data/ptb_two_auto.conll" \
+ --dev "data/ptb_two_auto.conll:data/ptb_small_auto.conll" \
  --test "data/ptb_two_auto.conll" \
- --lan_train en --lan_dev en --lan_test en \
+ --lan_train en:de:it --lan_dev en:de --lan_test en \
  --model_path "models/parsing/robust" \
  #--mix_datasets \
  #--punctuation 'PUNCT' --pos_idx 3 \

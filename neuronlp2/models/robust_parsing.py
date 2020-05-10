@@ -80,6 +80,8 @@ class RobustParser(nn.Module):
         hidden_size = hyps['input_encoder']['hidden_size']
         num_layers = hyps['input_encoder']['num_layers']
         p_rnn = hyps['input_encoder']['p_rnn']
+        self.lan_emb_as_input = hyps['input_encoder']['lan_emb_as_input']
+        lan_emb_size = hyps['input_encoder']['lan_emb_size']
         #self.end_word_id = end_word_id
 
         logger = get_logger("Network")
@@ -89,7 +91,7 @@ class RobustParser(nn.Module):
         logger.info("dropout(in, out): (%.2f, %.2f)" % (p_in, p_out))
         logger.info("Use Randomly Init Word Emb: %s" % (basic_word_embedding))
         logger.info("##### Input Encoder (Type: %s, Layer: %d, Hidden: %d) #####" % (input_encoder_name, num_layers, hidden_size))
-
+        logger.info("Langauge embedding as input: %s (size: %d)" % (self.lan_emb_as_input, lan_emb_size))
         # Initialization
         # to collect all params other than langauge model
         self.basic_parameters = []
@@ -116,6 +118,12 @@ class RobustParser(nn.Module):
             self.word_embed = nn.Embedding(num_words, word_dim, _weight=embedd_word, padding_idx=1)
             self.basic_parameters.append(self.word_embed)
 
+        if self.lan_emb_as_input or input_encoder_name == 'CPGLSTM':
+            self.language_embed = nn.Embedding(num_lans, lan_emb_size)
+            self.basic_parameters.append(self.language_embed)
+        else:
+            self.language_embed = None
+
         #self.word_embed.weight.requires_grad=False
         self.pos_embed = nn.Embedding(num_pos, pos_dim, _weight=embedd_pos, padding_idx=1) if use_pos else None
         self.basic_parameters.append(self.pos_embed)
@@ -136,12 +144,13 @@ class RobustParser(nn.Module):
             enc_dim = lm_hidden_size
         else:
             enc_dim = word_dim
+        if self.lan_emb_as_input:
+            enc_dim += lan_emb_size
         if use_char:
             enc_dim += char_dim
         if use_pos:
             enc_dim += pos_dim
 
-        self.language_embed = None
         self.input_encoder_name = input_encoder_name
         if input_encoder_name == 'Linear':
             self.input_encoder = nn.Linear(enc_dim, hidden_size)
@@ -156,9 +165,6 @@ class RobustParser(nn.Module):
             out_dim = hidden_size * 2
             logger.info("dropout(p_rnn): (%.2f, %.2f)" % (p_rnn[0], p_rnn[1]))
         elif input_encoder_name == 'CPGLSTM':
-            lan_emb_size = hyps['input_encoder']['lan_emb_size']
-            self.language_embed = nn.Embedding(num_lans, lan_emb_size)
-            self.basic_parameters.append(self.language_embed)
             self.input_encoder = CPG_LSTM(enc_dim, hidden_size, lan_emb_size, num_layers=num_layers, 
                                     batch_first=True, bidirectional=True, dropout_in=p_rnn[0], dropout_out=p_rnn[1])
             self.basic_parameters.append(self.input_encoder)
@@ -302,8 +308,9 @@ class RobustParser(nn.Module):
             print (output.size())
         return output
 
-    def _embed(self, input_word, input_pretrained, input_char, input_pos, bpes=None, first_idx=None):
-
+    def _embed(self, input_word, input_pretrained, input_char, input_pos, bpes=None, 
+                first_idx=None, lan_id=None):
+        batch_size, seq_len = input_word.size()
         if not self.pretrained_lm == 'none':
             enc_word = self._lm_embed(bpes, first_idx)
         elif self.basic_word_embedding:
@@ -319,6 +326,13 @@ class RobustParser(nn.Module):
             # if not basic word emb, still use input_word as index
             pre_word = self.word_embed(input_word)
             enc_word = pre_word
+
+        if self.lan_emb_as_input:
+            # (lan_emb_size)
+            lan_emb = self.language_embed(lan_id)
+            #print (lan_id, '\n', lan_emb)
+            lan_emb = lan_emb.unsqueeze(1).expand(batch_size, seq_len, -1)
+            enc_word = torch.cat([enc_word, lan_emb], dim=2)
 
         if self.char_embed is not None:
             # [batch, length, char_length, char_dim]
@@ -476,7 +490,8 @@ class RobustParser(nn.Module):
         rels_3D.scatter_(-1, heads.unsqueeze(-1), rels.unsqueeze(-1))
 
         # (batch, seq_len, embed_size)
-        embeddings = self._embed(input_word, input_pretrained, input_char, input_pos, bpes=bpes, first_idx=first_idx)
+        embeddings = self._embed(input_word, input_pretrained, input_char, input_pos, 
+                                bpes=bpes, first_idx=first_idx, lan_id=lan_id)
         # (batch, seq_len, hidden_size)
         encoder_output = self._input_encoder(embeddings, mask=mask, lan_id=lan_id)
 
@@ -544,7 +559,8 @@ class RobustParser(nn.Module):
         root_mask = torch.arange(seq_len, device=input_word.device).gt(0).float().unsqueeze(0) * mask
 
         # (batch, seq_len, embed_size)
-        embeddings = self._embed(input_word, input_pretrained, input_char, input_pos, bpes=bpes, first_idx=first_idx)
+        embeddings = self._embed(input_word, input_pretrained, input_char, input_pos, 
+                                bpes=bpes, first_idx=first_idx, lan_id=lan_id)
         # (batch, seq_len, hidden_size)
         encoder_output = self._input_encoder(embeddings, mask=mask, lan_id=lan_id) 
         
