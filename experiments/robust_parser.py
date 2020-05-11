@@ -388,6 +388,8 @@ def train(args):
         data_reader = multi_ud_data
     if pretrained_lm == 'bert':
         tokenizer = BertTokenizer.from_pretrained(lm_path)
+    elif pretrained_lm == 'roberta':
+        tokenizer = RobertaTokenizer.from_pretrained(lm_path)
     elif pretrained_lm == 'electra':
         tokenizer = ElectraTokenizer.from_pretrained(lm_path)
     elif pretrained_lm == 'xlm-r':
@@ -803,6 +805,8 @@ def parse(args):
 
     if pretrained_lm == 'bert':
         tokenizer = BertTokenizer.from_pretrained(lm_path)
+    elif pretrained_lm == 'roberta':
+        tokenizer = RobertaTokenizer.from_pretrained(lm_path)
     elif pretrained_lm == 'electra':
         tokenizer = ElectraTokenizer.from_pretrained(lm_path)
     elif pretrained_lm == 'xlm-r':
@@ -898,7 +902,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--word_path', help='path for word embedding dict')
     args_parser.add_argument('--char_embedding', choices=['random', 'polyglot'], help='Embedding for characters')
     args_parser.add_argument('--char_path', help='path for character embedding dict')
-    args_parser.add_argument('--pretrained_lm', default='none', choices=['none', 'bert', 'xlm-r', 'electra'], help='Pre-trained language model')
+    args_parser.add_argument('--pretrained_lm', default='none', choices=['none', 'bert', 'roberta', 'xlm-r', 'electra'], help='Pre-trained language model')
     args_parser.add_argument('--lm_path', help='path for pretrained language model')
     args_parser.add_argument('--lm_lr', type=float, default=2e-5, help='Learning rate of pretrained language model')
     args_parser.add_argument('--normalize_digits', default=False, action='store_true', help='normalize digits to 0 ?')

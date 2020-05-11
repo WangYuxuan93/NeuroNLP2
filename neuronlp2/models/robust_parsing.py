@@ -98,6 +98,8 @@ class RobustParser(nn.Module):
         if not self.pretrained_lm == 'none':
             if self.pretrained_lm == 'bert':
                 self.lm_encoder = BertModel.from_pretrained(lm_path)
+            elif self.pretrained_lm == 'roberta':
+                self.lm_encoder = RobertaModel.from_pretrained(lm_path)
             elif self.pretrained_lm == 'electra':
                 self.lm_encoder = ElectraModel.from_pretrained(lm_path)
             elif self.pretrained_lm == 'xlm-r':
