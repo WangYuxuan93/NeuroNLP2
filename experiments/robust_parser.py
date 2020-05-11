@@ -65,9 +65,9 @@ def convert_tokens_to_ids(tokenizer, tokens):
             if token == PAD:
                 token = tokenizer.pad_token
             elif token == ROOT:
-                token = tokenizer.bos_token
+                token = tokenizer.cls_token
             elif token == END:
-                token = tokenizer.eos_token
+                token = tokenizer.sep_token
             wordpiece = tokenizer.tokenize(token)
             # add 1 for cls_token <s>
             first_index_list.append(len(wordpiece_list)+1)
