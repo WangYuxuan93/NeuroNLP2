@@ -791,7 +791,6 @@ def parse(args):
     hyps = json.load(open(os.path.join(model_path, 'config.json'), 'r'))
     model_type = hyps['model']
     assert model_type in ['Robust']
-    use_null_att_pos=hyps['graph_encoder']['use_null_att_pos']
 
     num_lans = 1
     if not args.mix_datasets:
