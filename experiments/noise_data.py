@@ -123,16 +123,24 @@ class NoiseInjector(object):
 
 
 def save_file(filename, contents):
+    cnt = {"O":0, "R":0, "I":0, "S":0}
     with open(filename, 'w') as ofile:
         for (data, label) in contents:
             for token, lab in zip(data, label):
+                cnt[lab] += 1
                 ofile.write(token+' '+lab+'\n')
             ofile.write('\n')
+    print (cnt)
 
 # make noise from filename
 def noise(filename, output):
     lines = open(filename).readlines()
-    tgts = [tokenize_line(line.strip()) for line in lines]
+    tgts_ = [tokenize_line(line.strip()) for line in lines]
+    tgts = []
+    for tgt in tgts_:
+      if tgt:
+        tgts.append(tgt)
+    print (len(tgts_), len(tgts))
     noise_injector = NoiseInjector(tgts)
     
     datas = []
