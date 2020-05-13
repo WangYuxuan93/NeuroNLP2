@@ -96,6 +96,7 @@ class RobustParser(nn.Module):
         # to collect all params other than langauge model
         self.basic_parameters = []
         if not self.pretrained_lm == 'none':
+            """
             if self.pretrained_lm == 'bert':
                 self.lm_encoder = BertModel.from_pretrained(lm_path)
             elif self.pretrained_lm == 'roberta':
@@ -104,7 +105,15 @@ class RobustParser(nn.Module):
                 self.lm_encoder = ElectraModel.from_pretrained(lm_path)
             elif self.pretrained_lm == 'xlm-r':
                 self.lm_encoder = XLMRobertaModel.from_pretrained(lm_path)
+            """
+            if self.pretrained_lm.startswith('tc_'):
+                config = AutoConfig.from_pretrained(lm_path, output_hidden_states=True)
+                self.lm_encoder = AutoModelForTokenClassification.from_pretrained(lm_path, config=config)
+            else:
+                self.lm_encoder = AutoModel.from_pretrained(lm_path)
             
+            logger.info("Pretrained Language Model Type: %s" % (self.lm_encoder.config.model_type))
+            logger.info("Pretrained Language Model Path: %s" % (lm_path))
             lm_hidden_size = self.lm_encoder.config.hidden_size
             #assert lm_hidden_size == word_dim
             #lm_hidden_size = 768
@@ -300,8 +309,14 @@ class RobustParser(nn.Module):
 
     def _lm_embed(self, input_ids=None, first_index=None, debug=False):
 
-        # (batch, max_bpe_len, hidden_size)
-        lm_output = self.lm_encoder(input_ids)[0]
+        if self.pretrained_lm.startswith('tc_'):
+            # logits: (batch, max_bpe_len, lm_encoder.config.num_labels)
+            logits, all_hidden_states = self.lm_encoder(input_ids)
+            # (batch, max_bpe_len, hidden_size)
+            lm_output = all_hidden_states[-1]
+        else:
+            # (batch, max_bpe_len, hidden_size)
+            lm_output = self.lm_encoder(input_ids)[0]
         size = list(first_index.size()) + [lm_output.size()[-1]]
         # (batch, seq_len, hidden_size)
         output = lm_output.gather(1, first_index.unsqueeze(-1).expand(size))

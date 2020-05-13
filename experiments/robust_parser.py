@@ -386,6 +386,7 @@ def train(args):
         num_lans = language_alphabet.size()
         assert len(languages)+1 == num_lans
         data_reader = multi_ud_data
+    """
     if pretrained_lm == 'bert':
         tokenizer = BertTokenizer.from_pretrained(lm_path)
     elif pretrained_lm == 'roberta':
@@ -396,6 +397,11 @@ def train(args):
         tokenizer = XLMRobertaTokenizer.from_pretrained(lm_path)
     else:
         tokenizer = None
+    """
+    if pretrained_lm == 'none':
+        tokenizer = None
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(lm_path)
 
     alg = 'graph'
     if model_type == 'Robust':
@@ -801,7 +807,7 @@ def parse(args):
         language_alphabet = utils.creat_language_alphabet(alphabet_path)
         num_lans = language_alphabet.size()
         data_reader = multi_ud_data
-
+    """
     if pretrained_lm == 'bert':
         tokenizer = BertTokenizer.from_pretrained(lm_path)
     elif pretrained_lm == 'roberta':
@@ -812,6 +818,11 @@ def parse(args):
         tokenizer = XLMRobertaTokenizer.from_pretrained(lm_path)
     else:
         tokenizer = None
+    """
+    if pretrained_lm == 'none':
+        tokenizer = None
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(lm_path)
 
     alg = 'graph'
     if model_type == 'Robust':
@@ -901,7 +912,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--word_path', help='path for word embedding dict')
     args_parser.add_argument('--char_embedding', choices=['random', 'polyglot'], help='Embedding for characters')
     args_parser.add_argument('--char_path', help='path for character embedding dict')
-    args_parser.add_argument('--pretrained_lm', default='none', choices=['none', 'bert', 'roberta', 'xlm-r', 'electra'], help='Pre-trained language model')
+    args_parser.add_argument('--pretrained_lm', default='none', choices=['none', 'bert', 'roberta', 'xlm-r', 'electra', 'tc_bert', 'tc_robert', 'tc_electra'], help='Pre-trained language model')
     args_parser.add_argument('--lm_path', help='path for pretrained language model')
     args_parser.add_argument('--lm_lr', type=float, default=2e-5, help='Learning rate of pretrained language model')
     args_parser.add_argument('--normalize_digits', default=False, action='store_true', help='normalize digits to 0 ?')
