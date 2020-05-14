@@ -5,7 +5,8 @@
     "pos_dim": 100,
     "char_dim": 100,
     "use_pos": true,
-    "use_char": false
+    "use_char": false,
+    "mask_error_token": true
   },
   "biaffine":{
     "arc_mlp_dim": 500,
@@ -22,7 +23,8 @@
     "num_attention_heads": 4,
     "hidden_size": 400,
     "intermediate_size": 800,
-    "lan_emb_size": 1,
+    "lan_emb_size": 64,
+    "lan_emb_as_input": true,
     "hidden_act": "gelu",
     "dropout_type": "seq",
     "p_rnn": [0.33, 0.33],

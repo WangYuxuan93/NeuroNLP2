@@ -67,6 +67,9 @@ class RobustParser(nn.Module):
         char_dim = hyps['input']['char_dim']
         self.basic_word_embedding = basic_word_embedding
         self.pretrained_lm = pretrained_lm
+        self.mask_error_token = False
+        if self.pretrained_lm.startswith('tc_') and 'mask_error_token' in hyps['input']:
+            self.mask_error_token = hyps['input']['mask_error_token']
         # for biaffine layer
         arc_mlp_dim = hyps['biaffine']['arc_mlp_dim']
         rel_mlp_dim = hyps['biaffine']['rel_mlp_dim']
@@ -114,6 +117,7 @@ class RobustParser(nn.Module):
             
             logger.info("Pretrained Language Model Type: %s" % (self.lm_encoder.config.model_type))
             logger.info("Pretrained Language Model Path: %s" % (lm_path))
+            logger.info("Mask out error tokens: %s" % self.mask_error_token)
             lm_hidden_size = self.lm_encoder.config.hidden_size
             #assert lm_hidden_size == word_dim
             #lm_hidden_size = 768
@@ -306,6 +310,18 @@ class RobustParser(nn.Module):
             nn.init.xavier_uniform_(self.input_encoder.weight)
             nn.init.constant_(self.input_encoder.bias, 0.)
 
+    def _mask_error_token(self, hidden_states, logits, debug=False):
+        # logits: (batch, max_bpe_len)
+        preds = torch.argmax(logits, -1)
+        ones = torch.ones_like(preds)
+        zeros = torch.zeros_like(preds)
+        mask_ = torch.where(preds == zeros, ones, zeros)
+        # (batch, max_bpe_len, hidden_size)
+        mask = mask_.unsqueeze(-1).expand_as(hidden_states)
+        if debug:
+            print ("preds:\n", preds)
+            print ("mask_:\n", mask_)
+        return hidden_states * mask
 
     def _lm_embed(self, input_ids=None, first_index=None, debug=False):
 
@@ -314,6 +330,8 @@ class RobustParser(nn.Module):
             logits, all_hidden_states = self.lm_encoder(input_ids)
             # (batch, max_bpe_len, hidden_size)
             lm_output = all_hidden_states[-1]
+            if self.mask_error_token:
+                lm_output = self._mask_error_token(lm_output, logits)
         else:
             # (batch, max_bpe_len, hidden_size)
             lm_output = self.lm_encoder(input_ids)[0]

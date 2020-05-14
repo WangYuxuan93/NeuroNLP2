@@ -15,12 +15,12 @@ def tokenize_line(line):
 
 class NoiseInjector(object):
 
-    def __init__(self, pos_dict, lem_dict, shuffle_sigma=0.5,
+    def __init__(self, pos_dict, lem_dict, shuffle_sigma=0.35,
                  rep_pos_mean=0.15, rep_pos_std=0.03,
                  rep_lem_mean=0.3, rep_lem_std=0.03,
                  delete_mean=0.1, delete_std=0.03,
                  add_mean=0.1, add_std=0.03,
-                 spell_mean=0.15, spell_std=0.03):
+                 spell_mean=0.1, spell_std=0.03):
         # READ-ONLY, do not modify
         self.pos_dict = pos_dict
         self.lem_dict = lem_dict
