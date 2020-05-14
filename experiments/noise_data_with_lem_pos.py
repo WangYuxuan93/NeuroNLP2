@@ -4,6 +4,7 @@ import shutil
 import json
 import string
 import random
+import sys
 
 SPACE_NORMALIZER = re.compile(r"\s+")
 def tokenize_line(line):
@@ -15,11 +16,11 @@ def tokenize_line(line):
 class NoiseInjector(object):
 
     def __init__(self, pos_dict, lem_dict, shuffle_sigma=0.5,
-                 rep_pos_mean=0.1, rep_pos_std=0.03,
-                 rep_lem_mean=0.1, rep_lem_std=0.03,
+                 rep_pos_mean=0.15, rep_pos_std=0.03,
+                 rep_lem_mean=0.3, rep_lem_std=0.03,
                  delete_mean=0.1, delete_std=0.03,
                  add_mean=0.1, add_std=0.03,
-                 spell_mean=0.1, spell_std=0.03):
+                 spell_mean=0.15, spell_std=0.03):
         # READ-ONLY, do not modify
         self.pos_dict = pos_dict
         self.lem_dict = lem_dict
@@ -201,6 +202,11 @@ def save_file(filename, contents):
                 ofile.write(token+' '+lab+'\n')
             ofile.write('\n')
     print ("\n", cnt)
+    total = sum(list(cnt.values()))
+    percent = {}
+    for key, val in cnt.items():
+        percent[key] = float(val) / total
+    print ("percent: ", percent)
 
 def read_conllu(filename, pos_type):
     sents = []
@@ -251,6 +257,7 @@ if __name__ == '__main__':
     for i, sent in enumerate(sents):
         if i % 100000 == 0:
             print ("%d... "%i, end="")
+            sys.stdout.flush()
         data, label = noise_injector.inject_noise(sent)
         datas.append((data,label))
     
