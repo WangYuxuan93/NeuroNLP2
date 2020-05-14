@@ -124,7 +124,6 @@ class NoiseInjector(object):
                 idx = np.random.randint(len(word))
                 add_char = True if len(word) == 1 or np.random.random() > 0.5 else False
                 if add_char:
-                    print (string.ascii_letters)
                     letter = random.choice(string.ascii_letters)
                     new_word = word[:idx] + letter + word[idx:]
                 else:
@@ -201,7 +200,7 @@ def save_file(filename, contents):
                 cnt[lab] += 1
                 ofile.write(token+' '+lab+'\n')
             ofile.write('\n')
-    print (cnt)
+    print ("\n", cnt)
 
 def read_conllu(filename, pos_type):
     sents = []
@@ -249,7 +248,9 @@ if __name__ == '__main__':
     noise_injector = NoiseInjector(pos_dict, lem_dict)
     
     datas = []
-    for sent in sents:
+    for i, sent in enumerate(sents):
+        if i % 100000 == 0:
+            print ("%d... "%i, end="")
         data, label = noise_injector.inject_noise(sent)
         datas.append((data,label))
     
