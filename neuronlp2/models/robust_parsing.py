@@ -417,10 +417,13 @@ class RobustParser(nn.Module):
             lan_emb = self.language_embed(lan_id)
             #print (lan_emb)
             output, _ = self.input_encoder(lan_emb, enc, mask)
-        else: # for 'FastLSTM'
+        elif self.input_encoder_name == 'FastLSTM': 
+            # for 'FastLSTM'
             # sequence shared mask dropout
             enc = self.dropout_in(embeddings.transpose(1, 2)).transpose(1, 2)
             output, _ = self.input_encoder(enc, mask)
+        elif self.input_encoder_name == 'None':
+            output = embeddings
 
         # apply dropout for output
         # [batch, length, hidden_size] --> [batch, hidden_size, length] --> [batch, length, hidden_size]
