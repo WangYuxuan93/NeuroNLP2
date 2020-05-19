@@ -68,8 +68,11 @@ class RobustParser(nn.Module):
         self.basic_word_embedding = basic_word_embedding
         self.pretrained_lm = pretrained_lm
         self.mask_error_token = False
+        self.mask_error_input = False
         if self.pretrained_lm.startswith('tc_') and 'mask_error_token' in hyps['input']:
             self.mask_error_token = hyps['input']['mask_error_token']
+        if self.pretrained_lm.startswith('tc_') and 'mask_error_input' in hyps['input']:
+            self.mask_error_input = hyps['input']['mask_error_input']
         # for biaffine layer
         arc_mlp_dim = hyps['biaffine']['arc_mlp_dim']
         rel_mlp_dim = hyps['biaffine']['rel_mlp_dim']
@@ -112,12 +115,16 @@ class RobustParser(nn.Module):
             if self.pretrained_lm.startswith('tc_'):
                 config = AutoConfig.from_pretrained(lm_path, output_hidden_states=True)
                 self.lm_encoder = AutoModelForTokenClassification.from_pretrained(lm_path, config=config)
+                tokenizer = AutoTokenizer.from_pretrained(lm_path)
+                self.mask_token_id = tokenizer.mask_token_id
+                self.pad_token_id = tokenizer.pad_token_id
             else:
                 self.lm_encoder = AutoModel.from_pretrained(lm_path)
             
             logger.info("Pretrained Language Model Type: %s" % (self.lm_encoder.config.model_type))
             logger.info("Pretrained Language Model Path: %s" % (lm_path))
             logger.info("Mask out error tokens: %s" % self.mask_error_token)
+            logger.info("Replace error input to LM by [MASK]: %s" % self.mask_error_input)
             lm_hidden_size = self.lm_encoder.config.hidden_size
             #assert lm_hidden_size == word_dim
             #lm_hidden_size = 768
@@ -323,7 +330,28 @@ class RobustParser(nn.Module):
             print ("mask_:\n", mask_)
         return hidden_states * mask
 
+    def _mask_error_input(self, input_ids, logits, debug=False):
+        # logits: (batch, max_bpe_len)
+        preds = torch.argmax(logits, -1)
+        mask_ids = input_ids.new_full(input_ids.size(), self.mask_token_id)
+        pad_ids = input_ids.new_full(input_ids.size(), self.pad_token_id)
+        zeros = torch.zeros_like(input_ids)
+        ones = torch.ones_like(input_ids)
+        # = 0 if token is pad
+        pad_mask = torch.where(input_ids == pad_ids, zeros, ones)
+        # keep paddings unchanged , should we keep other special tokens ? (cls/sep)
+        masked_input_ids = torch.where(preds * pad_mask == zeros, input_ids, mask_ids)
+        if debug:
+            print ("preds:\n", preds)
+            print ("masked_input_ids:\n", masked_input_ids)
+        return masked_input_ids
+
     def _lm_embed(self, input_ids=None, first_index=None, debug=False):
+        """
+        Input:
+            input_ids: (batch, max_bpe_len)
+            first_index: (batch, seq_len)
+        """
 
         if self.pretrained_lm.startswith('tc_'):
             # logits: (batch, max_bpe_len, lm_encoder.config.num_labels)
@@ -332,6 +360,13 @@ class RobustParser(nn.Module):
             lm_output = all_hidden_states[-1]
             if self.mask_error_token:
                 lm_output = self._mask_error_token(lm_output, logits)
+            if self.mask_error_input:
+                masked_input_ids = self._mask_error_input(input_ids, logits)
+                # run lm encoder again, with error tokens replaced by [mask]
+                # do not batchprop to the first iter
+                logits, all_hidden_states = self.lm_encoder(masked_input_ids.detach())
+                # (batch, max_bpe_len, hidden_size)
+                lm_output = all_hidden_states[-1]
         else:
             # (batch, max_bpe_len, hidden_size)
             lm_output = self.lm_encoder(input_ids)[0]

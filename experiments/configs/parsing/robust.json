@@ -6,7 +6,8 @@
     "char_dim": 100,
     "use_pos": true,
     "use_char": false,
-    "mask_error_token": true
+    "mask_error_token": true,
+    "mask_error_input": true
   },
   "biaffine":{
     "arc_mlp_dim": 500,
@@ -18,7 +19,7 @@
     "minimize_logp": false
   },
   "input_encoder": {
-    "name": "FastLSTM",
+    "name": "None",
     "num_layers": 3,
     "num_attention_heads": 4,
     "hidden_size": 400,
