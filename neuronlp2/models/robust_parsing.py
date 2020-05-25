@@ -76,8 +76,8 @@ class RobustParser(nn.Module):
             self.mask_error_input = hyps['input']['mask_error_input']
         if 'mask_random_input' in hyps['input']:
             self.mask_random_input = hyps['input']['mask_random_input']
-        self.error_prob = None
-        if self.pretrained_lm.startswith('tc_') and 'error_prob' in hyps['input']:
+        self.error_prob = 0
+        if 'error_prob' in hyps['input']:
             self.error_prob = hyps['input']['error_prob']
         # for biaffine layer
         arc_mlp_dim = hyps['biaffine']['arc_mlp_dim']
@@ -118,14 +118,14 @@ class RobustParser(nn.Module):
             elif self.pretrained_lm == 'xlm-r':
                 self.lm_encoder = XLMRobertaModel.from_pretrained(lm_path)
             """
+            tokenizer = AutoTokenizer.from_pretrained(lm_path)
+            self.mask_token_id = tokenizer.mask_token_id
+            self.pad_token_id = tokenizer.pad_token_id
+            self.cls_token_id = tokenizer.cls_token_id
+            self.sep_token_id = tokenizer.sep_token_id
             if self.pretrained_lm.startswith('tc_'):
                 config = AutoConfig.from_pretrained(lm_path, output_hidden_states=True)
-                self.lm_encoder = AutoModelForTokenClassification.from_pretrained(lm_path, config=config)
-                tokenizer = AutoTokenizer.from_pretrained(lm_path)
-                self.mask_token_id = tokenizer.mask_token_id
-                self.pad_token_id = tokenizer.pad_token_id
-                self.cls_token_id = tokenizer.cls_token_id
-                self.sep_token_id = tokenizer.sep_token_id
+                self.lm_encoder = AutoModelForTokenClassification.from_pretrained(lm_path, config=config) 
             else:
                 self.lm_encoder = AutoModel.from_pretrained(lm_path)
             
