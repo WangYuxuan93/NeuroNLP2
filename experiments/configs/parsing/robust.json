@@ -8,6 +8,7 @@
     "use_char": false,
     "mask_error_token": false,
     "mask_error_input": false,
+    "mask_random_input": false,
     "error_prob": 0.12
   },
   "biaffine":{

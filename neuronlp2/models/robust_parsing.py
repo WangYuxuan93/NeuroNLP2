@@ -69,10 +69,13 @@ class RobustParser(nn.Module):
         self.pretrained_lm = pretrained_lm
         self.mask_error_token = False
         self.mask_error_input = False
+        self.mask_random_input = False
         if self.pretrained_lm.startswith('tc_') and 'mask_error_token' in hyps['input']:
             self.mask_error_token = hyps['input']['mask_error_token']
         if self.pretrained_lm.startswith('tc_') and 'mask_error_input' in hyps['input']:
             self.mask_error_input = hyps['input']['mask_error_input']
+        if 'mask_random_input' in hyps['input']:
+            self.mask_random_input = hyps['input']['mask_random_input']
         self.error_prob = None
         if self.pretrained_lm.startswith('tc_') and 'error_prob' in hyps['input']:
             self.error_prob = hyps['input']['error_prob']
@@ -129,6 +132,7 @@ class RobustParser(nn.Module):
             logger.info("Pretrained Language Model Type: %s" % (self.lm_encoder.config.model_type))
             logger.info("Pretrained Language Model Path: %s" % (lm_path))
             logger.info("Mask out error tokens: %s" % self.mask_error_token)
+            logger.info("Mask random input tokens: %s" % self.mask_random_input)
             logger.info("Replace error input to LM by [MASK]: %s (error prob:%f)" % (self.mask_error_input, self.error_prob))
             lm_hidden_size = self.lm_encoder.config.hidden_size
             #assert lm_hidden_size == word_dim
@@ -337,12 +341,7 @@ class RobustParser(nn.Module):
 
     def _mask_error_input(self, input_ids, logits, debug=False):
         # logits: (batch, max_bpe_len)
-        if self.training:
-            error_mask = input_ids.new_full(input_ids.size(), self.error_prob)
-            # randomly replace some tokens with [mask] while training
-            preds = torch.bernoulli(error_masks)
-        else:
-            preds = torch.argmax(logits, -1)
+        preds = torch.argmax(logits, -1)
         mask_ids = input_ids.new_full(input_ids.size(), self.mask_token_id)
         pad_ids = input_ids.new_full(input_ids.size(), self.pad_token_id)
         cls_ids = input_ids.new_full(input_ids.size(), self.cls_token_id)
@@ -361,6 +360,30 @@ class RobustParser(nn.Module):
             print ("masked_input_ids:\n", masked_input_ids)
         return masked_input_ids
 
+    def _mask_random_input(self, input_ids, debug=False):
+        # input_ids: (batch, max_bpe_len)
+        error_mask = input_ids.new_full(input_ids.size(), self.error_prob, dtype=torch.float)
+        # randomly replace some tokens with [mask] while training
+        # 1 indicates error tokens
+        err_mask = torch.bernoulli(error_mask)
+        mask_ids = input_ids.new_full(input_ids.size(), self.mask_token_id)
+        pad_ids = input_ids.new_full(input_ids.size(), self.pad_token_id)
+        cls_ids = input_ids.new_full(input_ids.size(), self.cls_token_id)
+        sep_ids = input_ids.new_full(input_ids.size(), self.sep_token_id)
+        zeros = torch.zeros_like(input_ids)
+        ones = torch.ones_like(input_ids)
+        # = 0 if token is pad/cls/sep
+        pad_mask = torch.where(input_ids == pad_ids, zeros, ones)
+        cls_mask = torch.where(input_ids == cls_ids, zeros, ones)
+        sep_mask = torch.where(input_ids == sep_ids, zeros, ones)
+        # if err_mask == 0 (tag = 'O'), keep id unchanged, else (tag = 'E') change it to mask
+        # keep paddings/cls/sep unchanged
+        masked_input_ids = torch.where(err_mask*pad_mask*cls_mask*sep_mask==zeros, input_ids, mask_ids)
+        if debug:
+            print ("err_mask:\n", err_mask)
+            print ("masked_input_ids:\n", masked_input_ids)
+        return masked_input_ids
+
     def _lm_embed(self, input_ids=None, first_index=None, debug=False):
         """
         Input:
@@ -369,20 +392,32 @@ class RobustParser(nn.Module):
         """
 
         if self.pretrained_lm.startswith('tc_'):
-            # logits: (batch, max_bpe_len, lm_encoder.config.num_labels)
-            logits, all_hidden_states = self.lm_encoder(input_ids)
-            # (batch, max_bpe_len, hidden_size)
-            lm_output = all_hidden_states[-1]
-            if self.mask_error_token:
-                lm_output = self._mask_error_token(lm_output, logits)
-            elif self.mask_error_input:
-                masked_input_ids = self._mask_error_input(input_ids, logits)
-                # run lm encoder again, with error tokens replaced by [mask]
-                # do not batchprop to the first iter
-                logits, all_hidden_states = self.lm_encoder(masked_input_ids.detach())
+            if self.mask_error_input:
+                if self.training:
+                    masked_input_ids = self._mask_random_input(input_ids)
+                    # logits: (batch, max_bpe_len, lm_encoder.config.num_labels)
+                    logits, all_hidden_states = self.lm_encoder(masked_input_ids)
+                    lm_output = all_hidden_states[-1]
+                else:
+                    logits, all_hidden_states = self.lm_encoder(input_ids)
+                    masked_input_ids = self._mask_error_input(input_ids, logits)
+                    # run lm encoder again, with error tokens replaced by [mask]
+                    # do not batchprop to the first iter
+                    logits, all_hidden_states = self.lm_encoder(masked_input_ids.detach())
+                    # (batch, max_bpe_len, hidden_size)
+                    lm_output = all_hidden_states[-1]
+            else:
+                if self.mask_random_input:
+                    input_ids = self._mask_random_input(input_ids)
+                # logits: (batch, max_bpe_len, lm_encoder.config.num_labels)
+                logits, all_hidden_states = self.lm_encoder(input_ids)
                 # (batch, max_bpe_len, hidden_size)
                 lm_output = all_hidden_states[-1]
+                if self.mask_error_token:
+                    lm_output = self._mask_error_token(lm_output, logits)
         else:
+            if self.mask_random_input:
+                input_ids = self._mask_random_input(input_ids)
             # (batch, max_bpe_len, hidden_size)
             lm_output = self.lm_encoder(input_ids)[0]
         size = list(first_index.size()) + [lm_output.size()[-1]]
