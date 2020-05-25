@@ -73,6 +73,9 @@ class RobustParser(nn.Module):
             self.mask_error_token = hyps['input']['mask_error_token']
         if self.pretrained_lm.startswith('tc_') and 'mask_error_input' in hyps['input']:
             self.mask_error_input = hyps['input']['mask_error_input']
+        self.error_prob = None
+        if self.pretrained_lm.startswith('tc_') and 'error_prob' in hyps['input']:
+            self.error_prob = hyps['input']['error_prob']
         # for biaffine layer
         arc_mlp_dim = hyps['biaffine']['arc_mlp_dim']
         rel_mlp_dim = hyps['biaffine']['rel_mlp_dim']
@@ -118,13 +121,15 @@ class RobustParser(nn.Module):
                 tokenizer = AutoTokenizer.from_pretrained(lm_path)
                 self.mask_token_id = tokenizer.mask_token_id
                 self.pad_token_id = tokenizer.pad_token_id
+                self.cls_token_id = tokenizer.cls_token_id
+                self.sep_token_id = tokenizer.sep_token_id
             else:
                 self.lm_encoder = AutoModel.from_pretrained(lm_path)
             
             logger.info("Pretrained Language Model Type: %s" % (self.lm_encoder.config.model_type))
             logger.info("Pretrained Language Model Path: %s" % (lm_path))
             logger.info("Mask out error tokens: %s" % self.mask_error_token)
-            logger.info("Replace error input to LM by [MASK]: %s" % self.mask_error_input)
+            logger.info("Replace error input to LM by [MASK]: %s (error prob:%f)" % (self.mask_error_input, self.error_prob))
             lm_hidden_size = self.lm_encoder.config.hidden_size
             #assert lm_hidden_size == word_dim
             #lm_hidden_size = 768
@@ -332,15 +337,25 @@ class RobustParser(nn.Module):
 
     def _mask_error_input(self, input_ids, logits, debug=False):
         # logits: (batch, max_bpe_len)
-        preds = torch.argmax(logits, -1)
+        if self.training:
+            error_mask = input_ids.new_full(input_ids.size(), self.error_prob)
+            # randomly replace some tokens with [mask] while training
+            preds = torch.bernoulli(error_masks)
+        else:
+            preds = torch.argmax(logits, -1)
         mask_ids = input_ids.new_full(input_ids.size(), self.mask_token_id)
         pad_ids = input_ids.new_full(input_ids.size(), self.pad_token_id)
+        cls_ids = input_ids.new_full(input_ids.size(), self.cls_token_id)
+        sep_ids = input_ids.new_full(input_ids.size(), self.sep_token_id)
         zeros = torch.zeros_like(input_ids)
         ones = torch.ones_like(input_ids)
-        # = 0 if token is pad
+        # = 0 if token is pad/cls/sep
         pad_mask = torch.where(input_ids == pad_ids, zeros, ones)
-        # keep paddings unchanged , should we keep other special tokens ? (cls/sep)
-        masked_input_ids = torch.where(preds * pad_mask == zeros, input_ids, mask_ids)
+        cls_mask = torch.where(input_ids == cls_ids, zeros, ones)
+        sep_mask = torch.where(input_ids == sep_ids, zeros, ones)
+        # if preds == 0 (tag = 'O'), keep id unchanged, else (tag = 'E') change it to mask
+        # keep paddings/cls/sep unchanged
+        masked_input_ids = torch.where(preds*pad_mask*cls_mask*sep_mask==zeros, input_ids, mask_ids)
         if debug:
             print ("preds:\n", preds)
             print ("masked_input_ids:\n", masked_input_ids)
@@ -360,7 +375,7 @@ class RobustParser(nn.Module):
             lm_output = all_hidden_states[-1]
             if self.mask_error_token:
                 lm_output = self._mask_error_token(lm_output, logits)
-            if self.mask_error_input:
+            elif self.mask_error_input:
                 masked_input_ids = self._mask_error_input(input_ids, logits)
                 # run lm encoder again, with error tokens replaced by [mask]
                 # do not batchprop to the first iter
