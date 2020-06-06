@@ -152,6 +152,7 @@ def read_data(source_paths: [str], word_alphabet: Alphabet, char_alphabet: Alpha
         max_char_length = 0
         counter = 0
         src_words = []
+        err_types = []
         print('Reading language %s data from %s' % (lans[set_id], source_path))
         reader = CoNLLXReader(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, 
                               pre_alphabet=pre_alphabet, pos_idx=pos_idx)
@@ -165,6 +166,7 @@ def read_data(source_paths: [str], word_alphabet: Alphabet, char_alphabet: Alpha
             #print (inst.sentence.words)
             data.append([sent.word_ids, sent.char_id_seqs, inst.pos_ids, inst.heads, inst.type_ids, sent.pre_ids])
             src_words.append(sent.words)
+            err_types.append([line[9] for line in sent.lines])
             max_len = max([len(char_seq) for char_seq in sent.char_seqs])
             if max_char_length < max_len:
                 max_char_length = max_len
@@ -235,8 +237,9 @@ def read_data(source_paths: [str], word_alphabet: Alphabet, char_alphabet: Alpha
         pres = torch.from_numpy(preid_inputs)
 
         data_tensor = {'WORD': words, 'CHAR': chars, 'POS': pos, 'HEAD': heads, 'TYPE': types,
-                       'MASK': masks, 'SINGLE': single, 'LENGTH': lengths, 'SRC': np.array(src_words),
-                       'PRETRAINED': pres, 'LANG': lan_alphabet.get_index(lans[set_id])}
+                       'MASK': masks, 'SINGLE': single, 'LENGTH': lengths, 'PRETRAINED': pres, 
+                       'LANG': lan_alphabet.get_index(lans[set_id]),
+                       'SRC': np.array(src_words), 'ERR_TYPE': np.array(err_types)}
         all_tensors.append(data_tensor)
     return all_tensors, data_sizes
 
@@ -252,6 +255,7 @@ def read_bucketed_data(source_paths: [str], word_alphabet: Alphabet, char_alphab
         max_char_length = [0 for _ in _buckets]
         counter = 0
         src_words = [[] for _ in _buckets]
+        err_types = [[] for _ in _buckets]
         print('Reading language %s data from %s' % (lans[set_id], source_path))
         reader = CoNLLXReader(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, 
                               pre_alphabet=pre_alphabet, pos_idx=pos_idx)
@@ -267,6 +271,7 @@ def read_bucketed_data(source_paths: [str], word_alphabet: Alphabet, char_alphab
                 if inst_size < bucket_size:
                     data[bucket_id].append([sent.word_ids, sent.char_id_seqs, inst.pos_ids, inst.heads, inst.type_ids, sent.pre_ids])
                     src_words[bucket_id].append(sent.words)
+                    err_types[bucket_id].append([line[9] for line in sent.lines])
                     max_len = max([len(char_seq) for char_seq in sent.char_seqs])
                     if max_char_length[bucket_id] < max_len:
                         max_char_length[bucket_id] = max_len
@@ -346,7 +351,7 @@ def read_bucketed_data(source_paths: [str], word_alphabet: Alphabet, char_alphab
 
             data_tensor = {'WORD': words, 'CHAR': chars, 'POS': pos, 'HEAD': heads, 'TYPE': types,
                            'MASK': masks, 'SINGLE': single, 'LENGTH': lengths, 'PRETRAINED': pres,
-                           'SRC': np.array(src_words[bucket_id]), 
+                           'SRC': np.array(src_words[bucket_id]), 'ERR_TYPE': np.array(err_types[bucket_id]),
                            'LANG': lan_alphabet.get_index(lans[set_id])}
             data_tensors.append(data_tensor)
         all_tensors.append(data_tensors)

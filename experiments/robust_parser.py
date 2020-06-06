@@ -116,6 +116,13 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
     accum_total_inst = 0.0
     accum_recomp_freq = 0.0
 
+    accum_ucorr_err = 0.0
+    accum_lcorr_err = 0.0
+    accum_total_err = 0
+    accum_ucorr_err_nopunc = 0.0
+    accum_lcorr_err_nopunc = 0.0
+    accum_total_err_nopunc = 0
+
     all_words = []
     all_postags = []
     all_heads_pred = []
@@ -147,6 +154,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         heads = data['HEAD'].numpy()
         rels = data['TYPE'].numpy()
         lengths = data['LENGTH'].numpy()
+        err_types = data['ERR_TYPE']
         if alg == 'graph':
             masks = data['MASK'].to(device)
             heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, 
@@ -169,11 +177,15 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         #print ("heads_pred:\n", heads_pred)
         #print ("rels_pred:\n", rels_pred)
         #print ("heads:\n", heads)
-        stats, stats_nopunc, stats_root, num_inst = parser.eval(words, postags, heads_pred, rels_pred, heads, rels,
-                                                                word_alphabet, pos_alphabet, lengths, punct_set=punct_set, 
-                                                                symbolic_root=True)
+        #print ("err_types:\n", err_types)
+        stats, stats_nopunc, err_stats, err_nopunc_stats, stats_root, num_inst = parser.eval(
+                                    words, postags, heads_pred, rels_pred, heads, rels,
+                                    word_alphabet, pos_alphabet, lengths, punct_set=punct_set, 
+                                    symbolic_root=True, err_types=err_types)
         ucorr, lcorr, total, ucm, lcm = stats
         ucorr_nopunc, lcorr_nopunc, total_nopunc, ucm_nopunc, lcm_nopunc = stats_nopunc
+        ucorr_err, lcorr_err, total_err = err_stats
+        ucorr_err_nopunc, lcorr_err_nopunc, total_err_nopunc = err_nopunc_stats
         corr_root, total_root = stats_root
 
         accum_ucorr += ucorr
@@ -188,6 +200,13 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         accum_ucomlpete_nopunc += ucm_nopunc
         accum_lcomplete_nopunc += lcm_nopunc
 
+        accum_ucorr_err += ucorr_err
+        accum_lcorr_err += lcorr_err
+        accum_total_err += total_err
+        accum_ucorr_err_nopunc += ucorr_err_nopunc
+        accum_lcorr_err_nopunc += lcorr_err_nopunc
+        accum_total_err_nopunc += total_err_nopunc
+
         accum_root_corr += corr_root
         accum_total_root += total_root
 
@@ -201,7 +220,16 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         accum_lcorr_nopunc * 100 / accum_total_nopunc,
         accum_ucomlpete_nopunc * 100 / accum_total_inst, accum_lcomplete_nopunc * 100 / accum_total_inst))
     print('Root: corr: %d, total: %d, acc: %.2f%%' %(accum_root_corr, accum_total_root, accum_root_corr * 100 / accum_total_root))
-    
+    if accum_total_err == 0:
+        accum_total_err = 1
+    if accum_total_err_nopunc == 0:
+        accum_total_err_nopunc = 1
+    print('Error Token: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%' % (
+        accum_ucorr_err, accum_lcorr_err, accum_total_err, accum_ucorr_err * 100 / accum_total_err, accum_lcorr_err * 100 / accum_total_err))
+    print('Error Token Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%' % (
+        accum_ucorr_err_nopunc, accum_lcorr_err_nopunc, accum_total_err_nopunc, 
+        accum_ucorr_err_nopunc * 100 / accum_total_err_nopunc, accum_lcorr_err_nopunc * 100 / accum_total_err_nopunc))
+
     if not write_to_tmp:
         if prev_best_lcorr < accum_lcorr_nopunc or (prev_best_lcorr == accum_lcorr_nopunc and prev_best_ucorr < accum_ucorr_nopunc):
             print ('### Writing New Best Dev Prediction File ... ###')

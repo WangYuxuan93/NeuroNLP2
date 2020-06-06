@@ -124,7 +124,7 @@ class CoNLLXReader(object):
                 pres.append(END)
                 pre_ids.append(self.__pre_alphabet.get_index(END))
 
-        return DependencyInstance(Sentence(words, word_ids, char_seqs, char_id_seqs, pres=pres, pre_ids=pre_ids), postags, pos_ids, heads, types, type_ids)
+        return DependencyInstance(Sentence(words, word_ids, char_seqs, char_id_seqs, pres=pres, pre_ids=pre_ids, lines=lines), postags, pos_ids, heads, types, type_ids)
 
 
 class CoNLL03Reader(object):

@@ -16,7 +16,7 @@ def is_punctuation(word, pos, punct_set=None):
 
 
 def eval(words, postags, heads_pred, types_pred, heads, types, word_alphabet, pos_alphabet, lengths,
-         punct_set=None, symbolic_root=False, symbolic_end=False):
+         punct_set=None, symbolic_root=False, symbolic_end=False, err_types=None):
     batch_size, _ = words.shape
     ucorr = 0.
     lcorr = 0.
@@ -30,10 +30,19 @@ def eval(words, postags, heads_pred, types_pred, heads, types, word_alphabet, po
     ucomplete_match_nopunc = 0.
     lcomplete_match_nopunc = 0.
 
+    ucorr_err = 0.
+    lcorr_err = 0.
+    total_err = 0.
+
+    ucorr_err_nopunc = 0.
+    lcorr_err_nopunc = 0.
+    total_err_nopunc = 0.
+
     corr_root = 0.
     total_root = 0.
     start = 1 if symbolic_root else 0
     end = 1 if symbolic_end else 0
+    err_type = None
     for i in range(batch_size):
         ucm = 1.
         lcm = 1.
@@ -42,7 +51,10 @@ def eval(words, postags, heads_pred, types_pred, heads, types, word_alphabet, po
         for j in range(start, lengths[i] - end):
             word = word_alphabet.get_instance(words[i, j])
             pos = pos_alphabet.get_instance(postags[i, j])
-
+            if err_types is not None:
+                # err_types has no symbolic_root
+                err_type = err_types[i][j-start]
+                #print (word, pos, err_type)
             total += 1
             if heads[i, j] == heads_pred[i, j]:
                 ucorr += 1
@@ -66,6 +78,19 @@ def eval(words, postags, heads_pred, types_pred, heads, types, word_alphabet, po
                     ucm_nopunc = 0
                     lcm_nopunc = 0
 
+            if err_type is not None and not err_type == '_':
+                total_err += 1
+                if not is_punctuation(word, pos, punct_set):
+                    total_err_nopunc += 1
+                if heads[i, j] == heads_pred[i, j]:
+                    ucorr_err += 1
+                    if not is_punctuation(word, pos, punct_set):
+                        ucorr_err_nopunc += 1
+                    if types[i, j] == types_pred[i, j]:
+                        lcorr_err += 1
+                        if not is_punctuation(word, pos, punct_set):
+                            lcorr_err_nopunc += 1
+
             if heads[i, j] == 0:
                 total_root += 1
                 corr_root += 1 if heads_pred[i, j] == 0 else 0
@@ -77,6 +102,7 @@ def eval(words, postags, heads_pred, types_pred, heads, types, word_alphabet, po
 
     return (ucorr, lcorr, total, ucomplete_match, lcomplete_match), \
            (ucorr_nopunc, lcorr_nopunc, total_nopunc, ucomplete_match_nopunc, lcomplete_match_nopunc), \
+           (ucorr_err, lcorr_err, total_err), (ucorr_err_nopunc, lcorr_err_nopunc, total_err_nopunc), \
            (corr_root, total_root), batch_size
 
 

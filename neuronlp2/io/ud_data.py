@@ -149,6 +149,7 @@ def read_data(source_paths: [str], word_alphabet: Alphabet, char_alphabet: Alpha
     max_char_length = 0
     counter = 0
     src_words = []
+    err_types = []
 
     for set_id, source_path in enumerate(source_paths):
         print('Reading data from %s' % source_path)
@@ -164,6 +165,7 @@ def read_data(source_paths: [str], word_alphabet: Alphabet, char_alphabet: Alpha
             #print (inst.sentence.words)
             data.append([sent.word_ids, sent.char_id_seqs, inst.pos_ids, inst.heads, inst.type_ids, sent.pre_ids])
             src_words.append(sent.words)
+            err_types.append([line[9] for line in sent.lines])
             max_len = max([len(char_seq) for char_seq in sent.char_seqs])
             if max_char_length < max_len:
                 max_char_length = max_len
@@ -233,8 +235,8 @@ def read_data(source_paths: [str], word_alphabet: Alphabet, char_alphabet: Alpha
     pres = torch.from_numpy(preid_inputs)
 
     data_tensor = {'WORD': words, 'CHAR': chars, 'POS': pos, 'HEAD': heads, 'TYPE': types,
-                   'MASK': masks, 'SINGLE': single, 'LENGTH': lengths, 'SRC': np.array(src_words),
-                   'PRETRAINED': pres}
+                   'MASK': masks, 'SINGLE': single, 'LENGTH': lengths, 'PRETRAINED': pres, 
+                   'SRC': np.array(src_words), 'ERR_TYPE': np.array(err_types)}
     return data_tensor, data_size
 
 
@@ -245,6 +247,7 @@ def read_bucketed_data(source_paths: [str], word_alphabet: Alphabet, char_alphab
     max_char_length = [0 for _ in _buckets]
     counter = 0
     src_words = [[] for _ in _buckets]
+    err_types = [[] for _ in _buckets]
 
     for set_id, source_path in enumerate(source_paths):
         print('Reading data from %s' % source_path)
@@ -262,6 +265,7 @@ def read_bucketed_data(source_paths: [str], word_alphabet: Alphabet, char_alphab
                 if inst_size < bucket_size:
                     data[bucket_id].append([sent.word_ids, sent.char_id_seqs, inst.pos_ids, inst.heads, inst.type_ids, sent.pre_ids])
                     src_words[bucket_id].append(sent.words)
+                    err_types[bucket_id].append([line[9] for line in sent.lines])
                     max_len = max([len(char_seq) for char_seq in sent.char_seqs])
                     if max_char_length[bucket_id] < max_len:
                         max_char_length[bucket_id] = max_len
@@ -341,6 +345,6 @@ def read_bucketed_data(source_paths: [str], word_alphabet: Alphabet, char_alphab
 
         data_tensor = {'WORD': words, 'CHAR': chars, 'POS': pos, 'HEAD': heads, 'TYPE': types,
                        'MASK': masks, 'SINGLE': single, 'LENGTH': lengths, 'PRETRAINED': pres,
-                       'SRC': np.array(src_words[bucket_id])}
+                       'SRC': np.array(src_words[bucket_id]), 'ERR_TYPE': np.array(err_types[bucket_id])}
         data_tensors.append(data_tensor)
     return data_tensors, bucket_sizes

@@ -4,13 +4,14 @@ __all__ = ['Sentence', 'DependencyInstance', 'NERInstance']
 
 
 class Sentence(object):
-    def __init__(self, words, word_ids, char_seqs, char_id_seqs, pres=None, pre_ids=None):
+    def __init__(self, words, word_ids, char_seqs, char_id_seqs, pres=None, pre_ids=None, lines=None):
         self.words = words
         self.word_ids = word_ids
         self.char_seqs = char_seqs
         self.char_id_seqs = char_id_seqs
         self.pres = pres
         self.pre_ids = pre_ids
+        self.lines = lines
 
     def length(self):
         return len(self.words)
