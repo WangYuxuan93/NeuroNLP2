@@ -113,9 +113,9 @@ def add_w1(w1, i1):
 			continue
 
 		new_w2_sememes = word_sem[i2]
-		print(w2)
-		print(new_w1_sememes)
-		print(new_w2_sememes)
+		#print(w2)
+		#print(new_w1_sememes)
+		#print(new_w2_sememes)
 		if len(new_w2_sememes) == 0:
 			continue
 		# not_in_num1 = count(w1_sememes, w2_sememes)
