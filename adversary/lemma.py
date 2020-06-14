@@ -91,7 +91,8 @@ s_adv=['RBR','RBS']
 
 word_pos_pairs = [[(line[1],line[3]) for line in sent] for sent in data]
 for idx in range(len(word_pos_pairs)):
-	print(idx)
+	if idx % 1000 == 0:
+		print(idx)
 	#text=train_text[idx]
 	pos_tags = word_pos_pairs[idx]
 	for i in range(len(pos_tags)):
