@@ -8,4 +8,4 @@ if len(sys.argv) < 3:
 with open(sys.argv[1], 'r') as fi:
 	dict = json.loads(fi.read().strip())
 with open(sys.argv[2], 'w') as fo:
-	json.dump(dict["instance2index"])
+	json.dump(dict["instance2index"], fo, indent=4)
