@@ -24,11 +24,12 @@
     "minimize_logp": false
   },
   "input_encoder": {
-    "name": "FastLSTM",
+    "name": "CPGLSTM",
     "num_layers": 3,
     "num_attention_heads": 4,
     "hidden_size": 400,
     "intermediate_size": 800,
+    "lan_emb_size": 1,
     "hidden_act": "gelu",
     "dropout_type": "seq",
     "p_rnn": [0.33, 0.33],

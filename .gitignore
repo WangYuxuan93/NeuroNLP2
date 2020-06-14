@@ -117,3 +117,5 @@ ENV/
 *.iml
 *.sublime-project
 *.sublime-workspace
+
+adversary/data
