@@ -157,7 +157,8 @@ class RobustParser(nn.Module):
 
         #self.word_embed.weight.requires_grad=False
         self.pos_embed = nn.Embedding(num_pos, pos_dim, _weight=embedd_pos, padding_idx=1) if use_pos else None
-        self.basic_parameters.append(self.pos_embed)
+        if self.pos_embed is not None:
+            self.basic_parameters.append(self.pos_embed)
         if use_char:
             self.char_embed = nn.Embedding(num_chars, char_dim, _weight=embedd_char, padding_idx=1)
             self.char_cnn = CharCNN(2, char_dim, char_dim, hidden_channels=char_dim * 4, activation=activation)
@@ -472,6 +473,8 @@ class RobustParser(nn.Module):
                 enc_word, enc_pos = drop_input_independent(enc_word, enc_pos, self.p_in)
                 #print ("enc_word (a):\n", enc_word)
             enc = torch.cat([enc_word, enc_pos], dim=2)
+        else:
+            enc = enc_word
 
         return enc
 
@@ -713,5 +716,3 @@ class RobustParser(nn.Module):
         # compute lengths
         length = mask.sum(dim=1).long().cpu().numpy()
         return parser.decode_MST(energy.cpu().numpy(), length, leading_symbolic=leading_symbolic, labeled=True)
-
-
