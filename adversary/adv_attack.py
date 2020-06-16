@@ -247,7 +247,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
 
 class Attacker(object):
     def __init__(self, model, candidates, vocab, rel_importance=0.5, alphabets=None, tokenizer=None, device=None,
-                symbolic_root=True, symbolic_end=False, mask_out_root=False):
+                symbolic_root=True, symbolic_end=False, mask_out_root=False, max_batch_size=3):
         self.model = model
         self.candidates = candidates
         self.word2id = vocab
@@ -372,23 +372,23 @@ class Attacker(object):
             unk_id += 1
         return batch_tokens, batch_tags
 
-    def calc_importance(self, tokens, tags, heads, rel_ids, debug=False):
+    def calc_importance(self, batch_tokens, batch_tags, heads, rel_ids, debug=False):
         """
         Input:
-            tokens: List[str], (seq_len)
-            tags: List[str], (seq_len)
+            batch_tokens: List[List[str]], (batch, seq_len), the first line should be the original seq
+            batch_tags: List[List[str]], (batch, seq_len), the first line should be the original seq
             heads: List[int], (seq_len)
             rel_ids: List[int], (seq_len)
         Output:
-            word_rank: List[int], (seq_len) word id ranked by importance
+            importance: List[int], (seq_len), importance of each seq
+            word_rank: List[int], (seq_len), word id ranked by importance
         """
-
-        batch_tokens, batch_tags = self.gen_importance_batch(tokens, tags)
         heads_pred, rels_pred = self.get_prediction(batch_tokens, batch_tags)
         heads_gold = np.tile(np.array(heads), (len(heads_pred),1))
         heads_change_mask = np.where(heads_pred != heads_gold, 1, 0)
         # this should minus the diff between original prediction (line 0) and gold
         heads_change = heads_change_mask.sum(axis=1)
+        heads_change = heads_change - heads_change[0]
         if debug:
             print (batch_tokens)
             print ("gold heads:\n", heads_gold)
@@ -400,20 +400,53 @@ class Attacker(object):
         rels_change_mask = np.where(rels_pred != rels_gold, 1, 0)
         # this should minus the diff between original prediction (line 0) and gold
         rels_change = rels_change_mask.sum(axis=1)
+        rels_change = rels_change - rels_change[0]
         if debug:
-            print ("gold rels:", rel_ids)
-            print ("pred rels:", rels_pred)
+            print ("gold rels:\n", rel_ids)
+            print ("pred rels:\n", rels_pred)
             print ("mask:\n", rels_change_mask)
             print ("rels change:\n", rels_change)
         
         importance = (1-self.rel_importance) * heads_change + self.rel_importance * rels_change
+        return importance
+
+    def calc_word_rank(self, tokens, tags, heads, rel_ids, debug=False):
+        batch_tokens, batch_tags = self.gen_importance_batch(tokens, tags)
+        importance = self.calc_importance(batch_tokens, batch_tags, heads, rel_ids, debug)
         word_rank = (-importance).argsort()
         if debug:
             print ("importance:\n", importance)
             print ("word_rank:\n", word_rank)
         return word_rank
+
+    def gen_cand_batch(self, tokens, cands, idx, tags):
+        """
+        Input:
+            tokens: List[str], (seq_len)
+            tags: List[str], (seq_len)
+        Output:
+            batch_tokens: List[List[str]], (batch, seq_len)
+            batch_tags: List[List[str]], (batch, seq_len)
+        """
+        batch_len = len(cands)+1
+        batch_tokens = [tokens.copy() for _ in range(batch_len)]
+        batch_tags = [tags.copy() for _ in range(batch_len)]
+        for i in range(1, batch_len):
+            batch_tokens[i][idx] = cands[i-1]
+        return batch_tokens, batch_tags
+
+    def get_best_cand(self, tokens, cands, idx, tags, heads, rel_ids, debug=False):
+        batch_tokens, batch_tags = self.gen_cand_batch(tokens, cands, idx, tags)
+        importance = self.calc_importance(batch_tokens, batch_tags, heads, rel_ids, debug)
+        # minus 1 for the first
+        word_rank = (-importance).argsort() - 1
+        if debug:
+            #print ("batch tokens:\n", batch_tokens)
+            print ("importance:\n", importance)
+            print ("word_rank:\n", word_rank)
+        return word_rank, importance
         
-    def attack(self, tokens, tags, heads, rel_ids):
+    def attack(self, tokens, tags, heads, rel_ids, debug=False):
         """
         Input:
             tokens: List[str], (seq_len)
@@ -423,12 +456,12 @@ class Attacker(object):
         Output:
         """
         adv_tokens = tokens.copy()
-        word_rank = self.calc_importance(tokens, tags, heads, rel_ids, True)
+        word_rank = self.calc_word_rank(tokens, tags, heads, rel_ids, debug)
         x_len = len(tokens)
         tag_list = ['JJ', 'NN', 'RB', 'VB']
         neigbhours_list = []
         for i in range(x_len):
-            print (adv_tokens[i], self._word2id(adv_tokens[i]))
+            #print (adv_tokens[i], self._word2id(adv_tokens[i]))
             if self._word2id(adv_tokens[i]) not in range(1, 50000):
                 neigbhours_list.append([])
                 continue
@@ -449,9 +482,203 @@ class Attacker(object):
             else:
                 neigbhours_list.append([])
         neighbours_len = [len(x) for x in neigbhours_list]
-        print (neigbhours_list)
+        #print (neigbhours_list)
         if np.sum(neighbours_len) == 0:
             return None
+        change_edit_ratio = -1
+        total_change = 0
+        num_edit = 0
+        for idx in word_rank:
+            if neighbours_len[idx] == 0: continue
+            # skip the edit for ROOT
+            if self.symbolic_root and idx == 0: continue
+            cands = neigbhours_list[idx]
+            cand_rank, importances = self.get_best_cand(adv_tokens, cands, idx, tags, heads, rel_ids, debug)
+            # this means the biggest change is 0
+            if cand_rank[0] == -1: continue
+            best_cand = cands[cand_rank[0]]
+            best_imp = importances[cand_rank[0]+1]
+            new_ratio = (total_change + best_imp) / (num_edit + 1)
+            if new_ratio > change_edit_ratio:
+                change_edit_ratio = new_ratio
+                num_edit += 1
+                total_change += best_imp
+                adv_tokens[idx] = best_cand
+                if debug:
+                    print ("Keeping substitute {} in idx={} for {} (tot_change:{}, num_edit:{}, new score:{})".format(
+                        best_cand, idx, adv_tokens, total_change, num_edit, new_ratio))
+            else:
+                if debug:
+                    print ("Stopping, New best substitute {} in idx={} for {} (tot_change:{}, num_edit:{}, new score:{})".format(
+                        best_cand, idx, adv_tokens, total_change+best_imp, num_edit+1, new_ratio))
+                break
+        return adv_tokens, num_edit, total_change
+
+def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, pos_alphabet, 
+        device, beam=1, batch_size=256, write_to_tmp=True, prev_best_lcorr=0, prev_best_ucorr=0,
+        pred_filename=None, tokenizer=None, multi_lan_iter=False, debug=1):
+    network.eval()
+    accum_ucorr = 0.0
+    accum_lcorr = 0.0
+    accum_total = 0
+    accum_ucomlpete = 0.0
+    accum_lcomplete = 0.0
+    accum_ucorr_nopunc = 0.0
+    accum_lcorr_nopunc = 0.0
+    accum_total_nopunc = 0
+    accum_ucomlpete_nopunc = 0.0
+    accum_lcomplete_nopunc = 0.0
+    accum_root_corr = 0.0
+    accum_total_root = 0.0
+    accum_total_inst = 0.0
+    accum_recomp_freq = 0.0
+
+    accum_ucorr_err = 0.0
+    accum_lcorr_err = 0.0
+    accum_total_err = 0
+    accum_ucorr_err_nopunc = 0.0
+    accum_lcorr_err_nopunc = 0.0
+    accum_total_err_nopunc = 0
+
+    all_words = []
+    all_postags = []
+    all_heads_pred = []
+    all_rels_pred = []
+    all_lengths = []
+    all_src_words = []
+    all_heads_by_layer = []
+
+    if multi_lan_iter:
+        iterate = multi_language_iterate_data
+    else:
+        iterate = iterate_data
+        lan_id = None
+
+    for data in iterate(data, batch_size):
+        if multi_lan_iter:
+            lan_id, data = data
+            lan_id = torch.LongTensor([lan_id]).to(device)
+        words = data['WORD']
+        pres = data['PRETRAINED'].to(device)
+        chars = data['CHAR'].to(device)
+        postags = data['POS'].to(device)
+        heads = data['HEAD'].numpy()
+        rels = data['TYPE'].numpy()
+        lengths = data['LENGTH'].numpy()
+        err_types = data['ERR_TYPE']
+
+        adv_words = words.clone()
+        adv_src = []
+        for i in range(len(lengths)):
+            length = lengths[i]
+            adv_tokens = [word_alphabet.get_instance(w) for w in words[i][:length]]
+            adv_postags = [pos_alphabet.get_instance(w) for w in postags[i][:length]]
+            adv_heads = heads[i][:length]
+            adv_rels = rels[i][:length]
+            adv_rels[0] = 0
+            if debug: print ("original sent:", adv_tokens)
+            adv_tokens, num_edit, total_change = attacker.attack(adv_tokens, adv_postags, adv_heads, adv_rels, debug=debug>=2)
+            if debug: print ("adv sent:", adv_tokens)
+            adv_src.append(adv_tokens)
+            adv_words[i][:length] = torch.from_numpy(np.array([word_alphabet.get_index(w) for w in adv_tokens]))
+        adv_words = adv_words.to(device)
+        #print ("orig_words:\n{}\nadv_words:\n{}".format(words, adv_words))
+
+        if tokenizer:
+            bpes, first_idx = convert_tokens_to_ids(tokenizer, adv_src)
+            bpes = bpes.to(device)
+            first_idx = first_idx.to(device)
+        else:
+            bpes = first_idx = None
+
+        if alg == 'graph':
+            masks = data['MASK'].to(device)
+            heads_pred, rels_pred = network.decode(adv_words, pres, chars, postags, mask=masks, 
+                bpes=bpes, first_idx=first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
+
+        adv_words = adv_words.cpu().numpy()
+        postags = postags.cpu().numpy()
+
+        if write_to_tmp:
+            pred_writer.write(adv_words, postags, heads_pred, rels_pred, lengths, symbolic_root=True, src_words=adv_src)
+        else:
+            all_words.append(adv_words)
+            all_postags.append(postags)
+            all_heads_pred.append(heads_pred)
+            all_rels_pred.append(rels_pred)
+            all_lengths.append(lengths)
+            all_src_words.append(adv_src)
+
+        #gold_writer.write(words, postags, heads, rels, lengths, symbolic_root=True)
+        #print ("heads_pred:\n", heads_pred)
+        #print ("rels_pred:\n", rels_pred)
+        #print ("heads:\n", heads)
+        #print ("err_types:\n", err_types)
+        stats, stats_nopunc, err_stats, err_nopunc_stats, stats_root, num_inst = parser.eval(
+                                    words, postags, heads_pred, rels_pred, heads, rels,
+                                    word_alphabet, pos_alphabet, lengths, punct_set=punct_set, 
+                                    symbolic_root=True, err_types=err_types)
+        ucorr, lcorr, total, ucm, lcm = stats
+        ucorr_nopunc, lcorr_nopunc, total_nopunc, ucm_nopunc, lcm_nopunc = stats_nopunc
+        ucorr_err, lcorr_err, total_err = err_stats
+        ucorr_err_nopunc, lcorr_err_nopunc, total_err_nopunc = err_nopunc_stats
+        corr_root, total_root = stats_root
+
+        accum_ucorr += ucorr
+        accum_lcorr += lcorr
+        accum_total += total
+        accum_ucomlpete += ucm
+        accum_lcomplete += lcm
+
+        accum_ucorr_nopunc += ucorr_nopunc
+        accum_lcorr_nopunc += lcorr_nopunc
+        accum_total_nopunc += total_nopunc
+        accum_ucomlpete_nopunc += ucm_nopunc
+        accum_lcomplete_nopunc += lcm_nopunc
+
+        accum_ucorr_err += ucorr_err
+        accum_lcorr_err += lcorr_err
+        accum_total_err += total_err
+        accum_ucorr_err_nopunc += ucorr_err_nopunc
+        accum_lcorr_err_nopunc += lcorr_err_nopunc
+        accum_total_err_nopunc += total_err_nopunc
+
+        accum_root_corr += corr_root
+        accum_total_root += total_root
+
+        accum_total_inst += num_inst
+
+    print('W. Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%%' % (
+        accum_ucorr, accum_lcorr, accum_total, accum_ucorr * 100 / accum_total, accum_lcorr * 100 / accum_total,
+        accum_ucomlpete * 100 / accum_total_inst, accum_lcomplete * 100 / accum_total_inst))
+    print('Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%%' % (
+        accum_ucorr_nopunc, accum_lcorr_nopunc, accum_total_nopunc, accum_ucorr_nopunc * 100 / accum_total_nopunc,
+        accum_lcorr_nopunc * 100 / accum_total_nopunc,
+        accum_ucomlpete_nopunc * 100 / accum_total_inst, accum_lcomplete_nopunc * 100 / accum_total_inst))
+    print('Root: corr: %d, total: %d, acc: %.2f%%' %(accum_root_corr, accum_total_root, accum_root_corr * 100 / accum_total_root))
+    if accum_total_err == 0:
+        accum_total_err = 1
+    if accum_total_err_nopunc == 0:
+        accum_total_err_nopunc = 1
+    print('Error Token: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%' % (
+        accum_ucorr_err, accum_lcorr_err, accum_total_err, accum_ucorr_err * 100 / accum_total_err, accum_lcorr_err * 100 / accum_total_err))
+    print('Error Token Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%' % (
+        accum_ucorr_err_nopunc, accum_lcorr_err_nopunc, accum_total_err_nopunc, 
+        accum_ucorr_err_nopunc * 100 / accum_total_err_nopunc, accum_lcorr_err_nopunc * 100 / accum_total_err_nopunc))
+
+    if not write_to_tmp:
+        if prev_best_lcorr < accum_lcorr_nopunc or (prev_best_lcorr == accum_lcorr_nopunc and prev_best_ucorr < accum_ucorr_nopunc):
+            print ('### Writing New Best Dev Prediction File ... ###')
+            pred_writer.start(pred_filename)
+            for i in range(len(all_words)):
+                pred_writer.write(all_words[i], all_postags[i], all_heads_pred[i], all_rels_pred[i], 
+                                all_lengths[i], symbolic_root=True, src_words=all_src_words[i])
+            pred_writer.close()
+
+    return (accum_ucorr, accum_lcorr, accum_ucomlpete, accum_lcomplete, accum_total), \
+           (accum_ucorr_nopunc, accum_lcorr_nopunc, accum_ucomlpete_nopunc, accum_lcomplete_nopunc, accum_total_nopunc), \
+           (accum_root_corr, accum_total_root, accum_total_inst)
+
 
 def parse(args):
     logger = get_logger("Parsing")
@@ -542,12 +769,12 @@ def parse(args):
     vocab = json.load(open(args.vocab, 'r'))
     alphabets = word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, pretrained_alphabet
     attacker = Attacker(network, candidates, vocab, alphabets=alphabets, tokenizer=tokenizer, device=device)
-    tokens = ["_ROOT", "The", "Dow", "fell", "22.6", "%", "on", "Black", "Monday", "."]
-    tags = ["_ROOT_POS", "DT", "NNP", "VBD", "CD", ".", "IN", "NNP", "NNP", "."]
-    heads = [0, 2, 3, 0, 5, 3, 3, 8, 6, 3]
-    rels = [0, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-    attacker.attack(tokens, tags, heads, rels)
-    exit()
+    #tokens = ["_ROOT", "The", "Dow", "fell", "22.6", "%", "on", "black", "Monday"]#, "."]
+    #tags = ["_ROOT_POS", "DT", "NNP", "VBD", "CD", ".", "IN", "NNP", "NNP"]#, "."]
+    #heads = [0, 2, 3, 0, 5, 3, 3, 8, 6]#, 3]
+    #rels = [0, 3, 4, 5, 6, 7, 8, 9, 10]#, 11]
+    #attacker.attack(tokens, tags, heads, rels, True)
+    #exit()
 
     logger.info("Reading Data")
     if alg == 'graph':
@@ -566,11 +793,17 @@ def parse(args):
     beam = args.beam
     pred_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
     gold_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
+    adv_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
     if args.output_filename:
         pred_filename = args.output_filename
     else:
         pred_filename = os.path.join(result_path, 'pred.txt')
     pred_writer.start(pred_filename)
+    if args.adv_filename:
+        adv_filename = args.adv_filename
+    else:
+        adv_filename = os.path.join(result_path, 'adv.txt')
+    adv_writer.start(adv_filename)
     #gold_filename = os.path.join(result_path, 'gold.txt')
     #gold_writer.start(gold_filename)
 
@@ -579,12 +812,22 @@ def parse(args):
     else:
         multi_lan_iter = False
     with torch.no_grad():
-        print('Parsing...')
+        print('Parsing Original Data...')
         start_time = time.time()
         eval(alg, data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, 
             pos_alphabet, device, beam, batch_size=args.batch_size, tokenizer=tokenizer, 
             multi_lan_iter=multi_lan_iter)
         print('Time: %.2fs' % (time.time() - start_time))
+    print ('\n------------------\n')
+    with torch.no_grad():
+        print('Attacking...')
+        start_time = time.time()
+        # debug = 1: show orig/adv tokens / debug = 2: show log inside attacker
+        attack(attacker, alg, data_test, network, adv_writer, punct_set, word_alphabet, 
+            pos_alphabet, device, beam, batch_size=args.batch_size, tokenizer=tokenizer, 
+            multi_lan_iter=multi_lan_iter, debug=0)
+        print('Time: %.2fs' % (time.time() - start_time))
+        
 
     pred_writer.close()
     #gold_writer.close()
@@ -624,6 +867,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--test', help='path for test file.', required=True)
     args_parser.add_argument('--model_path', help='path for saving model file.', required=True)
     args_parser.add_argument('--output_filename', type=str, help='output filename for parse')
+    args_parser.add_argument('--adv_filename', type=str, help='output adversarial filename')
 
     args = args_parser.parse_args()
     parse(args)
