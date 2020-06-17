@@ -612,7 +612,7 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
         postags = postags.cpu().numpy()
 
         if write_to_tmp:
-            pred_writer.write(adv_words, postags, heads_pred, rels_pred, lengths, symbolic_root=True, src_words=adv_src)
+            pred_writer.write(words, postags, heads_pred, rels_pred, lengths, symbolic_root=True, src_words=data['SRC'] ,adv_words=adv_src)
         else:
             all_words.append(adv_words)
             all_postags.append(postags)
