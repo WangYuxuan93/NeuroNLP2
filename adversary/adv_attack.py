@@ -540,6 +540,11 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
     accum_lcorr_err_nopunc = 0.0
     accum_total_err_nopunc = 0
 
+    accum_total_edit = 0
+    accum_total_change = 0.0
+    accum_success_attack = 0
+    accum_total_sent = 0.0
+
     all_words = []
     all_postags = []
     all_heads_pred = []
@@ -570,6 +575,7 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
         adv_words = words.clone()
         adv_src = []
         for i in range(len(lengths)):
+            accum_total_sent += 1
             length = lengths[i]
             adv_tokens = [word_alphabet.get_instance(w) for w in words[i][:length]]
             adv_postags = [pos_alphabet.get_instance(w) for w in postags[i][:length]]
@@ -577,7 +583,13 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
             adv_rels = rels[i][:length]
             adv_rels[0] = 0
             if debug: print ("original sent:", adv_tokens)
-            adv_tokens, num_edit, total_change = attacker.attack(adv_tokens, adv_postags, adv_heads, adv_rels, debug=debug>=2)
+            result = attacker.attack(adv_tokens, adv_postags, adv_heads, adv_rels, debug=debug>=2)
+            if result is None:
+                continue
+            adv_tokens, num_edit, total_change = result
+            accum_success_attack += 1
+            accum_total_edit += num_edit
+            accum_total_change += total_change
             if debug: print ("adv sent:", adv_tokens)
             adv_src.append(adv_tokens)
             adv_words[i][:length] = torch.from_numpy(np.array([word_alphabet.get_index(w) for w in adv_tokens]))
@@ -665,6 +677,9 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
     print('Error Token Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%' % (
         accum_ucorr_err_nopunc, accum_lcorr_err_nopunc, accum_total_err_nopunc, 
         accum_ucorr_err_nopunc * 100 / accum_total_err_nopunc, accum_lcorr_err_nopunc * 100 / accum_total_err_nopunc))
+
+    print('Attack: success/total examples = %d/%d, Average change score: %.2f, edit dist: %.2f, change-edit ratio: %.2f' % (
+        accum_success_attack, accum_total_sent, accum_total_change/accum_total_sent, accum_total_edit/accum_total_sent, accum_total_change/accum_total_edit))
 
     if not write_to_tmp:
         if prev_best_lcorr < accum_lcorr_nopunc or (prev_best_lcorr == accum_lcorr_nopunc and prev_best_ucorr < accum_ucorr_nopunc):
