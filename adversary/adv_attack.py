@@ -227,11 +227,11 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         accum_total_err = 1
     if accum_total_err_nopunc == 0:
         accum_total_err_nopunc = 1
-    print('Error Token: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%' % (
-        accum_ucorr_err, accum_lcorr_err, accum_total_err, accum_ucorr_err * 100 / accum_total_err, accum_lcorr_err * 100 / accum_total_err))
-    print('Error Token Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%' % (
-        accum_ucorr_err_nopunc, accum_lcorr_err_nopunc, accum_total_err_nopunc, 
-        accum_ucorr_err_nopunc * 100 / accum_total_err_nopunc, accum_lcorr_err_nopunc * 100 / accum_total_err_nopunc))
+    #print('Error Token: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%' % (
+    #    accum_ucorr_err, accum_lcorr_err, accum_total_err, accum_ucorr_err * 100 / accum_total_err, accum_lcorr_err * 100 / accum_total_err))
+    #print('Error Token Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%' % (
+    #    accum_ucorr_err_nopunc, accum_lcorr_err_nopunc, accum_total_err_nopunc, 
+    #    accum_ucorr_err_nopunc * 100 / accum_total_err_nopunc, accum_lcorr_err_nopunc * 100 / accum_total_err_nopunc))
 
     if not write_to_tmp:
         if prev_best_lcorr < accum_lcorr_nopunc or (prev_best_lcorr == accum_lcorr_nopunc and prev_best_ucorr < accum_ucorr_nopunc):
@@ -441,7 +441,7 @@ class Attacker(object):
             batch_tokens[i][idx] = cands[i-1]
         return batch_tokens, batch_tags
 
-    def get_best_cand(self, tokens, cands, idx, tags, heads, rel_ids, debug=False):
+    def get_best_cand(self, tokens, cands, idx, tags, heads, rel_ids, debug=True):
         batch_tokens, batch_tags = self.gen_cand_batch(tokens, cands, idx, tags)
         importance = self.calc_importance(batch_tokens, batch_tags, heads, rel_ids, debug)
         # minus 1 for the first
@@ -454,6 +454,7 @@ class Attacker(object):
 
     def calc_perplexity(self, tokens):
         input_ids = convert_tokens_to_ids(self.adv_tokenizer, tokens)
+        input_ids = [self.adv_tokenizer.encode(' '.join(t)) for t in tokens]
         outputs = self.adv_lm(input_ids)
         # (batch, seq_len, voc_size)
         logits = outputs[0]
@@ -469,7 +470,7 @@ class Attacker(object):
         return perplexity
 
     def filter_by_lm(self, tokens, cands, idx, debug=False):
-        batch_tokens, _ = self.gen_cand_batch(tokens, cands, idx, tags)
+        batch_tokens, _ = self.gen_cand_batch(tokens, cands, idx, tokens)
         perplexity = self.calc_perplexity(batch_tokens)
         if debug:
             for perp, tokens in zip(perplexity, batch_tokens):
@@ -709,11 +710,11 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
         accum_total_err = 1
     if accum_total_err_nopunc == 0:
         accum_total_err_nopunc = 1
-    print('Error Token: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%' % (
-        accum_ucorr_err, accum_lcorr_err, accum_total_err, accum_ucorr_err * 100 / accum_total_err, accum_lcorr_err * 100 / accum_total_err))
-    print('Error Token Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%' % (
-        accum_ucorr_err_nopunc, accum_lcorr_err_nopunc, accum_total_err_nopunc, 
-        accum_ucorr_err_nopunc * 100 / accum_total_err_nopunc, accum_lcorr_err_nopunc * 100 / accum_total_err_nopunc))
+    #print('Error Token: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%' % (
+    #    accum_ucorr_err, accum_lcorr_err, accum_total_err, accum_ucorr_err * 100 / accum_total_err, accum_lcorr_err * 100 / accum_total_err))
+    #print('Error Token Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%' % (
+    #    accum_ucorr_err_nopunc, accum_lcorr_err_nopunc, accum_total_err_nopunc, 
+    #    accum_ucorr_err_nopunc * 100 / accum_total_err_nopunc, accum_lcorr_err_nopunc * 100 / accum_total_err_nopunc))
 
     print('Attack: success/total examples = %d/%d, Average change score: %.2f, edit dist: %.2f, change-edit ratio: %.2f' % (
         accum_success_attack, accum_total_sent, accum_total_change/accum_total_sent, accum_total_edit/accum_total_sent, accum_total_change/accum_total_edit))
@@ -820,8 +821,8 @@ def parse(args):
         candidates = pickle.load(open(args.cand, 'rb'))
     vocab = json.load(open(args.vocab, 'r'))
     if args.adv_lm_path is not None:
-        adv_tokenizer = AutoTokenizer.from_pretrained(path)
-        adv_lm = AutoModelWithLMHead.from_pretrained(path)
+        adv_tokenizer = AutoTokenizer.from_pretrained(args.adv_lm_path)
+        adv_lm = AutoModelWithLMHead.from_pretrained(args.adv_lm_path)
         adv_lms = (adv_tokenizer,adv_lm)
     else:
         adv_lms = None
