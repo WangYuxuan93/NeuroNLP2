@@ -453,21 +453,20 @@ class Attacker(object):
         return word_rank, importance
 
     def calc_perplexity(self, tokens):
-        #input_ids = convert_tokens_to_ids(self.adv_tokenizer, tokens)
-        all_wordpiece_list = [self.adv_tokenizer.encode(' '.join(t)) for t in tokens]
-        all_wordpiece_max_len = max([len(w) for w in all_wordpiece_list])
-        all_wordpiece = np.stack(
-          [np.pad(a, (0, all_wordpiece_max_len - len(a)), 'constant', constant_values=self.adv_tokenizer.pad_token_id) for a in all_wordpiece_list])
-        input_ids = torch.from_numpy(all_wordpiece)
+        lines = [' '.join(t) for t in tokens]
+        batch_encoding = self.adv_tokenizer.batch_encode_plus(lines, add_special_tokens=True, max_length=128)
+        examples = [torch.tensor(b,dtype=torch.long) for b in batch_encoding["input_ids"]]
+        input_ids = torch.nn.utils.rnn.pad_sequence(examples, batch_first=True)
         outputs = self.adv_lm(input_ids)
         # (batch, seq_len, voc_size)
         logits = outputs[0]
-        loss_fct = nn.torch.CrossEntropyLoss(reduction='none')
+        loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
         # Shift so that tokens < n predict n
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = input_ids[..., 1:].contiguous()
         # (batch, seq_len)
-        loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+        loss = loss_fct(shift_logits.transpose(1,2), shift_labels)
+        #loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
         # (batch)
         loss = loss.mean(-1)
         perplexity = torch.exp(loss).cpu().numpy()
@@ -478,7 +477,7 @@ class Attacker(object):
         perplexity = self.calc_perplexity(batch_tokens)
         if debug:
             for perp, tokens in zip(perplexity, batch_tokens):
-                print ("sent (perp={}):\n".format(perp), " ".join(tokens))
+                print ("sent (perp={}):\n".format(perp), " ".join(tokens[:idx])+" </"+tokens[idx]+"/> "+" ".join(tokens[idx+1:]))
         return cands
         
     def attack(self, tokens, tags, heads, rel_ids, debug=False):
@@ -534,7 +533,7 @@ class Attacker(object):
             cands = neigbhours_list[idx]
             # filter with language model
             if self.adv_lm is not None:
-                cands = self.filter_by_lm(adv_tokens, cands, idx)
+                cands = self.filter_by_lm(adv_tokens, cands, idx, True)
             cand_rank, importances = self.get_best_cand(adv_tokens, cands, idx, tags, heads, rel_ids, debug)
             # this means the biggest change is 0
             if cand_rank[0] == -1: continue
