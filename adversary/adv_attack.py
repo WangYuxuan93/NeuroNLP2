@@ -7,6 +7,7 @@ import sys
 import gc
 import json
 import pickle
+import nltk
 
 current_path = os.path.dirname(os.path.realpath(__file__))
 root_path = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
@@ -460,9 +461,13 @@ class Attacker(object):
         x_len = len(tokens)
         tag_list = ['JJ', 'NN', 'RB', 'VB']
         neigbhours_list = []
+        stop_words = nltk.corpus.stopwords.words('english')
         for i in range(x_len):
             #print (adv_tokens[i], self._word2id(adv_tokens[i]))
             if self._word2id(adv_tokens[i]) not in range(1, 50000):
+                neigbhours_list.append([])
+                continue
+            if adv_tokens[i] in stop_words:
                 neigbhours_list.append([])
                 continue
             tag = tags[i]

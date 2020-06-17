@@ -63,5 +63,5 @@ class CoNLLXWriter(object):
                     layer = '#layer-'+str(heads_by_layer[i, j])
                     self.__source_file.write('%d\t%s\t_\t_\t%s\t_\t%d\t%s\t%s\t%s\t_\n' % (j, w, p, h, t, layer, adv_flag))
                 else:
-                    self.__source_file.write('%d\t%s\t_\t_\t%s\t_\t%d\t%s_\t%s\t_\n' % (j, w, p, h, t, adv_flag))
+                    self.__source_file.write('%d\t%s\t_\t_\t%s\t_\t%d\t%s\t_\t%s\t_\n' % (j, w, p, h, t, adv_flag))
             self.__source_file.write('\n')
