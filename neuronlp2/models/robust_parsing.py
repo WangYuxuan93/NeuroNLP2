@@ -716,5 +716,3 @@ class RobustParser(nn.Module):
         # compute lengths
         length = mask.sum(dim=1).long().cpu().numpy()
         return parser.decode_MST(energy.cpu().numpy(), length, leading_symbolic=leading_symbolic, labeled=True)
-
-
