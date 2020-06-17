@@ -247,12 +247,17 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
            (accum_root_corr, accum_total_root, accum_total_inst)
 
 class Attacker(object):
-    def __init__(self, model, candidates, vocab, rel_importance=0.5, alphabets=None, tokenizer=None, device=None,
-                symbolic_root=True, symbolic_end=False, mask_out_root=False, max_batch_size=3):
+    def __init__(self, model, candidates, vocab, adv_lms=None, rel_importance=0.5, alphabets=None, 
+                tokenizer=None, device=None, symbolic_root=True, symbolic_end=False, 
+                mask_out_root=False, max_batch_size=3):
         self.model = model
         self.candidates = candidates
         self.word2id = vocab
         self.id2word = {i:w for (w,i) in vocab.items()}
+        if adv_lms is not None:
+            self.adv_tokenizer, self.adv_lm = adv_lms
+        else:
+            self.adv_tokenizer, self.adv_lm = None, None
         if alphabets is not None:
             self.word_alphabet, self.char_alphabet, self.pos_alphabet, self.rel_alphabet, self.pretrained_alphabet = alphabets
         self.tokenizer = tokenizer
@@ -285,7 +290,7 @@ class Attacker(object):
         if not self.model.hyps['input']['use_char']:
             chars = None
         if not self.model.pretrained_lm == "none":
-            bpes, first_idx = convert_tokens_to_ids(tokenizer, data['SRC'])
+            bpes, first_idx = convert_tokens_to_ids(self.tokenizer, tokens)
             bpes = bpes.to(device)
             first_idx = first_idx.to(device)
         else:
@@ -446,6 +451,30 @@ class Attacker(object):
             print ("importance:\n", importance)
             print ("word_rank:\n", word_rank)
         return word_rank, importance
+
+    def calc_perplexity(self, tokens):
+        input_ids = convert_tokens_to_ids(self.adv_tokenizer, tokens)
+        outputs = self.adv_lm(input_ids)
+        # (batch, seq_len, voc_size)
+        logits = outputs[0]
+        loss_fct = nn.torch.CrossEntropyLoss(reduction='none')
+        # Shift so that tokens < n predict n
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels = input_ids[..., 1:].contiguous()
+        # (batch, seq_len)
+        loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+        # (batch)
+        loss = loss.mean(-1)
+        perplexity = torch.exp(loss).cpu().numpy()
+        return perplexity
+
+    def filter_by_lm(self, tokens, cands, idx, debug=False):
+        batch_tokens, _ = self.gen_cand_batch(tokens, cands, idx, tags)
+        perplexity = self.calc_perplexity(batch_tokens)
+        if debug:
+            for perp, tokens in zip(perplexity, batch_tokens):
+                print ("sent (perp={}):\n".format(perp), " ".join(tokens))
+        return cands
         
     def attack(self, tokens, tags, heads, rel_ids, debug=False):
         """
@@ -498,6 +527,9 @@ class Attacker(object):
             # skip the edit for ROOT
             if self.symbolic_root and idx == 0: continue
             cands = neigbhours_list[idx]
+            # filter with language model
+            if self.adv_lm is not None:
+                cands = self.filter_by_lm(adv_tokens, cands, idx)
             cand_rank, importances = self.get_best_cand(adv_tokens, cands, idx, tags, heads, rel_ids, debug)
             # this means the biggest change is 0
             if cand_rank[0] == -1: continue
@@ -787,8 +819,14 @@ def parse(args):
     else:
         candidates = pickle.load(open(args.cand, 'rb'))
     vocab = json.load(open(args.vocab, 'r'))
+    if args.adv_lm_path is not None:
+        adv_tokenizer = AutoTokenizer.from_pretrained(path)
+        adv_lm = AutoModelWithLMHead.from_pretrained(path)
+        adv_lms = (adv_tokenizer,adv_lm)
+    else:
+        adv_lms = None
     alphabets = word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, pretrained_alphabet
-    attacker = Attacker(network, candidates, vocab, alphabets=alphabets, tokenizer=tokenizer, device=device)
+    attacker = Attacker(network, candidates, vocab, adv_lms=adv_lms, alphabets=alphabets, tokenizer=tokenizer, device=device)
     #tokens = ["_ROOT", "The", "Dow", "fell", "22.6", "%", "on", "black", "Monday"]#, "."]
     #tags = ["_ROOT_POS", "DT", "NNP", "VBD", "CD", ".", "IN", "NNP", "NNP"]#, "."]
     #heads = [0, 2, 3, 0, 5, 3, 3, 8, 6]#, 3]
@@ -886,6 +924,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--dev', help='path for dev file.')
     args_parser.add_argument('--test', help='path for test file.', required=True)
     args_parser.add_argument('--model_path', help='path for saving model file.', required=True)
+    args_parser.add_argument('--adv_lm_path', help='path for pretrained language model (gpt2) for adv filtering')
     args_parser.add_argument('--output_filename', type=str, help='output filename for parse')
     args_parser.add_argument('--adv_filename', type=str, help='output adversarial filename')
 
