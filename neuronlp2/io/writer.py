@@ -43,21 +43,25 @@ class CoNLLXWriter(object):
     def close(self):
         self.__source_file.close()
 
-    def write(self, word, pos, head, type, lengths, symbolic_root=False, symbolic_end=False, src_words=None, heads_by_layer=None):
+    def write(self, word, pos, head, type, lengths, symbolic_root=False, symbolic_end=False, src_words=None, adv_words=None, heads_by_layer=None):
         batch_size, _ = word.shape
         start = 1 if symbolic_root else 0
         end = 1 if symbolic_end else 0
         for i in range(batch_size):
             for j in range(start, lengths[i] - end):
+                adv_flag = '_'
                 w = self.__word_alphabet.get_instance(word[i, j])
                 if w == '<_UNK>' and src_words is not None:
                     w = src_words[i][j]
+                if adv_words is not None and adv_words[i][j] != w:
+                    adv_flag = '['+w+']'
+                    w = adv_words[i][j]
                 p = self.__pos_alphabet.get_instance(pos[i, j])
                 t = self.__type_alphabet.get_instance(type[i, j])
                 h = head[i, j]
                 if heads_by_layer is not None:
                     layer = '#layer-'+str(heads_by_layer[i, j])
-                    self.__source_file.write('%d\t%s\t_\t_\t%s\t_\t%d\t%s\t%s\n' % (j, w, p, h, t, layer))
+                    self.__source_file.write('%d\t%s\t_\t_\t%s\t_\t%d\t%s\t%s\t%s\t_\n' % (j, w, p, h, t, layer, adv_flag))
                 else:
-                    self.__source_file.write('%d\t%s\t_\t_\t%s\t_\t%d\t%s\n' % (j, w, p, h, t))
+                    self.__source_file.write('%d\t%s\t_\t_\t%s\t_\t%d\t%s_\t%s\t_\n' % (j, w, p, h, t, adv_flag))
             self.__source_file.write('\n')
