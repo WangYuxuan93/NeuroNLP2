@@ -453,8 +453,12 @@ class Attacker(object):
         return word_rank, importance
 
     def calc_perplexity(self, tokens):
-        input_ids = convert_tokens_to_ids(self.adv_tokenizer, tokens)
-        input_ids = [self.adv_tokenizer.encode(' '.join(t)) for t in tokens]
+        #input_ids = convert_tokens_to_ids(self.adv_tokenizer, tokens)
+        all_wordpiece_list = [self.adv_tokenizer.encode(' '.join(t)) for t in tokens]
+        all_wordpiece_max_len = max([len(w) for w in all_wordpiece_list])
+        all_wordpiece = np.stack(
+          [np.pad(a, (0, all_wordpiece_max_len - len(a)), 'constant', constant_values=self.adv_tokenizer.pad_token_id) for a in all_wordpiece_list])
+        input_ids = torch.from_numpy(all_wordpiece)
         outputs = self.adv_lm(input_ids)
         # (batch, seq_len, voc_size)
         logits = outputs[0]
