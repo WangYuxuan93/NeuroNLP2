@@ -296,8 +296,8 @@ class Attacker(object):
             chars = None
         if not self.model.pretrained_lm == "none":
             bpes, first_idx = convert_tokens_to_ids(self.tokenizer, tokens)
-            bpes = bpes.to(device)
-            first_idx = first_idx.to(device)
+            bpes = bpes.to(self.device)
+            first_idx = first_idx.to(self.device)
         else:
             bpes, first_idx = None, None
         if not self.model.lan_emb_as_input:
@@ -466,6 +466,7 @@ class Attacker(object):
         batch_encoding = self.adv_tokenizer.batch_encode_plus(lines, add_special_tokens=True, max_length=128)
         examples = [torch.tensor(b,dtype=torch.long) for b in batch_encoding["input_ids"]]
         input_ids = torch.nn.utils.rnn.pad_sequence(examples, batch_first=True)
+        input_ids = input_ids.to(self.device)
         outputs = self.adv_lm(input_ids)
         # (batch, seq_len, voc_size)
         logits = outputs[0]
@@ -555,11 +556,11 @@ class Attacker(object):
             change_score = self.get_best_cand(adv_tokens, cands, idx, tags, heads, rel_ids, debug==2)
             change_rank = (-change_score).argsort()
             # this means the biggest change is 0
-            if change_score[change_rank[0]] == 0: continue
+            if change_score[change_rank[0]] <= 0: continue
             # filter with language model
             if self.adv_lm is not None:
                 # (cand_size)
-                perp_diff = self.get_perp_diff(adv_tokens, cands, idx, True)
+                perp_diff = self.get_perp_diff(adv_tokens, cands, idx, debug==2)
                 blocked_perp_diff = np.where(perp_diff>0, perp_diff, 0)
                 # penalize the score for disfluency substitution
                 # if the perplexity of new sent is lower than the original one, no bonus
@@ -593,6 +594,8 @@ class Attacker(object):
                     if self.adv_lm is not None:
                         print ("perp diff: {}\nscores: {}".format(perp_diff, score))
                 break
+        if adv_tokens == tokens:
+            return None
         return adv_tokens, num_edit, total_score, total_change_score, total_perp_diff
 
 def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, pos_alphabet, 
@@ -671,6 +674,7 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
             if debug == 1: print ("original sent:", adv_tokens)
             result = attacker.attack(adv_tokens, adv_postags, adv_heads, adv_rels, debug=debug)
             if result is None:
+                adv_src.append(adv_tokens)
                 continue
             adv_tokens, num_edit, total_score, total_change_score, total_perp_diff = result
             accum_success_attack += 1
@@ -875,6 +879,7 @@ def parse(args):
     if args.adv_lm_path is not None:
         adv_tokenizer = AutoTokenizer.from_pretrained(args.adv_lm_path)
         adv_lm = AutoModelWithLMHead.from_pretrained(args.adv_lm_path)
+        adv_lm = adv_lm.to(device)
         adv_lms = (adv_tokenizer,adv_lm)
     else:
         adv_lms = None
