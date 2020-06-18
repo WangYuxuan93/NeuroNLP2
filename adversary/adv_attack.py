@@ -247,9 +247,9 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
            (accum_root_corr, accum_total_root, accum_total_inst)
 
 class Attacker(object):
-    def __init__(self, model, candidates, vocab, adv_lms=None, rel_importance=0.5, alphabets=None, 
-                tokenizer=None, device=None, symbolic_root=True, symbolic_end=False, 
-                mask_out_root=False, max_batch_size=3):
+    def __init__(self, model, candidates, vocab, adv_lms=None, rel_ratio=0.5, fluency_ratio=0.2,
+                max_perp_diff_per_token=0.8, alphabets=None, tokenizer=None, device=None, 
+                symbolic_root=True, symbolic_end=False, mask_out_root=False, max_batch_size=32):
         self.model = model
         self.candidates = candidates
         self.word2id = vocab
@@ -265,8 +265,13 @@ class Attacker(object):
         self.symbolic_root = symbolic_root
         self.symbolic_end = symbolic_end
         self.mask_out_root = mask_out_root
-        assert rel_importance >= 0 and rel_importance <= 1
-        self.rel_importance = rel_importance
+        assert rel_ratio >= 0 and rel_ratio <= 1
+        self.rel_ratio = rel_ratio
+        self.fluency_ratio = fluency_ratio
+        self.max_perp_diff_per_token = max_perp_diff_per_token
+        logger = get_logger("Attacker")
+        logger.info("Relation ratio:{}, Fluency ratio:{}".format(rel_ratio, fluency_ratio))
+        logger.info("Max perplexity difference per token:{}".format(max_perp_diff_per_token))
 
     def _word2id(self, word):
         if word in self.word2id:
@@ -413,7 +418,7 @@ class Attacker(object):
             print ("mask:\n", rels_change_mask)
             print ("rels change:\n", rels_change)
         
-        importance = (1-self.rel_importance) * heads_change + self.rel_importance * rels_change
+        importance = (1-self.rel_ratio) * heads_change + self.rel_ratio * rels_change
         return importance
 
     def calc_word_rank(self, tokens, tags, heads, rel_ids, debug=False):
@@ -441,19 +446,23 @@ class Attacker(object):
             batch_tokens[i][idx] = cands[i-1]
         return batch_tokens, batch_tags
 
-    def get_best_cand(self, tokens, cands, idx, tags, heads, rel_ids, debug=True):
+    def get_best_cand(self, tokens, cands, idx, tags, heads, rel_ids, debug=False):
         batch_tokens, batch_tags = self.gen_cand_batch(tokens, cands, idx, tags)
-        importance = self.calc_importance(batch_tokens, batch_tags, heads, rel_ids, debug)
-        # minus 1 for the first
-        word_rank = (-importance).argsort() - 1
+        # (cand_size+1), the 1st is the original sentence
+        change_score = self.calc_importance(batch_tokens, batch_tags, heads, rel_ids, debug)
+        # ignore the original sent
+        change_score = change_score[1:]
         if debug:
             #print ("batch tokens:\n", batch_tokens)
-            print ("importance:\n", importance)
-            print ("word_rank:\n", word_rank)
-        return word_rank, importance
+            print ("importance:\n", change_score)
+            #print ("word_rank:\n", word_rank)
+        return change_score
 
     def calc_perplexity(self, tokens):
-        lines = [' '.join(t) for t in tokens]
+        if self.symbolic_root:
+            lines = [' '.join(t) for t in tokens[1:]]
+        else:
+            lines = [' '.join(t) for t in tokens]
         batch_encoding = self.adv_tokenizer.batch_encode_plus(lines, add_special_tokens=True, max_length=128)
         examples = [torch.tensor(b,dtype=torch.long) for b in batch_encoding["input_ids"]]
         input_ids = torch.nn.utils.rnn.pad_sequence(examples, batch_first=True)
@@ -472,13 +481,16 @@ class Attacker(object):
         perplexity = torch.exp(loss).cpu().numpy()
         return perplexity
 
-    def filter_by_lm(self, tokens, cands, idx, debug=False):
+    def get_perp_diff(self, tokens, cands, idx, debug=False):
         batch_tokens, _ = self.gen_cand_batch(tokens, cands, idx, tokens)
+        # (cand_size+1), the first is the original sentence
         perplexity = self.calc_perplexity(batch_tokens)
         if debug:
             for perp, tokens in zip(perplexity, batch_tokens):
                 print ("sent (perp={}):\n".format(perp), " ".join(tokens[:idx])+" </"+tokens[idx]+"/> "+" ".join(tokens[idx+1:]))
-        return cands
+        # (cand_size)
+        perp_diff = perplexity[1:] - perplexity[0]
+        return perp_diff
         
     def attack(self, tokens, tags, heads, rel_ids, debug=False):
         """
@@ -524,36 +536,53 @@ class Attacker(object):
         if np.sum(neighbours_len) == 0:
             return None
         change_edit_ratio = -1
-        total_change = 0
+        total_change_score = 0
+        total_perp_diff = 0.0
+        total_score = 0
         num_edit = 0
+        max_perp_diff = x_len * self.max_perp_diff_per_token
         for idx in word_rank:
             if neighbours_len[idx] == 0: continue
             # skip the edit for ROOT
             if self.symbolic_root and idx == 0: continue
             cands = neigbhours_list[idx]
+            # (cand_size)
+            change_score = self.get_best_cand(adv_tokens, cands, idx, tags, heads, rel_ids, debug)
+            change_rank = (-change_score).argsort()
+            # this means the biggest change is 0
+            if change_score[change_rank[0]] == 0: continue
             # filter with language model
             if self.adv_lm is not None:
-                cands = self.filter_by_lm(adv_tokens, cands, idx, True)
-            cand_rank, importances = self.get_best_cand(adv_tokens, cands, idx, tags, heads, rel_ids, debug)
-            # this means the biggest change is 0
-            if cand_rank[0] == -1: continue
+                # (cand_size)
+                perp_diff = self.get_perp_diff(adv_tokens, cands, idx, True)
+                blocked_perp_diff = np.where(perp_diff>0, perp_diff, 0)
+                # penalize the score for disfluency substitution
+                # if the perplexity of new sent is lower than the original one, no bonus
+                score = (1 - self.fluency_ratio) * change_score - self.fluency_ratio * blocked_perp_diff
+            else:
+                score = change_score
+            cand_rank = (-score).argsort()
             best_cand = cands[cand_rank[0]]
-            best_imp = importances[cand_rank[0]+1]
-            new_ratio = (total_change + best_imp) / (num_edit + 1)
-            if new_ratio > change_edit_ratio:
+            best_c_score = change_score[cand_rank[0]]
+            best_score = score[cand_rank[0]]
+            new_ratio = (total_score + best_score) / (num_edit + 1)
+            if (self.adv_lm is not None and total_perp_diff<=max_perp_diff) or (new_ratio > change_edit_ratio):
                 change_edit_ratio = new_ratio
                 num_edit += 1
-                total_change += best_imp
+                total_change_score += best_c_score
+                total_score += best_score
                 adv_tokens[idx] = best_cand
+                if self.adv_lm is not None:
+                    total_perp_diff += blocked_perp_diff[cand_rank[0]]
                 if debug:
                     print ("Keeping substitute {} in idx={} for {} (tot_change:{}, num_edit:{}, new score:{})".format(
-                        best_cand, idx, adv_tokens, total_change, num_edit, new_ratio))
+                        best_cand, idx, adv_tokens, total_change_score, num_edit, new_ratio))
             else:
                 if debug:
                     print ("Stopping, New best substitute {} in idx={} for {} (tot_change:{}, num_edit:{}, new score:{})".format(
-                        best_cand, idx, adv_tokens, total_change+best_imp, num_edit+1, new_ratio))
+                        best_cand, idx, adv_tokens, total_change_score+best_c_score, num_edit+1, new_ratio))
                 break
-        return adv_tokens, num_edit, total_change
+        return adv_tokens, num_edit, total_score, total_change_score, total_perp_diff
 
 def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, pos_alphabet, 
         device, beam=1, batch_size=256, write_to_tmp=True, prev_best_lcorr=0, prev_best_ucorr=0,
@@ -582,7 +611,9 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
     accum_total_err_nopunc = 0
 
     accum_total_edit = 0
-    accum_total_change = 0.0
+    accum_total_change_score = 0.0
+    accum_total_score = 0.0
+    accum_total_perp_diff = 0.0
     accum_success_attack = 0
     accum_total_sent = 0.0
 
@@ -627,10 +658,12 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
             result = attacker.attack(adv_tokens, adv_postags, adv_heads, adv_rels, debug=debug>=2)
             if result is None:
                 continue
-            adv_tokens, num_edit, total_change = result
+            adv_tokens, num_edit, total_score, total_change_score, total_perp_diff = result
             accum_success_attack += 1
             accum_total_edit += num_edit
-            accum_total_change += total_change
+            accum_total_score += total_score
+            accum_total_change_score += total_change_score
+            accum_total_perp_diff += total_perp_diff
             if debug: print ("adv sent:", adv_tokens)
             adv_src.append(adv_tokens)
             adv_words[i][:length] = torch.from_numpy(np.array([word_alphabet.get_index(w) for w in adv_tokens]))
@@ -719,8 +752,10 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
     #    accum_ucorr_err_nopunc, accum_lcorr_err_nopunc, accum_total_err_nopunc, 
     #    accum_ucorr_err_nopunc * 100 / accum_total_err_nopunc, accum_lcorr_err_nopunc * 100 / accum_total_err_nopunc))
 
-    print('Attack: success/total examples = %d/%d, Average change score: %.2f, edit dist: %.2f, change-edit ratio: %.2f' % (
-        accum_success_attack, accum_total_sent, accum_total_change/accum_total_sent, accum_total_edit/accum_total_sent, accum_total_change/accum_total_edit))
+    print('Attack: success/total examples = %d/%d, Average score: %.2f, change score: %.2f, perp diff: %.2f, edit dist: %.2f, change-edit ratio: %.2f' % (
+        accum_success_attack, accum_total_sent, accum_total_score/accum_total_sent, 
+        accum_total_change_score/accum_total_sent, accum_total_perp_diff/accum_total_sent, 
+        accum_total_edit/accum_total_sent, accum_total_change_score/accum_total_edit))
 
     if not write_to_tmp:
         if prev_best_lcorr < accum_lcorr_nopunc or (prev_best_lcorr == accum_lcorr_nopunc and prev_best_ucorr < accum_ucorr_nopunc):
@@ -830,7 +865,9 @@ def parse(args):
     else:
         adv_lms = None
     alphabets = word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, pretrained_alphabet
-    attacker = Attacker(network, candidates, vocab, adv_lms=adv_lms, alphabets=alphabets, tokenizer=tokenizer, device=device)
+    attacker = Attacker(network, candidates, vocab, adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, 
+                        fluency_ratio=args.adv_fluency_ratio, max_perp_diff_per_token=args.max_perp_diff_per_token,
+                        alphabets=alphabets, tokenizer=tokenizer, device=device)
     #tokens = ["_ROOT", "The", "Dow", "fell", "22.6", "%", "on", "black", "Monday"]#, "."]
     #tags = ["_ROOT_POS", "DT", "NNP", "VBD", "CD", ".", "IN", "NNP", "NNP"]#, "."]
     #heads = [0, 2, 3, 0, 5, 3, 3, 8, 6]#, 3]
@@ -931,6 +968,9 @@ if __name__ == '__main__':
     args_parser.add_argument('--adv_lm_path', help='path for pretrained language model (gpt2) for adv filtering')
     args_parser.add_argument('--output_filename', type=str, help='output filename for parse')
     args_parser.add_argument('--adv_filename', type=str, help='output adversarial filename')
+    args_parser.add_argument('--adv_rel_ratio', type=float, default=0.5, help='Relation importance in adversarial attack')
+    args_parser.add_argument('--adv_fluency_ratio', type=float, default=0.2, help='Fluency importance in adversarial attack')
+    args_parser.add_argument('--max_perp_diff_per_token', type=float, default=0.8, help='Maximum allowed perplexity difference per token in adversarial attack')
 
     args = args_parser.parse_args()
     parse(args)
