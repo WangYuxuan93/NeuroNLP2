@@ -248,7 +248,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
 
 class Attacker(object):
     def __init__(self, model, candidates, vocab, adv_lms=None, rel_ratio=0.5, fluency_ratio=0.2,
-                max_perp_diff_per_token=0.8, alphabets=None, tokenizer=None, device=None, 
+                max_perp_diff_per_token=0.8, alphabets=None, tokenizer=None, device=None, lm_device=None,
                 symbolic_root=True, symbolic_end=False, mask_out_root=False, batch_size=32):
         self.model = model
         self.candidates = candidates
@@ -262,6 +262,7 @@ class Attacker(object):
             self.word_alphabet, self.char_alphabet, self.pos_alphabet, self.rel_alphabet, self.pretrained_alphabet = alphabets
         self.tokenizer = tokenizer
         self.device = device
+        self.lm_device = lm_device
         self.symbolic_root = symbolic_root
         self.symbolic_end = symbolic_end
         self.mask_out_root = mask_out_root
@@ -473,10 +474,9 @@ class Attacker(object):
             lines = [' '.join(t) for t in tokens]
         batch_encoding = self.adv_tokenizer.batch_encode_plus(lines, add_special_tokens=True, max_length=128)
         examples = [torch.tensor(b,dtype=torch.long) for b in batch_encoding["input_ids"]]
-        input_ids = torch.nn.utils.rnn.pad_sequence(examples, batch_first=True)
+        input_ids = torch.nn.utils.rnn.pad_sequence(examples, batch_first=True).to(self.lm_device)
         logit_list = []
         for batch in self.get_batch(examples):
-            batch = batch.to(self.device)
             outputs = self.adv_lm(batch)
             # (batch_size, seq_len, voc_size)
             logits = outputs[0]
@@ -889,17 +889,24 @@ def parse(args):
     else:
         candidates = pickle.load(open(args.cand, 'rb'))
     vocab = json.load(open(args.vocab, 'r'))
+    num_gpu = torch.cuda.device_count()
+    if num_gpu >= 2:
+        lm_device = torch.device('cuda', 1)
+    else:
+        lm_device = device
+    logger.info("parser device:{}, lm device:{}".format(device, lm_device))
     if args.adv_lm_path is not None:
         adv_tokenizer = AutoTokenizer.from_pretrained(args.adv_lm_path)
         adv_lm = AutoModelWithLMHead.from_pretrained(args.adv_lm_path)
-        adv_lm = adv_lm.to(device)
+        adv_lm = adv_lm.to(lm_device)
         adv_lms = (adv_tokenizer,adv_lm)
     else:
         adv_lms = None
     alphabets = word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, pretrained_alphabet
     attacker = Attacker(network, candidates, vocab, adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, 
                         fluency_ratio=args.adv_fluency_ratio, max_perp_diff_per_token=args.max_perp_diff_per_token,
-                        alphabets=alphabets, tokenizer=tokenizer, device=device, batch_size=args.adv_batch_size)
+                        alphabets=alphabets, tokenizer=tokenizer, device=device, lm_device=lm_device,
+                        batch_size=args.adv_batch_size)
     #tokens = ["_ROOT", "The", "Dow", "fell", "22.6", "%", "on", "black", "Monday"]#, "."]
     #tags = ["_ROOT_POS", "DT", "NNP", "VBD", "CD", ".", "IN", "NNP", "NNP"]#, "."]
     #heads = [0, 2, 3, 0, 5, 3, 3, 8, 6]#, 3]
