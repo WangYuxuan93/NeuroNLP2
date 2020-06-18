@@ -474,25 +474,26 @@ class Attacker(object):
             lines = [' '.join(t) for t in tokens]
         batch_encoding = self.adv_tokenizer.batch_encode_plus(lines, add_special_tokens=True, max_length=128)
         examples = [torch.tensor(b,dtype=torch.long) for b in batch_encoding["input_ids"]]
-        input_ids = torch.nn.utils.rnn.pad_sequence(examples, batch_first=True).to(self.lm_device)
-        logit_list = []
+        input_ids = torch.nn.utils.rnn.pad_sequence(examples, batch_first=True)
+        loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
+        perp_list = []
         for batch in self.get_batch(input_ids):
+            batch = batch.to(self.lm_device)
             outputs = self.adv_lm(batch)
             # (batch_size, seq_len, voc_size)
             logits = outputs[0]
-            logit_list.append(logits)
-        # (cand_size+1, seq_len, voc_size)
-        logits = torch.cat(logit_list, 0)
-        loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
-        # Shift so that tokens < n predict n
-        shift_logits = logits[..., :-1, :].contiguous()
-        shift_labels = input_ids[..., 1:].contiguous()
-        # (batch, seq_len)
-        loss = loss_fct(shift_logits.transpose(1,2), shift_labels)
-        #loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
-        # (batch)
-        loss = loss.mean(-1)
-        perplexity = torch.exp(loss).cpu().numpy()
+            # (batch, seq_len, voc_size)
+            logits = torch.cat(logit_list, 0)
+            # Shift so that tokens < n predict n
+            shift_logits = logits[..., :-1, :].contiguous()
+            shift_labels = batch[..., 1:].contiguous()
+            # (batch, seq_len)
+            loss = loss_fct(shift_logits.transpose(1,2), shift_labels)
+            # (batch)
+            loss = loss.mean(-1)
+            perplexity = torch.exp(loss).cpu().numpy()
+            perp_list.append(perplexity)
+        perplexity = np.concatenate(perp_list, axis=0)
         return perplexity
 
     def get_perp_diff(self, tokens, cands, idx, debug=False):
