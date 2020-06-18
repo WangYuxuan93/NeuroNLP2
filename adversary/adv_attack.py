@@ -482,8 +482,6 @@ class Attacker(object):
             outputs = self.adv_lm(batch)
             # (batch_size, seq_len, voc_size)
             logits = outputs[0]
-            # (batch, seq_len, voc_size)
-            logits = torch.cat(logit_list, 0)
             # Shift so that tokens < n predict n
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = batch[..., 1:].contiguous()
@@ -558,7 +556,7 @@ class Attacker(object):
         max_perp_diff = x_len * self.max_perp_diff_per_token
 
         if debug == 3:
-            print ("tokens:\n", adv_tokens)
+            #print ("tokens:\n", adv_tokens)
             print ("importance rank:\n", word_rank)
 
         for idx in word_rank:
@@ -685,6 +683,7 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
             if debug == 3: 
                 print ("\n###############################")
                 print ("Attacking sent-{}".format(int(accum_total_sent)-1))
+                print ("tokens:\n", adv_tokens)
             if debug == 1: print ("original sent:", adv_tokens)
             result = attacker.attack(adv_tokens, adv_postags, adv_heads, adv_rels, debug=debug)
             if result is None:
