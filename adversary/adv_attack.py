@@ -502,7 +502,7 @@ class Attacker(object):
         Output:
         """
         adv_tokens = tokens.copy()
-        word_rank = self.calc_word_rank(tokens, tags, heads, rel_ids, debug)
+        word_rank = self.calc_word_rank(tokens, tags, heads, rel_ids, debug==2)
         x_len = len(tokens)
         tag_list = ['JJ', 'NN', 'RB', 'VB']
         neigbhours_list = []
@@ -541,13 +541,18 @@ class Attacker(object):
         total_score = 0
         num_edit = 0
         max_perp_diff = x_len * self.max_perp_diff_per_token
+
+        if debug == 3:
+            print ("tokens:\n", adv_tokens)
+            print ("importance rank:\n", word_rank)
+
         for idx in word_rank:
             if neighbours_len[idx] == 0: continue
             # skip the edit for ROOT
             if self.symbolic_root and idx == 0: continue
             cands = neigbhours_list[idx]
             # (cand_size)
-            change_score = self.get_best_cand(adv_tokens, cands, idx, tags, heads, rel_ids, debug)
+            change_score = self.get_best_cand(adv_tokens, cands, idx, tags, heads, rel_ids, debug==2)
             change_rank = (-change_score).argsort()
             # this means the biggest change is 0
             if change_score[change_rank[0]] == 0: continue
@@ -574,13 +579,19 @@ class Attacker(object):
                 adv_tokens[idx] = best_cand
                 if self.adv_lm is not None:
                     total_perp_diff += blocked_perp_diff[cand_rank[0]]
-                if debug:
-                    print ("Keeping substitute {} in idx={} for {} (tot_change:{}, num_edit:{}, new score:{})".format(
-                        best_cand, idx, adv_tokens, total_change_score, num_edit, new_ratio))
+                if debug == 3:
+                    print ("--------------------------")
+                    print ("Idx={}, chosen cand:{}, total_change_score:{}, change_edit_ratio:{}\ncands: {}\nchange_scores: {}".format(
+                            idx, best_cand, total_change_score, change_edit_ratio, cands, change_score))
+                    if self.adv_lm is not None:
+                        print ("perp diff: {}\nscores: {}".format(perp_diff, score))
             else:
-                if debug:
-                    print ("Stopping, New best substitute {} in idx={} for {} (tot_change:{}, num_edit:{}, new score:{})".format(
-                        best_cand, idx, adv_tokens, total_change_score+best_c_score, num_edit+1, new_ratio))
+                if debug == 3:
+                    print ("------------Stopping------------")
+                    print ("Idx={}, chosen cand:{}, total_change_score:{}, change_edit_ratio:{}\ncands: {}\nchange_scores: {}".format(
+                            idx, best_cand, total_change_score, change_edit_ratio, cands, change_score))
+                    if self.adv_lm is not None:
+                        print ("perp diff: {}\nscores: {}".format(perp_diff, score))
                 break
         return adv_tokens, num_edit, total_score, total_change_score, total_perp_diff
 
@@ -654,8 +665,11 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
             adv_heads = heads[i][:length]
             adv_rels = rels[i][:length]
             adv_rels[0] = 0
-            if debug: print ("original sent:", adv_tokens)
-            result = attacker.attack(adv_tokens, adv_postags, adv_heads, adv_rels, debug=debug>=2)
+            if debug == 3: 
+                print ("\n###############################")
+                print ("Attacking sent-{}".format(int(accum_total_sent)-1))
+            if debug == 1: print ("original sent:", adv_tokens)
+            result = attacker.attack(adv_tokens, adv_postags, adv_heads, adv_rels, debug=debug)
             if result is None:
                 continue
             adv_tokens, num_edit, total_score, total_change_score, total_perp_diff = result
@@ -664,7 +678,7 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
             accum_total_score += total_score
             accum_total_change_score += total_change_score
             accum_total_perp_diff += total_perp_diff
-            if debug: print ("adv sent:", adv_tokens)
+            if debug == 1: print ("adv sent:", adv_tokens)
             adv_src.append(adv_tokens)
             adv_words[i][:length] = torch.from_numpy(np.array([word_alphabet.get_index(w) for w in adv_tokens]))
         adv_words = adv_words.to(device)
@@ -924,7 +938,7 @@ def parse(args):
         # debug = 1: show orig/adv tokens / debug = 2: show log inside attacker
         attack(attacker, alg, data_test, network, adv_writer, punct_set, word_alphabet, 
             pos_alphabet, device, beam, batch_size=args.batch_size, tokenizer=tokenizer, 
-            multi_lan_iter=multi_lan_iter, debug=0)
+            multi_lan_iter=multi_lan_iter, debug=3)
         print('Time: %.2fs' % (time.time() - start_time))
         
 
