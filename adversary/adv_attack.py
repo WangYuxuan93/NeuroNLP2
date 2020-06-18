@@ -249,7 +249,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
 class Attacker(object):
     def __init__(self, model, candidates, vocab, adv_lms=None, rel_ratio=0.5, fluency_ratio=0.2,
                 max_perp_diff_per_token=0.8, alphabets=None, tokenizer=None, device=None, 
-                symbolic_root=True, symbolic_end=False, mask_out_root=False, max_batch_size=32):
+                symbolic_root=True, symbolic_end=False, mask_out_root=False, batch_size=32):
         self.model = model
         self.candidates = candidates
         self.word2id = vocab
@@ -269,6 +269,7 @@ class Attacker(object):
         self.rel_ratio = rel_ratio
         self.fluency_ratio = fluency_ratio
         self.max_perp_diff_per_token = max_perp_diff_per_token
+        self.batch_size = batch_size
         logger = get_logger("Attacker")
         logger.info("Relation ratio:{}, Fluency ratio:{}".format(rel_ratio, fluency_ratio))
         logger.info("Max perplexity difference per token:{}".format(max_perp_diff_per_token))
@@ -458,6 +459,13 @@ class Attacker(object):
             #print ("word_rank:\n", word_rank)
         return change_score
 
+    def get_batch(self, input_ids):
+        # (cand_size+1, seq_len)
+        data_size = input_ids.size()[0]
+        for start_idx in range(0, data_size, self.batch_size):
+            excerpt = slice(start_idx, start_idx + batch_size)
+            yield input_ids[excerpt, :]
+
     def calc_perplexity(self, tokens):
         if self.symbolic_root:
             lines = [' '.join(t[1:]) for t in tokens]
@@ -466,10 +474,15 @@ class Attacker(object):
         batch_encoding = self.adv_tokenizer.batch_encode_plus(lines, add_special_tokens=True, max_length=128)
         examples = [torch.tensor(b,dtype=torch.long) for b in batch_encoding["input_ids"]]
         input_ids = torch.nn.utils.rnn.pad_sequence(examples, batch_first=True)
-        input_ids = input_ids.to(self.device)
-        outputs = self.adv_lm(input_ids)
-        # (batch, seq_len, voc_size)
-        logits = outputs[0]
+        logit_list = []
+        for batch in self.get_batch(examples):
+            batch = batch.to(self.device)
+            outputs = self.adv_lm(batch)
+            # (batch_size, seq_len, voc_size)
+            logits = outputs[0]
+            logit_list.append(logits)
+        # (cand_size+1, seq_len, voc_size)
+        logits = torch.concat(logit_list, 0)
         loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
         # Shift so that tokens < n predict n
         shift_logits = logits[..., :-1, :].contiguous()
@@ -886,7 +899,7 @@ def parse(args):
     alphabets = word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, pretrained_alphabet
     attacker = Attacker(network, candidates, vocab, adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, 
                         fluency_ratio=args.adv_fluency_ratio, max_perp_diff_per_token=args.max_perp_diff_per_token,
-                        alphabets=alphabets, tokenizer=tokenizer, device=device)
+                        alphabets=alphabets, tokenizer=tokenizer, device=device, batch_size=args.adv_batch_size)
     #tokens = ["_ROOT", "The", "Dow", "fell", "22.6", "%", "on", "black", "Monday"]#, "."]
     #tags = ["_ROOT_POS", "DT", "NNP", "VBD", "CD", ".", "IN", "NNP", "NNP"]#, "."]
     #heads = [0, 2, 3, 0, 5, 3, 3, 8, 6]#, 3]
@@ -990,6 +1003,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--adv_rel_ratio', type=float, default=0.5, help='Relation importance in adversarial attack')
     args_parser.add_argument('--adv_fluency_ratio', type=float, default=0.2, help='Fluency importance in adversarial attack')
     args_parser.add_argument('--max_perp_diff_per_token', type=float, default=0.8, help='Maximum allowed perplexity difference per token in adversarial attack')
+    args_parser.add_argument('--adv_batch_size', type=int, default=16, help='Number of sentences in adv lm each batch')
 
     args = args_parser.parse_args()
     parse(args)
