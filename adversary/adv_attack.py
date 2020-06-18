@@ -464,7 +464,7 @@ class Attacker(object):
         # (cand_size+1, seq_len)
         data_size = input_ids.size()[0]
         for start_idx in range(0, data_size, self.batch_size):
-            excerpt = slice(start_idx, start_idx + batch_size)
+            excerpt = slice(start_idx, start_idx + self.batch_size)
             yield input_ids[excerpt, :]
 
     def calc_perplexity(self, tokens):
@@ -476,13 +476,13 @@ class Attacker(object):
         examples = [torch.tensor(b,dtype=torch.long) for b in batch_encoding["input_ids"]]
         input_ids = torch.nn.utils.rnn.pad_sequence(examples, batch_first=True).to(self.lm_device)
         logit_list = []
-        for batch in self.get_batch(examples):
+        for batch in self.get_batch(input_ids):
             outputs = self.adv_lm(batch)
             # (batch_size, seq_len, voc_size)
             logits = outputs[0]
             logit_list.append(logits)
         # (cand_size+1, seq_len, voc_size)
-        logits = torch.concat(logit_list, 0)
+        logits = torch.cat(logit_list, 0)
         loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
         # Shift so that tokens < n predict n
         shift_logits = logits[..., :-1, :].contiguous()
