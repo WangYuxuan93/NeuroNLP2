@@ -460,7 +460,7 @@ class Attacker(object):
 
     def calc_perplexity(self, tokens):
         if self.symbolic_root:
-            lines = [' '.join(t) for t in tokens[1:]]
+            lines = [' '.join(t[1:]) for t in tokens]
         else:
             lines = [' '.join(t) for t in tokens]
         batch_encoding = self.adv_tokenizer.batch_encode_plus(lines, add_special_tokens=True, max_length=128)
