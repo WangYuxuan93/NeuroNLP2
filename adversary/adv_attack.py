@@ -448,7 +448,7 @@ class Attacker(object):
             batch_tokens[i][idx] = cands[i-1]
         return batch_tokens, batch_tags
 
-    def get_best_cand(self, tokens, cands, idx, tags, heads, rel_ids, debug=False):
+    def get_change_score(self, tokens, cands, idx, tags, heads, rel_ids, debug=False):
         batch_tokens, batch_tags = self.gen_cand_batch(tokens, cands, idx, tags)
         # (cand_size+1), the 1st is the original sentence
         change_score = self.calc_importance(batch_tokens, batch_tags, heads, rel_ids, debug)
@@ -504,6 +504,14 @@ class Attacker(object):
         # (cand_size)
         perp_diff = perplexity[1:] - perplexity[0]
         return perp_diff
+
+    def get_best_cand(self, score, change_score):
+        cand_rank = (-score).argsort()
+        for i in range(len(score)):
+            cand_idx = cand_rank[i]
+            if change_score[cand_idx] > 0:
+                return cand_idx
+        return None
         
     def attack(self, tokens, tags, heads, rel_ids, debug=False):
         """
@@ -569,7 +577,7 @@ class Attacker(object):
             if self.symbolic_root and idx == 0: continue
             cands = neigbhours_list[idx]
             # (cand_size)
-            change_score = self.get_best_cand(adv_tokens, cands, idx, tags, heads, rel_ids, debug==2)
+            change_score = self.get_change_score(adv_tokens, cands, idx, tags, heads, rel_ids, debug==2)
             change_rank = (-change_score).argsort()
             # this means the biggest change is 0
             if change_score[change_rank[0]] <= 0:
@@ -587,10 +595,17 @@ class Attacker(object):
                 score = (1 - self.fluency_ratio) * change_score - self.fluency_ratio * blocked_perp_diff
             else:
                 score = change_score
-            cand_rank = (-score).argsort()
-            best_cand = cands[cand_rank[0]]
-            best_c_score = change_score[cand_rank[0]]
-            best_score = score[cand_rank[0]]
+            best_cand_idx = self.get_best_cand(score, change_score)
+            if best_cand_idx is None:
+                print ("--------------------------")
+                print ("Idx={}({}), can't find best cand, continue\ncands:{}\nchange_scores:{}".format(idx, tokens[idx], cands, change_score))
+                if self.adv_lm is not None:
+                        print ("perp diff: {}\nscores: {}".format(perp_diff, score))
+                continue
+            #cand_rank = (-score).argsort()
+            best_cand = cands[best_cand_idx]
+            best_c_score = change_score[best_cand_idx]
+            best_score = score[best_cand_idx]
             new_ratio = (total_score + best_score) / (num_edit + 1)
             if (self.adv_lm is not None and total_perp_diff<=max_perp_diff) or (new_ratio > change_edit_ratio):
                 change_edit_ratio = new_ratio
@@ -599,7 +614,7 @@ class Attacker(object):
                 total_score += best_score
                 adv_tokens[idx] = best_cand
                 if self.adv_lm is not None:
-                    total_perp_diff += blocked_perp_diff[cand_rank[0]]
+                    total_perp_diff += blocked_perp_diff[best_cand_idx]
                 if debug == 3:
                     print ("--------------------------")
                     print ("Idx={}({}), chosen cand:{}, total_change_score:{}, change_edit_ratio:{}\ncands: {}\nchange_scores: {}".format(
