@@ -560,7 +560,11 @@ class Attacker(object):
             print ("importance rank:\n", word_rank)
 
         for idx in word_rank:
-            if neighbours_len[idx] == 0: continue
+            if neighbours_len[idx] == 0:
+                if debug == 3:
+                    print ("--------------------------")
+                    print ("Idx={}({}), no cands, continue".format(idx, tokens[idx]))
+                continue
             # skip the edit for ROOT
             if self.symbolic_root and idx == 0: continue
             cands = neigbhours_list[idx]
@@ -568,7 +572,11 @@ class Attacker(object):
             change_score = self.get_best_cand(adv_tokens, cands, idx, tags, heads, rel_ids, debug==2)
             change_rank = (-change_score).argsort()
             # this means the biggest change is 0
-            if change_score[change_rank[0]] <= 0: continue
+            if change_score[change_rank[0]] <= 0:
+                if debug == 3:
+                    print ("--------------------------")
+                    print ("Idx={}({}), no cand can make change, continue\ncands:{}\nchange_scores:{}".format(idx, tokens[idx], cands, change_score))
+                continue
             # filter with language model
             if self.adv_lm is not None:
                 # (cand_size)
@@ -594,8 +602,8 @@ class Attacker(object):
                     total_perp_diff += blocked_perp_diff[cand_rank[0]]
                 if debug == 3:
                     print ("--------------------------")
-                    print ("Idx={}, chosen cand:{}, total_change_score:{}, change_edit_ratio:{}\ncands: {}\nchange_scores: {}".format(
-                            idx, best_cand, total_change_score, change_edit_ratio, cands, change_score))
+                    print ("Idx={}({}), chosen cand:{}, total_change_score:{}, change_edit_ratio:{}\ncands: {}\nchange_scores: {}".format(
+                            idx, tokens[idx], best_cand, total_change_score, change_edit_ratio, cands, change_score))
                     if self.adv_lm is not None:
                         print ("perp diff: {}\nscores: {}".format(perp_diff, score))
             else:
