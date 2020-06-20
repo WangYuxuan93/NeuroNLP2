@@ -8,6 +8,11 @@ import gc
 import json
 import pickle
 import nltk
+from nltk.corpus import wordnet as wn
+import spacy
+nlp = spacy.load('en_core_web_sm')
+
+from functools import partial
 
 current_path = os.path.dirname(os.path.realpath(__file__))
 root_path = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
@@ -271,6 +276,7 @@ class Attacker(object):
         self.fluency_ratio = fluency_ratio
         self.max_perp_diff_per_token = max_perp_diff_per_token
         self.batch_size = batch_size
+        self.stop_words = nltk.corpus.stopwords.words('english')
         logger = get_logger("Attacker")
         logger.info("Relation ratio:{}, Fluency ratio:{}".format(rel_ratio, fluency_ratio))
         logger.info("Max perplexity difference per token:{}".format(max_perp_diff_per_token))
@@ -512,6 +518,77 @@ class Attacker(object):
             if change_score[cand_idx] > 0:
                 return cand_idx
         return None
+
+    def _synonym_prefilter_fn(self, token, tag, synonym):
+        lemma = nlp(token)[0].lemma
+        if (len(synonym.text.split()) > 2 or (  # the synonym produced is a phrase
+                synonym.lemma == lemma) or (  # token and synonym are the same
+                synonym.tag_ != tag) or (  # the pos of the token synonyms are different
+                token.lower() == 'be')):  # token is be
+            return False
+        else:
+            return True
+
+    def get_synonyms(self, token, tag):
+        tag_list = ['JJ', 'NN', 'RB', 'VB']
+        if tag[:2] not in tag_list:
+            return []
+        if tag[:2] == 'JJ':
+            pos = 'a'
+        elif tag[:2] == 'NN':
+            pos = 'n'
+        elif tag[:2] == 'RB':
+            pos = 'r'
+        else:
+            pos = 'v'
+
+        wordnet_synonyms = []
+
+        synsets = wn.synsets(token, pos=pos)
+        for synset in synsets:
+            wordnet_synonyms.extend(synset.lemmas())
+        print ("synsets:\n", synsets)
+        synonyms = []
+        for wordnet_synonym in wordnet_synonyms:
+            spacy_synonym = nlp(wordnet_synonym.name().replace('_', ' '))[0]
+            synonyms.append(spacy_synonym)
+        print ("synonyms:\n", synonyms)
+        synonyms = filter(partial(self._synonym_prefilter_fn, token, tag), synonyms)
+        print ("filtered synonyms:\n", [s for s in synonyms])
+        candidate_set = set()
+        for _, synonym in enumerate(synonyms):
+            candidate_word = synonym.text
+            if candidate_word in candidate_set:  # avoid repetition
+                continue
+            candidate_set.add(candidate_word)
+        return candidate_set
+
+    def get_sememe_cands(self, token, tag):
+        tag_list = ['JJ', 'NN', 'RB', 'VB']
+        if self._word2id(token) not in range(1, 50000):
+            return []
+        if token in self.stop_words:
+            return []
+        if tag[:2] not in tag_list:
+            return []
+        if tag[:2] == 'JJ':
+            pos = 'adj'
+        elif tag[:2] == 'NN':
+            pos = 'noun'
+        elif tag[:2] == 'RB':
+            pos = 'adv'
+        else:
+            pos = 'verb'
+        if pos in self.candidates[self._word2id(token)]:
+            return [self._id2word(neighbor) for neighbor in self.candidates[self._word2id(token)][pos]]
+        else:
+            return []
+
+    def get_candidate_set(self, token, tag):
+        sememe_cands = self.get_sememe_cands(token, tag)
+        synonyms = self.get_synonyms(token, tag)
+        candidate_set = sememe_cands
+        return candidate_set
         
     def attack(self, tokens, tags, heads, rel_ids, debug=False):
         """
@@ -527,31 +604,10 @@ class Attacker(object):
         x_len = len(tokens)
         tag_list = ['JJ', 'NN', 'RB', 'VB']
         neigbhours_list = []
-        stop_words = nltk.corpus.stopwords.words('english')
+        #stop_words = nltk.corpus.stopwords.words('english')
         for i in range(x_len):
             #print (adv_tokens[i], self._word2id(adv_tokens[i]))
-            if self._word2id(adv_tokens[i]) not in range(1, 50000):
-                neigbhours_list.append([])
-                continue
-            if adv_tokens[i] in stop_words:
-                neigbhours_list.append([])
-                continue
-            tag = tags[i]
-            if tag[:2] not in tag_list:
-                neigbhours_list.append([])
-                continue
-            if tag[:2] == 'JJ':
-                pos = 'adj'
-            elif tag[:2] == 'NN':
-                pos = 'noun'
-            elif tag[:2] == 'RB':
-                pos = 'adv'
-            else:
-                pos = 'verb'
-            if pos in self.candidates[self._word2id(adv_tokens[i])]:
-                neigbhours_list.append([self._id2word(neighbor) for neighbor in self.candidates[self._word2id(adv_tokens[i])][pos]])
-            else:
-                neigbhours_list.append([])
+            neigbhours_list.append(self.get_candidate_set(adv_tokens[i], tags[i]))
         neighbours_len = [len(x) for x in neigbhours_list]
         #print (neigbhours_list)
         if np.sum(neighbours_len) == 0:
@@ -624,8 +680,8 @@ class Attacker(object):
             else:
                 if debug == 3:
                     print ("------------Stopping------------")
-                    print ("Idx={}, chosen cand:{}, total_change_score:{}, change_edit_ratio:{}\ncands: {}\nchange_scores: {}".format(
-                            idx, best_cand, total_change_score, change_edit_ratio, cands, change_score))
+                    print ("Idx={}({}), chosen cand:{}, total_change_score:{}, change_edit_ratio:{}\ncands: {}\nchange_scores: {}".format(
+                            idx, tokens[idx], best_cand, total_change_score, change_edit_ratio, cands, change_score))
                     if self.adv_lm is not None:
                         print ("perp diff: {}\nscores: {}".format(perp_diff, score))
                 break
@@ -698,7 +754,8 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
         for i in range(len(lengths)):
             accum_total_sent += 1
             length = lengths[i]
-            adv_tokens = [word_alphabet.get_instance(w) for w in words[i][:length]]
+            #adv_tokens = [word_alphabet.get_instance(w) for w in words[i][:length]]
+            adv_tokens = data['SRC'][i]
             adv_postags = [pos_alphabet.get_instance(w) for w in postags[i][:length]]
             adv_heads = heads[i][:length]
             adv_rels = rels[i][:length]
