@@ -252,11 +252,13 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
            (accum_root_corr, accum_total_root, accum_total_inst)
 
 class Attacker(object):
-    def __init__(self, model, candidates, vocab, adv_lms=None, rel_ratio=0.5, fluency_ratio=0.2,
-                max_perp_diff_per_token=0.8, alphabets=None, tokenizer=None, device=None, lm_device=None,
-                symbolic_root=True, symbolic_end=False, mask_out_root=False, batch_size=32):
+    def __init__(self, model, candidates, vocab, synonyms, adv_lms=None, rel_ratio=0.5, fluency_ratio=0.2,
+                max_perp_diff_per_token=0.8, perp_diff_thres=20 ,alphabets=None, tokenizer=None, 
+                device=None, lm_device=None, symbolic_root=True, symbolic_end=False, mask_out_root=False, 
+                batch_size=32):
         self.model = model
         self.candidates = candidates
+        self.synonyms = synonyms
         self.word2id = vocab
         self.id2word = {i:w for (w,i) in vocab.items()}
         if adv_lms is not None:
@@ -275,6 +277,7 @@ class Attacker(object):
         self.rel_ratio = rel_ratio
         self.fluency_ratio = fluency_ratio
         self.max_perp_diff_per_token = max_perp_diff_per_token
+        self.perp_diff_thres = perp_diff_thres
         self.batch_size = batch_size
         self.stop_words = nltk.corpus.stopwords.words('english')
         logger = get_logger("Attacker")
@@ -511,6 +514,16 @@ class Attacker(object):
         perp_diff = perplexity[1:] - perplexity[0]
         return perp_diff
 
+    def filter_cands(self, tokens, cands, idx, debug=False):
+        new_cands, new_perp_diff = [], []
+        # (cand_size)
+        perp_diff = self.get_perp_diff(tokens, cands, idx)
+        for i in range(len(cands)):
+            if perp_diff[i] <= self.perp_diff_thres:
+                new_cands.append(cands[i])
+                new_perp_diff.append(perp_diff[i])
+        return new_cands, np.array(new_perp_diff)
+
     def get_best_cand(self, score, change_score):
         cand_rank = (-score).argsort()
         for i in range(len(score)):
@@ -519,49 +532,13 @@ class Attacker(object):
                 return cand_idx
         return None
 
-    def _synonym_prefilter_fn(self, token, tag, synonym):
-        lemma = nlp(token)[0].lemma
-        if (len(synonym.text.split()) > 2 or (  # the synonym produced is a phrase
-                synonym.lemma == lemma) or (  # token and synonym are the same
-                synonym.tag_ != tag) or (  # the pos of the token synonyms are different
-                token.lower() == 'be')):  # token is be
-            return False
-        else:
-            return True
-
     def get_synonyms(self, token, tag):
-        tag_list = ['JJ', 'NN', 'RB', 'VB']
-        if tag[:2] not in tag_list:
+        if token not in self.synonyms:
             return []
-        if tag[:2] == 'JJ':
-            pos = 'a'
-        elif tag[:2] == 'NN':
-            pos = 'n'
-        elif tag[:2] == 'RB':
-            pos = 'r'
+        if tag in self.synonyms[token]:
+            return self.synonyms[token][tag]
         else:
-            pos = 'v'
-
-        wordnet_synonyms = []
-
-        synsets = wn.synsets(token, pos=pos)
-        for synset in synsets:
-            wordnet_synonyms.extend(synset.lemmas())
-        print ("synsets:\n", synsets)
-        synonyms = []
-        for wordnet_synonym in wordnet_synonyms:
-            spacy_synonym = nlp(wordnet_synonym.name().replace('_', ' '))[0]
-            synonyms.append(spacy_synonym)
-        print ("synonyms:\n", synonyms)
-        synonyms = filter(partial(self._synonym_prefilter_fn, token, tag), synonyms)
-        print ("filtered synonyms:\n", [s for s in synonyms])
-        candidate_set = set()
-        for _, synonym in enumerate(synonyms):
-            candidate_word = synonym.text
-            if candidate_word in candidate_set:  # avoid repetition
-                continue
-            candidate_set.add(candidate_word)
-        return candidate_set
+            return []
 
     def get_sememe_cands(self, token, tag):
         tag_list = ['JJ', 'NN', 'RB', 'VB']
@@ -586,8 +563,13 @@ class Attacker(object):
 
     def get_candidate_set(self, token, tag):
         sememe_cands = self.get_sememe_cands(token, tag)
+        #print ("sememe:", sememe_cands)
         synonyms = self.get_synonyms(token, tag)
+        #print ("syn:", synonyms)
         candidate_set = sememe_cands
+        for syn in synonyms:
+            if syn not in candidate_set:
+                candidate_set.append(syn)
         return candidate_set
         
     def attack(self, tokens, tags, heads, rel_ids, debug=False):
@@ -632,6 +614,10 @@ class Attacker(object):
             # skip the edit for ROOT
             if self.symbolic_root and idx == 0: continue
             cands = neigbhours_list[idx]
+            # filter with language model
+            if self.adv_lm is not None:
+                cands, perp_diff = self.filter_cands(adv_tokens, cands, idx, debug==2)
+                blocked_perp_diff = np.where(perp_diff>0, perp_diff, 0)
             # (cand_size)
             change_score = self.get_change_score(adv_tokens, cands, idx, tags, heads, rel_ids, debug==2)
             change_rank = (-change_score).argsort()
@@ -641,11 +627,7 @@ class Attacker(object):
                     print ("--------------------------")
                     print ("Idx={}({}), no cand can make change, continue\ncands:{}\nchange_scores:{}".format(idx, tokens[idx], cands, change_score))
                 continue
-            # filter with language model
             if self.adv_lm is not None:
-                # (cand_size)
-                perp_diff = self.get_perp_diff(adv_tokens, cands, idx, debug==2)
-                blocked_perp_diff = np.where(perp_diff>0, perp_diff, 0)
                 # penalize the score for disfluency substitution
                 # if the perplexity of new sent is lower than the original one, no bonus
                 score = (1 - self.fluency_ratio) * change_score - self.fluency_ratio * blocked_perp_diff
@@ -662,7 +644,7 @@ class Attacker(object):
             best_cand = cands[best_cand_idx]
             best_c_score = change_score[best_cand_idx]
             best_score = score[best_cand_idx]
-            new_ratio = (total_score + best_score) / (num_edit + 1)
+            new_ratio = (total_change_score + best_c_score) / (num_edit + 1)
             if (self.adv_lm is not None and total_perp_diff<=max_perp_diff) or (new_ratio > change_edit_ratio):
                 change_edit_ratio = new_ratio
                 num_edit += 1
@@ -969,6 +951,7 @@ def parse(args):
     else:
         candidates = pickle.load(open(args.cand, 'rb'))
     vocab = json.load(open(args.vocab, 'r'))
+    synonyms = json.load(open(args.syn, 'r'))
     num_gpu = torch.cuda.device_count()
     if num_gpu >= 2:
         lm_device = torch.device('cuda', 1)
@@ -983,8 +966,9 @@ def parse(args):
     else:
         adv_lms = None
     alphabets = word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, pretrained_alphabet
-    attacker = Attacker(network, candidates, vocab, adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, 
+    attacker = Attacker(network, candidates, vocab, synonyms, adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, 
                         fluency_ratio=args.adv_fluency_ratio, max_perp_diff_per_token=args.max_perp_diff_per_token,
+                        perp_diff_thres=args.perp_diff_thres,
                         alphabets=alphabets, tokenizer=tokenizer, device=device, lm_device=lm_device,
                         batch_size=args.adv_batch_size)
     #tokens = ["_ROOT", "The", "Dow", "fell", "22.6", "%", "on", "black", "Monday"]#, "."]
@@ -1058,6 +1042,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--config', type=str, help='config file')
     args_parser.add_argument('--vocab', type=str, help='vocab file for attacker')
     args_parser.add_argument('--cand', type=str, help='candidate file for attacker')
+    args_parser.add_argument('--syn', type=str, help='synonym file for attacker')
     args_parser.add_argument('--num_epochs', type=int, default=200, help='Number of training epochs')
     args_parser.add_argument('--batch_size', type=int, default=16, help='Number of sentences in each batch')
     args_parser.add_argument('--eval_batch_size', type=int, default=256, help='Number of sentences in each batch while evaluating')
@@ -1090,6 +1075,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--adv_rel_ratio', type=float, default=0.5, help='Relation importance in adversarial attack')
     args_parser.add_argument('--adv_fluency_ratio', type=float, default=0.2, help='Fluency importance in adversarial attack')
     args_parser.add_argument('--max_perp_diff_per_token', type=float, default=0.8, help='Maximum allowed perplexity difference per token in adversarial attack')
+    args_parser.add_argument('--perp_diff_thres', type=float, default=20.0, help='Perplexity difference threshold in adversarial attack')
     args_parser.add_argument('--adv_batch_size', type=int, default=16, help='Number of sentences in adv lm each batch')
 
     args = args_parser.parse_args()
