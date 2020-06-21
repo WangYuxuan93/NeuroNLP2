@@ -80,8 +80,8 @@ class RobustParser(nn.Module):
         if 'error_prob' in hyps['input']:
             self.error_prob = hyps['input']['error_prob']
         # for biaffine layer
-        arc_mlp_dim = hyps['biaffine']['arc_mlp_dim']
-        rel_mlp_dim = hyps['biaffine']['rel_mlp_dim']
+        self.arc_mlp_dim = hyps['biaffine']['arc_mlp_dim']
+        self.rel_mlp_dim = hyps['biaffine']['rel_mlp_dim']
         p_in = hyps['biaffine']['p_in']
         self.p_in = p_in
         p_out = hyps['biaffine']['p_out']
@@ -92,6 +92,7 @@ class RobustParser(nn.Module):
         hidden_size = hyps['input_encoder']['hidden_size']
         num_layers = hyps['input_encoder']['num_layers']
         p_rnn = hyps['input_encoder']['p_rnn']
+        self.p_rnn = p_rnn
         self.lan_emb_as_input = hyps['input_encoder']['lan_emb_as_input']
         lan_emb_size = hyps['input_encoder']['lan_emb_size']
         #self.end_word_id = end_word_id
@@ -190,17 +191,17 @@ class RobustParser(nn.Module):
                                                                 max_position_embeddings=256)
             self.basic_parameters.append(self.input_encoder)
             self.basic_parameters.append(self.position_embedding_layer)
-            out_dim = hidden_size
+            self.enc_out_dim = hidden_size
         elif input_encoder_name == 'FastLSTM':
             self.input_encoder = VarFastLSTM(enc_dim, hidden_size, num_layers=num_layers, batch_first=True, bidirectional=True, dropout=p_rnn)
             self.basic_parameters.append(self.input_encoder)
-            out_dim = hidden_size * 2
+            self.enc_out_dim = hidden_size * 2
             logger.info("dropout(p_rnn): (%.2f, %.2f)" % (p_rnn[0], p_rnn[1]))
         elif input_encoder_name == 'CPGLSTM':
             self.input_encoder = CPG_LSTM(enc_dim, hidden_size, lan_emb_size, num_layers=num_layers, 
                                     batch_first=True, bidirectional=True, dropout_in=p_rnn[0], dropout_out=p_rnn[1])
             self.basic_parameters.append(self.input_encoder)
-            out_dim = hidden_size * 2
+            self.enc_out_dim = hidden_size * 2
             logger.info("dropout(p_rnn): (%.2f, %.2f)" % (p_rnn[0], p_rnn[1]))
             logger.info("Langauge embedding size: %d" % lan_emb_size)
         elif input_encoder_name == 'Transformer':
@@ -239,35 +240,20 @@ class RobustParser(nn.Module):
                                                     initializer_range=0.02)
             self.input_encoder = AttentionEncoder(self.attention_config)
             self.basic_parameters.append(self.input_encoder)
-            out_dim = hidden_size
+            self.enc_out_dim = hidden_size
             logger.info("dropout(emb, hidden, inter, att): (%.2f, %.2f, %.2f, %.2f)" % (embedding_dropout_prob, 
                                 hidden_dropout_prob, inter_dropout_prob, attention_probs_dropout_prob))
             logger.info("Use Sin Position Embedding: %s (Freeze it: %s)" % (use_sin_position_embedding, freeze_position_embedding))
             logger.info("Use Input Layer: %s" % use_input_layer)
         elif input_encoder_name == 'None':
             self.input_encoder = None
-            out_dim = enc_dim
+            self.enc_out_dim = enc_dim
         else:
             self.input_encoder = None
-            out_dim = enc_dim
+            self.enc_out_dim = enc_dim
 
         # for biaffine scorer
-        hid_size = out_dim
-        self.arc_h = nn.Linear(hid_size, arc_mlp_dim)
-        self.arc_c = nn.Linear(hid_size, arc_mlp_dim)
-        #self.arc_attention = BiAffine(arc_mlp_dim, arc_mlp_dim)
-        self.arc_attention = BiAffine_v2(arc_mlp_dim, bias_x=True, bias_y=False)
-        self.basic_parameters.append(self.arc_h)
-        self.basic_parameters.append(self.arc_c)
-        self.basic_parameters.append(self.arc_attention)
-
-        self.rel_h = nn.Linear(hid_size, rel_mlp_dim)
-        self.rel_c = nn.Linear(hid_size, rel_mlp_dim)
-        #self.rel_attention = BiLinear(rel_mlp_dim, rel_mlp_dim, self.num_labels)
-        self.rel_attention = BiAffine_v2(rel_mlp_dim, n_out=self.num_labels, bias_x=True, bias_y=True)
-        self.basic_parameters.append(self.rel_h)
-        self.basic_parameters.append(self.rel_c)
-        self.basic_parameters.append(self.rel_attention)
+        self.init_biaffine()
 
         assert activation in ['elu', 'leaky_relu', 'tanh']
         if activation == 'elu':
@@ -279,6 +265,24 @@ class RobustParser(nn.Module):
         self.criterion = nn.CrossEntropyLoss(reduction='none')
         self.reset_parameters(embedd_word, embedd_char, embedd_pos)
         logger.info('# of Parameters: %d' % (sum([param.numel() for param in self.parameters()])))
+
+    def init_biaffine(self):
+        hid_size = self.enc_out_dim
+        self.arc_h = nn.Linear(hid_size, self.arc_mlp_dim)
+        self.arc_c = nn.Linear(hid_size, self.arc_mlp_dim)
+        #self.arc_attention = BiAffine(arc_mlp_dim, arc_mlp_dim)
+        self.arc_attention = BiAffine_v2(self.arc_mlp_dim, bias_x=True, bias_y=False)
+        self.basic_parameters.append(self.arc_h)
+        self.basic_parameters.append(self.arc_c)
+        self.basic_parameters.append(self.arc_attention)
+
+        self.rel_h = nn.Linear(hid_size, self.rel_mlp_dim)
+        self.rel_c = nn.Linear(hid_size, self.rel_mlp_dim)
+        #self.rel_attention = BiLinear(rel_mlp_dim, rel_mlp_dim, self.num_labels)
+        self.rel_attention = BiAffine_v2(self.rel_mlp_dim, n_out=self.num_labels, bias_x=True, bias_y=True)
+        self.basic_parameters.append(self.rel_h)
+        self.basic_parameters.append(self.rel_c)
+        self.basic_parameters.append(self.rel_attention)
 
     def _basic_parameters(self):
         params = [p.parameters() for p in self.basic_parameters]
@@ -486,7 +490,7 @@ class RobustParser(nn.Module):
         # apply dropout word on input
         #word = self.dropout_in(word)
         
-        
+        ht = None
         # output from rnn [batch, length, hidden_size]
         if self.input_encoder_name == 'Linear':
             # sequence shared mask dropout
@@ -504,12 +508,12 @@ class RobustParser(nn.Module):
             enc = self.dropout_in(embeddings.transpose(1, 2)).transpose(1, 2)
             lan_emb = self.language_embed(lan_id)
             #print (lan_emb)
-            output, _ = self.input_encoder(lan_emb, enc, mask)
+            output, ht = self.input_encoder(lan_emb, enc, mask)
         elif self.input_encoder_name == 'FastLSTM': 
             # for 'FastLSTM'
             # sequence shared mask dropout
             enc = self.dropout_in(embeddings.transpose(1, 2)).transpose(1, 2)
-            output, _ = self.input_encoder(enc, mask)
+            output, ht = self.input_encoder(enc, mask)
         elif self.input_encoder_name == 'None':
             output = embeddings
 
@@ -517,7 +521,7 @@ class RobustParser(nn.Module):
         # [batch, length, hidden_size] --> [batch, hidden_size, length] --> [batch, length, hidden_size]
         output = self.dropout_out(output.transpose(1, 2)).transpose(1, 2)
         self.encoder_output = output
-        return output
+        return output, ht
 
     def _arc_mlp(self, hidden):
         # output size [batch, length, arc_mlp_dim]
@@ -619,7 +623,7 @@ class RobustParser(nn.Module):
         embeddings = self._embed(input_word, input_pretrained, input_char, input_pos, 
                                 bpes=bpes, first_idx=first_idx, lan_id=lan_id)
         # (batch, seq_len, hidden_size)
-        encoder_output = self._input_encoder(embeddings, mask=mask, lan_id=lan_id)
+        encoder_output, _ = self._input_encoder(embeddings, mask=mask, lan_id=lan_id)
 
         # (batch, seq_len, arc_mlp_dim)
         arc_h, arc_c = self._arc_mlp(encoder_output)
@@ -688,7 +692,7 @@ class RobustParser(nn.Module):
         embeddings = self._embed(input_word, input_pretrained, input_char, input_pos, 
                                 bpes=bpes, first_idx=first_idx, lan_id=lan_id)
         # (batch, seq_len, hidden_size)
-        encoder_output = self._input_encoder(embeddings, mask=mask, lan_id=lan_id) 
+        encoder_output, _ = self._input_encoder(embeddings, mask=mask, lan_id=lan_id) 
         
         # (batch, seq_len, arc_mlp_dim)
         arc_h, arc_c = self._arc_mlp(encoder_output)

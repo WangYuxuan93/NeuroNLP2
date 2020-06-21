@@ -20,8 +20,10 @@ import torch
 from torch.optim import SGD, Adam, AdamW
 from torch.nn.utils import clip_grad_norm_
 from neuronlp2.nn.utils import total_grad_norm
-from neuronlp2.io import get_logger, conllx_data, ud_data, conllx_stacked_data #, iterate_data
+from neuronlp2.io import get_logger, conllx_data, ud_data#, conllx_stacked_data #, iterate_data
+from neuronlp2.io import ud_stacked_data
 from neuronlp2.models.robust_parsing import RobustParser
+from neuronlp2.models.stack_pointer import StackPtrParser
 from neuronlp2.optim import ExponentialScheduler, StepScheduler, AttentionScheduler
 from neuronlp2 import utils
 from neuronlp2.io import CoNLLXWriter
@@ -159,7 +161,10 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
             masks = data['MASK'].to(device)
             heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, 
                 bpes=bpes, first_idx=first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
-
+        else:
+            masks = data['MASK_ENC'].to(device)
+            heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, 
+                bpes=bpes, first_idx=first_idx, lan_id=lan_id, beam=beam, leading_symbolic=conllx_data.NUM_SYMBOLIC_TAGS)
         words = words.cpu().numpy()
         postags = postags.cpu().numpy()
 
@@ -396,7 +401,7 @@ def train(args):
     hyps = json.load(open(args.config, 'r'))
     json.dump(hyps, open(os.path.join(model_path, 'config.json'), 'w'), indent=2)
     model_type = hyps['model']
-    assert model_type in ['Robust']
+    assert model_type in ['Robust', 'StackPtr']
     assert word_dim == hyps['input']['word_dim']
     if char_dim is not None:
         assert char_dim == hyps['input']['char_dim']
@@ -431,9 +436,15 @@ def train(args):
     else:
         tokenizer = AutoTokenizer.from_pretrained(lm_path)
 
-    alg = 'graph'
+    alg = 'transition' if model_type == 'StackPtr' else 'graph'
     if model_type == 'Robust':
         network = RobustParser(hyps, num_pretrained, num_words, num_chars, num_pos,
+                               num_rels, device=device, basic_word_embedding=basic_word_embedding,
+                               embedd_word=word_table, embedd_char=char_table, 
+                               pretrained_lm=pretrained_lm, lm_path=lm_path,
+                               num_lans=num_lans)
+    elif model_type == 'StackPtr':
+        network = StackPtrParser(hyps, num_pretrained, num_words, num_chars, num_pos,
                                num_rels, device=device, basic_word_embedding=basic_word_embedding,
                                embedd_word=word_table, embedd_char=char_table, 
                                pretrained_lm=pretrained_lm, lm_path=lm_path,
@@ -498,8 +509,22 @@ def train(args):
             data_test = data_reader.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
                                                         normalize_digits=args.normalize_digits, symbolic_root=True,
                                                         pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
+    elif alg == 'transition':
+        prior_order = hyps['input']['prior_order']
+        data_train = ud_stacked_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                        normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                        pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx, 
+                                                        prior_order=prior_order)
+        data_dev = ud_stacked_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                        normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                        pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx, 
+                                                        prior_order=prior_order)
+        data_test = ud_stacked_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                        normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                        pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx, 
+                                                        prior_order=prior_order)
     
-    if not args.mix_datasets:
+    if alg == 'graph' and not args.mix_datasets:
         num_data = sum([sum(d) for d in data_train[1]])
     else:
         num_data = sum(data_train[1])
@@ -551,7 +576,7 @@ def train(args):
         opt_info = 'adam, betas=(%.1f, %.3f), eps=%.1e' % (betas[0], betas[1], eps)
     elif optim == 'sgd':
         opt_info = 'sgd, momentum=0.9, nesterov=True'
-    if not args.mix_datasets:
+    if alg == 'graph' and not args.mix_datasets:
         iterate = multi_language_iterate_data
         multi_lan_iter = True
     else:
@@ -580,7 +605,7 @@ def train(args):
         gc.collect()
         #for step, data in enumerate(iterate_data(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True)):
         for step, data in enumerate(iterate(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True, switch_lan=True)):
-            if not args.mix_datasets:
+            if alg == 'graph' and not args.mix_datasets:
                 lan_id, data = data
                 lan_id = torch.LongTensor([lan_id]).to(device)
                 #print ("lan_id:",lan_id)
@@ -601,22 +626,39 @@ def train(args):
             else:
                 bpes = first_idx = None
             if alg == 'graph':
-                
                 rels = data['TYPE'].to(device)
                 masks = data['MASK'].to(device)
                 nwords = masks.sum() - nbatch
                 losses, statistics = network(words, pres, chars, postags, heads, rels, 
                             mask=masks, bpes=bpes, first_idx=first_idx, lan_id=lan_id)
+            else:
+                masks_enc = data['MASK_ENC'].to(device)
+                masks_dec = data['MASK_DEC'].to(device)
+                stacked_heads = data['STACK_HEAD'].to(device)
+                children = data['CHILD'].to(device)
+                siblings = data['SIBLING'].to(device)
+                stacked_rels = data['STACK_TYPE'].to(device)
+                #print ("mask_e:\n", masks_enc)
+                #print ("mask_d:\n", masks_dec)
+                #print ("stacked_heads:\n", stacked_heads)
+                #print ("children:\n", children)
+                #print ("siblings:\n", siblings)
+                #print ("stacked_rels:\n", stacked_rels)
+                nwords = masks_enc.sum() - nbatch
+                losses = network(words, pres, chars, postags, heads, stacked_heads, children, siblings, stacked_rels,
+                                        mask_e=masks_enc, mask_d=masks_dec)
+                statistics = None
             arc_loss, rel_loss = losses
             arc_loss = arc_loss.sum()
             rel_loss = rel_loss.sum()
             loss_total = arc_loss + rel_loss
 
-            arc_correct, rel_correct, total_arcs = statistics
-            overall_arc_correct += arc_correct.sum().cpu().numpy()
-            overall_rel_correct += rel_correct.sum().cpu().numpy()
-            overall_total_arcs += total_arcs.sum().cpu().numpy()
-            
+            if statistics is not None:
+                arc_correct, rel_correct, total_arcs = statistics
+                overall_arc_correct += arc_correct.sum().cpu().numpy()
+                overall_rel_correct += rel_correct.sum().cpu().numpy()
+                overall_total_arcs += total_arcs.sum().cpu().numpy()
+                
             if loss_type_token:
                 loss = loss_total.div(nwords)
             else:
@@ -662,14 +704,22 @@ def train(args):
             sys.stdout.write(" " * num_back)
             sys.stdout.write("\b" * num_back)
 
-        train_uas = float(overall_arc_correct) * 100.0 / overall_total_arcs
-        train_lacc = float(overall_rel_correct) * 100.0 / overall_total_arcs
-        print('total: %d (%d), epochs w/o improve:%d, nans:%d, uas: %.2f%%, lacc: %.2f%%,  loss: %.4f (%.4f), arc: %.4f (%.4f), rel: %.4f (%.4f), time: %.2fs' % (num_insts, num_words,
-                                                                                                       num_epochs_without_improvement, num_nans, train_uas, train_lacc,
-                                                                                                       train_loss / num_insts, train_loss / num_words,
-                                                                                                       train_arc_loss / num_insts, train_arc_loss / num_words,
-                                                                                                       train_rel_loss / num_insts, train_rel_loss / num_words,
-                                                                                                       time.time() - start_time))
+        if statistics is None:
+            print('total: %d (%d), epochs w/o improve:%d, nans:%d, loss: %.4f (%.4f), arc: %.4f (%.4f), rel: %.4f (%.4f), time: %.2fs' % (num_insts, num_words,
+                                                                                                           num_epochs_without_improvement, num_nans,
+                                                                                                           train_loss / num_insts, train_loss / num_words,
+                                                                                                           train_arc_loss / num_insts, train_arc_loss / num_words,
+                                                                                                           train_rel_loss / num_insts, train_rel_loss / num_words,
+                                                                                                           time.time() - start_time))
+        else:
+            train_uas = float(overall_arc_correct) * 100.0 / overall_total_arcs
+            train_lacc = float(overall_rel_correct) * 100.0 / overall_total_arcs
+            print('total: %d (%d), epochs w/o improve:%d, nans:%d, uas: %.2f%%, lacc: %.2f%%,  loss: %.4f (%.4f), arc: %.4f (%.4f), rel: %.4f (%.4f), time: %.2fs' % (num_insts, num_words,
+                                                                                                           num_epochs_without_improvement, num_nans, train_uas, train_lacc,
+                                                                                                           train_loss / num_insts, train_loss / num_words,
+                                                                                                           train_arc_loss / num_insts, train_arc_loss / num_words,
+                                                                                                           train_rel_loss / num_insts, train_rel_loss / num_words,
+                                                                                                           time.time() - start_time))
         print('-' * 125)
 
         if epoch % eval_every == 0:
