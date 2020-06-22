@@ -255,7 +255,7 @@ class Attacker(object):
     def __init__(self, model, candidates, vocab, synonyms, adv_lms=None, rel_ratio=0.5, fluency_ratio=0.2,
                 max_perp_diff_per_token=0.8, perp_diff_thres=20 ,alphabets=None, tokenizer=None, 
                 device=None, lm_device=None, symbolic_root=True, symbolic_end=False, mask_out_root=False, 
-                batch_size=32):
+                batch_size=32, random_sub_if_no_change=False):
         self.model = model
         self.candidates = candidates
         self.synonyms = synonyms
@@ -280,9 +280,11 @@ class Attacker(object):
         self.perp_diff_thres = perp_diff_thres
         self.batch_size = batch_size
         self.stop_words = nltk.corpus.stopwords.words('english')
+        self.random_sub_if_no_change = random_sub_if_no_change
         logger = get_logger("Attacker")
         logger.info("Relation ratio:{}, Fluency ratio:{}".format(rel_ratio, fluency_ratio))
-        logger.info("Max perplexity difference per token:{}".format(max_perp_diff_per_token))
+        logger.info("Max ppl difference per token:{}, ppl diff threshold:{}".format(max_perp_diff_per_token, perp_diff_thres))
+        logger.info("Randomly substitute if no change:{}".format(self.random_sub_if_no_change))
 
     def _word2id(self, word):
         if word in self.word2id:
@@ -970,7 +972,7 @@ def parse(args):
                         fluency_ratio=args.adv_fluency_ratio, max_perp_diff_per_token=args.max_perp_diff_per_token,
                         perp_diff_thres=args.perp_diff_thres,
                         alphabets=alphabets, tokenizer=tokenizer, device=device, lm_device=lm_device,
-                        batch_size=args.adv_batch_size)
+                        batch_size=args.adv_batch_size, random_sub_if_no_change=args.random_sub_if_no_change)
     #tokens = ["_ROOT", "The", "Dow", "fell", "22.6", "%", "on", "black", "Monday"]#, "."]
     #tags = ["_ROOT_POS", "DT", "NNP", "VBD", "CD", ".", "IN", "NNP", "NNP"]#, "."]
     #heads = [0, 2, 3, 0, 5, 3, 3, 8, 6]#, 3]
@@ -1077,6 +1079,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--max_perp_diff_per_token', type=float, default=0.8, help='Maximum allowed perplexity difference per token in adversarial attack')
     args_parser.add_argument('--perp_diff_thres', type=float, default=20.0, help='Perplexity difference threshold in adversarial attack')
     args_parser.add_argument('--adv_batch_size', type=int, default=16, help='Number of sentences in adv lm each batch')
+    args_parser.add_argument('--random_sub_if_no_change', action='store_true', default=False, help='randomly substitute if no change')
 
     args = args_parser.parse_args()
     parse(args)
