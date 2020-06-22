@@ -522,7 +522,7 @@ class Attacker(object):
             if perp_diff[i] <= self.perp_diff_thres:
                 new_cands.append(cands[i])
                 new_perp_diff.append(perp_diff[i])
-        return new_cands, np.array(new_perp_diff)
+        return new_cands, np.array(new_perp_diff), perp_diff
 
     def get_best_cand(self, score, change_score):
         cand_rank = (-score).argsort()
@@ -614,9 +614,15 @@ class Attacker(object):
             # skip the edit for ROOT
             if self.symbolic_root and idx == 0: continue
             cands = neigbhours_list[idx]
+            all_cands = cands.copy()
             # filter with language model
             if self.adv_lm is not None:
-                cands, perp_diff = self.filter_cands(adv_tokens, cands, idx, debug==2)
+                cands, perp_diff, all_perp_diff = self.filter_cands(adv_tokens, cands, idx, debug==2)
+                if len(cands) == 0:
+                    if debug == 3:
+                        print ("--------------------------")
+                        print ("Idx={}({}), all perp_diff above thres, continue\ncands:{}\nperp_diff:{}".format(idx, tokens[idx], all_cands, all_perp_diff))
+                    continue
                 blocked_perp_diff = np.where(perp_diff>0, perp_diff, 0)
             # (cand_size)
             change_score = self.get_change_score(adv_tokens, cands, idx, tags, heads, rel_ids, debug==2)

@@ -646,7 +646,7 @@ def train(args):
                 #print ("stacked_rels:\n", stacked_rels)
                 nwords = masks_enc.sum() - nbatch
                 losses = network(words, pres, chars, postags, heads, stacked_heads, children, siblings, stacked_rels,
-                                        mask_e=masks_enc, mask_d=masks_dec)
+                                        mask_e=masks_enc, mask_d=masks_dec, bpes=bpes, first_idx=first_idx, lan_id=lan_id)
                 statistics = None
             arc_loss, rel_loss = losses
             arc_loss = arc_loss.sum()
