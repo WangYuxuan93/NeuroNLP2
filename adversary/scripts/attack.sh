@@ -11,5 +11,6 @@ CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=4 python -u adv_attack.py --mode parse \
  --output_filename "ptb_two_auto.pred.conll" \
  --adv_filename "ptb_two_auto.adv.conll" \
  --vocab "data/vocab.json" --cand "data/word_candidates_sense.json" \
+ --syn "synonyms.json" --random_sub_if_no_change \
  --adv_rel_ratio 0.5 --adv_fluency_ratio 0.2 --max_perp_diff_per_token 0.6
  # --mix_datasets
