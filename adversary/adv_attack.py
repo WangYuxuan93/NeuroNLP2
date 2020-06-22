@@ -314,7 +314,7 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
             accum_total_sent += 1
             length = lengths[i]
             #adv_tokens = [word_alphabet.get_instance(w) for w in words[i][:length]]
-            adv_tokens = data['SRC'][i]
+            adv_tokens = data['SRC'][i].copy()
             adv_postags = [pos_alphabet.get_instance(w) for w in postags[i][:length]]
             adv_heads = heads[i][:length]
             adv_rels = rels[i][:length]
@@ -329,6 +329,9 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
                 adv_src.append(adv_tokens)
                 continue
             adv_tokens, num_edit, total_score, total_change_score, total_perp_diff = result
+            if total_change_score <= 0:
+                adv_src.append(data['SRC'][i])
+                continue
             accum_success_attack += 1
             accum_total_edit += num_edit
             accum_total_score += total_score
