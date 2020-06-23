@@ -14,51 +14,7 @@ from neuronlp2.io.common import PAD_CHAR, PAD, PAD_POS, PAD_TYPE, PAD_ID_CHAR, P
 from neuronlp2.io import common
 #from adversary.adv_attack import convert_tokens_to_ids
 
-def convert_tokens_to_ids(tokenizer, tokens):
-
-    all_wordpiece_list = []
-    all_first_index_list = []
-
-    for toks in tokens:
-        wordpiece_list = []
-        first_index_list = []
-        for token in toks:
-            if token == PAD:
-                token = tokenizer.pad_token
-            elif token == ROOT:
-                token = tokenizer.cls_token
-            elif token == END:
-                token = tokenizer.sep_token
-            wordpiece = tokenizer.tokenize(token)
-            # add 1 for cls_token <s>
-            first_index_list.append(len(wordpiece_list)+1)
-            wordpiece_list += wordpiece
-            #print (wordpiece)
-        #print (wordpiece_list)
-        #print (first_index_list)
-        bpe_ids = tokenizer.convert_tokens_to_ids(wordpiece_list)
-        #print (bpe_ids)
-        bpe_ids = tokenizer.build_inputs_with_special_tokens(bpe_ids)
-        #print (bpe_ids)
-        all_wordpiece_list.append(bpe_ids)
-        all_first_index_list.append(first_index_list)
-
-    all_wordpiece_max_len = max([len(w) for w in all_wordpiece_list])
-    all_wordpiece = np.stack(
-          [np.pad(a, (0, all_wordpiece_max_len - len(a)), 'constant', constant_values=tokenizer.pad_token_id) for a in all_wordpiece_list])
-    all_first_index_max_len = max([len(i) for i in all_first_index_list])
-    all_first_index = np.stack(
-          [np.pad(a, (0, all_first_index_max_len - len(a)), 'constant', constant_values=0) for a in all_first_index_list])
-
-    # (batch, max_bpe_len)
-    input_ids = torch.from_numpy(all_wordpiece)
-    # (batch, seq_len)
-    first_indices = torch.from_numpy(all_first_index)
-
-    return input_ids, first_indices
-
-class BlackBoxAttacker(object):
-    stopwords = set(
+stopwords = set(
         [
             "a",
             "about",
@@ -329,6 +285,50 @@ class BlackBoxAttacker(object):
         ]
     )
 
+def convert_tokens_to_ids(tokenizer, tokens):
+
+    all_wordpiece_list = []
+    all_first_index_list = []
+
+    for toks in tokens:
+        wordpiece_list = []
+        first_index_list = []
+        for token in toks:
+            if token == PAD:
+                token = tokenizer.pad_token
+            elif token == ROOT:
+                token = tokenizer.cls_token
+            elif token == END:
+                token = tokenizer.sep_token
+            wordpiece = tokenizer.tokenize(token)
+            # add 1 for cls_token <s>
+            first_index_list.append(len(wordpiece_list)+1)
+            wordpiece_list += wordpiece
+            #print (wordpiece)
+        #print (wordpiece_list)
+        #print (first_index_list)
+        bpe_ids = tokenizer.convert_tokens_to_ids(wordpiece_list)
+        #print (bpe_ids)
+        bpe_ids = tokenizer.build_inputs_with_special_tokens(bpe_ids)
+        #print (bpe_ids)
+        all_wordpiece_list.append(bpe_ids)
+        all_first_index_list.append(first_index_list)
+
+    all_wordpiece_max_len = max([len(w) for w in all_wordpiece_list])
+    all_wordpiece = np.stack(
+          [np.pad(a, (0, all_wordpiece_max_len - len(a)), 'constant', constant_values=tokenizer.pad_token_id) for a in all_wordpiece_list])
+    all_first_index_max_len = max([len(i) for i in all_first_index_list])
+    all_first_index = np.stack(
+          [np.pad(a, (0, all_first_index_max_len - len(a)), 'constant', constant_values=0) for a in all_first_index_list])
+
+    # (batch, max_bpe_len)
+    input_ids = torch.from_numpy(all_wordpiece)
+    # (batch, seq_len)
+    first_indices = torch.from_numpy(all_first_index)
+
+    return input_ids, first_indices
+
+class BlackBoxAttacker(object):
     def __init__(self, model, candidates, vocab, synonyms, adv_lms=None, rel_ratio=0.5, fluency_ratio=0.2,
                 max_perp_diff_per_token=0.8, perp_diff_thres=20 ,alphabets=None, tokenizer=None, 
                 device=None, lm_device=None, symbolic_root=True, symbolic_end=False, mask_out_root=False, 
