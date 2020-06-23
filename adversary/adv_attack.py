@@ -36,6 +36,7 @@ from neuronlp2.io.batcher import multi_language_iterate_data, iterate_data
 from neuronlp2.io import multi_ud_data
 from neuronlp2.io.common import PAD_CHAR, PAD, PAD_POS, PAD_TYPE, PAD_ID_CHAR, PAD_ID_TAG, PAD_ID_WORD
 from adversary.blackbox_attacker import BlackBoxAttacker
+from adversary.graybox_attacker import GrayBoxAttacker
 
 def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgrad, weight_decay, 
                   warmup_steps, schedule='step', hidden_size=200, decay_steps=5000):
