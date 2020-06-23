@@ -142,13 +142,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
     for data in iterate(data, batch_size):
         if multi_lan_iter:
             lan_id, data = data
-            lan_id = torch.LongTensor([lan_id]).to(device)
-        if tokenizer:
-            bpes, first_idx = convert_tokens_to_ids(tokenizer, data['SRC'])
-            bpes = bpes.to(device)
-            first_idx = first_idx.to(device)
-        else:
-            bpes = first_idx = None
+            lan_id = torch.LongTensor([lan_id]).to(device) 
         words = data['WORD'].to(device)
         pres = data['PRETRAINED'].to(device)
         chars = data['CHAR'].to(device)
@@ -157,6 +151,15 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         rels = data['TYPE'].numpy()
         lengths = data['LENGTH'].numpy()
         err_types = data['ERR_TYPE']
+        if tokenizer:
+            srcs = data['SRC']
+            if words.size()[0] == 1 and len(srcs) > 1:
+                srcs = [srcs]
+            bpes, first_idx = convert_tokens_to_ids(tokenizer, srcs)
+            bpes = bpes.to(device)
+            first_idx = first_idx.to(device)
+        else:
+            bpes = first_idx = None
         if alg == 'graph':
             masks = data['MASK'].to(device)
             heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, 
@@ -617,12 +620,19 @@ def train(args):
             heads = data['HEAD'].to(device)
             nbatch = words.size(0)
             if not pretrained_lm == 'none':
-                bpes, first_idx = convert_tokens_to_ids(tokenizer, data['SRC'])
+                srcs = data['SRC']
+                if words.size()[0] == 1 and len(srcs) > 1:
+                    srcs = [srcs]
+                bpes, first_idx = convert_tokens_to_ids(tokenizer, srcs)
                 bpes = bpes.to(device)
                 first_idx = first_idx.to(device)
-                assert first_idx.size() == words.size()
-                #print (bpes)
-                #print (first_idx)
+                try:
+                    assert first_idx.size() == words.size()
+                except:
+                    print ("bpes:\n",bpes)
+                    print ("src:\n", data['SRC'])
+                    print ("first_idx:{}\n{}".format(first_idx.size(), first_idx))
+                    print ("words:{},\n{}".format(words.size(), words))
             else:
                 bpes = first_idx = None
             if alg == 'graph':

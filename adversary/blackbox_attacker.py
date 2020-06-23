@@ -354,6 +354,7 @@ class BlackBoxAttacker(object):
                 device=None, lm_device=None, symbolic_root=True, symbolic_end=False, mask_out_root=False, 
                 batch_size=32, random_sub_if_no_change=False):
         super(BlackBoxAttacker, self).__init__()
+        logger = get_logger("Attacker")
         self.model = model
         self.candidates = candidates
         self.synonyms = synonyms
@@ -366,7 +367,9 @@ class BlackBoxAttacker(object):
         else:
             self.nn = None
         if sent_encoder_path is not None:
+            logger.info("Loading sent encoder from: {}".format(sent_encoder_path))
             self.sent_encoder = hub.load(sent_encoder_path)
+            logger.info("Min sent cosine similarity: {}".format(min_sent_cos_sim))
         else:
             self.sent_encoder = None
         if adv_lms is not None:
@@ -390,12 +393,13 @@ class BlackBoxAttacker(object):
         #self.stop_words = nltk.corpus.stopwords.words('english')
         self.stop_words = stopwords
         self.random_sub_if_no_change = random_sub_if_no_change
-        logger = get_logger("Attacker")
+        
         logger.info("Relation ratio:{}, Fluency ratio:{}".format(rel_ratio, fluency_ratio))
         logger.info("Max ppl difference per token:{}, ppl diff threshold:{}".format(max_perp_diff_per_token, perp_diff_thres))
         logger.info("Randomly substitute if no change:{}".format(self.random_sub_if_no_change))
         self.max_knn_candidates = max_knn_candidates
         self.min_word_cos_sim = min_word_cos_sim
+        self.min_sent_cos_sim = min_sent_cos_sim
         
         self.filters = filters
         if 'word_sim' in self.filters and self.nn is None:
@@ -463,7 +467,7 @@ class BlackBoxAttacker(object):
             e2 = self.word_embeddings[b]
             e1 = torch.tensor(e1)
             e2 = torch.tensor(e2)
-            cos_sim = torch.nn.CosineSimilarity(dim=0)(e1, e2)
+            cos_sim = torch.nn.CosineSimilarity(dim=0)(e1, e2).numpy()
             self.cos_sim_mat[a][b] = cos_sim
         return cos_sim
 
@@ -714,7 +718,7 @@ class BlackBoxAttacker(object):
         new_sims, all_sims = [], []
         # (cand_size)
         for i in range(len(cands)):
-            sim = self.get_word_cos_sim(token, cands[i])
+            sim = self.get_word_cos_sim(token.lower(), cands[i].lower())
             all_sims.append(sim)
             if sim is not None and sim >= self.min_word_cos_sim:
                 new_cands.append(cands[i])
@@ -845,7 +849,7 @@ class BlackBoxAttacker(object):
             cands = neigbhours_list[idx]
             all_cands = cands.copy()
             if "word_sim" in self.filters:
-                cands, w_sims, all_w_sims = self.filter_cands_with_word_sim(adv_token[idx], cands)
+                cands, w_sims, all_w_sims = self.filter_cands_with_word_sim(adv_tokens[idx], cands)
                 if len(cands) == 0:
                     if debug == 3:
                         print ("--------------------------")
