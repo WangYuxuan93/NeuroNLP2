@@ -827,7 +827,7 @@ class BlackBoxAttacker(object):
 
     def get_knn_cands(self, tokens, tag, idx):
         cands = []
-        knn_cands = self._get_knn_words(token)
+        knn_cands = self._get_knn_words(tokens[idx])
         for cand in knn_cands:
             tokens[idx] = cand
             cand_tag = nltk.pos_tag(tokens)[idx][1]
