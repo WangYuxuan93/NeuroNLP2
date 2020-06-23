@@ -549,8 +549,12 @@ def parse(args):
         adv_lms = (adv_tokenizer,adv_lm)
     else:
         adv_lms = None
+    filters = args.filters.split(':')
     alphabets = word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, pretrained_alphabet
-    attacker = BlackBoxAttacker(network, candidates, vocab, synonyms, adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, 
+    attacker = BlackBoxAttacker(network, candidates, vocab, synonyms, filters=filters, knn_path=args.knn_path, 
+                        max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
+                        min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim, 
+                        adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, 
                         fluency_ratio=args.adv_fluency_ratio, max_perp_diff_per_token=args.max_perp_diff_per_token,
                         perp_diff_thres=args.perp_diff_thres,
                         alphabets=alphabets, tokenizer=tokenizer, device=device, lm_device=lm_device,
@@ -662,6 +666,12 @@ if __name__ == '__main__':
     args_parser.add_argument('--perp_diff_thres', type=float, default=20.0, help='Perplexity difference threshold in adversarial attack')
     args_parser.add_argument('--adv_batch_size', type=int, default=16, help='Number of sentences in adv lm each batch')
     args_parser.add_argument('--random_sub_if_no_change', action='store_true', default=False, help='randomly substitute if no change')
+    args_parser.add_argument('--knn_path', type=str, help='knn embedding path for adversarial attack')
+    args_parser.add_argument('--max_knn_candidates', type=int, default=50, help='max knn candidate number')
+    args_parser.add_argument('--min_word_cos_sim', type=float, default=0.9, help='Min word cos similarity')
+    args_parser.add_argument('--min_sent_cos_sim', type=float, default=0.9, help='Min sent cos similarity')
+    args_parser.add_argument('--sent_encoder_path', type=str, help='universal sentence encoder path for sent cos sim')
+    args_parser.add_argument('--filters', type=str, default='word_sim:sent_sim:lm', help='filters for word substitution')
 
     args = args_parser.parse_args()
     parse(args)

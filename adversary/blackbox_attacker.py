@@ -7,6 +7,10 @@ from functools import partial
 import numpy as np
 import torch
 import random
+import os
+import pickle
+import tensorflow_hub as hub
+import tensorflow as tf
 
 from neuronlp2.io import get_logger
 from neuronlp2.io.common import PAD, ROOT, END
@@ -328,8 +332,24 @@ def convert_tokens_to_ids(tokenizer, tokens):
 
     return input_ids, first_indices
 
+def recover_word_case(word, reference_word):
+    """ Makes the case of `word` like the case of `reference_word`. Supports 
+        lowercase, UPPERCASE, and Capitalized. """
+    if reference_word.islower():
+        return word.lower()
+    elif reference_word.isupper() and len(reference_word) > 1:
+        return word.upper()
+    elif reference_word[0].isupper() and reference_word[1:].islower():
+        return word.capitalize()
+    else:
+        # if other, just do not alter the word's case
+        return word
+
 class BlackBoxAttacker(object):
-    def __init__(self, model, candidates, vocab, synonyms, adv_lms=None, rel_ratio=0.5, fluency_ratio=0.2,
+    def __init__(self, model, candidates, vocab, synonyms, filters=['word_sim', 'sent_sim', 'lm'],
+                knn_path=None, max_knn_candidates=50, sent_encoder_path=None,
+                min_word_cos_sim=0.8, min_sent_cos_sim=0.8,  
+                adv_lms=None, rel_ratio=0.5, fluency_ratio=0.2,
                 max_perp_diff_per_token=0.8, perp_diff_thres=20 ,alphabets=None, tokenizer=None, 
                 device=None, lm_device=None, symbolic_root=True, symbolic_end=False, mask_out_root=False, 
                 batch_size=32, random_sub_if_no_change=False):
@@ -339,6 +359,16 @@ class BlackBoxAttacker(object):
         self.synonyms = synonyms
         self.word2id = vocab
         self.id2word = {i:w for (w,i) in vocab.items()}
+        if knn_path is not None:
+            logger.info("Loading knn from: {}".format(knn_path))
+            self.load_knn_path(knn_path)
+            logger.info("Min word cosine similarity: {}".format(min_word_cos_sim))
+        else:
+            self.nn = None
+        if sent_encoder_path is not None:
+            self.sent_encoder = hub.load(sent_encoder_path)
+        else:
+            self.sent_encoder = None
         if adv_lms is not None:
             self.adv_tokenizer, self.adv_lm = adv_lms
         else:
@@ -364,6 +394,78 @@ class BlackBoxAttacker(object):
         logger.info("Relation ratio:{}, Fluency ratio:{}".format(rel_ratio, fluency_ratio))
         logger.info("Max ppl difference per token:{}, ppl diff threshold:{}".format(max_perp_diff_per_token, perp_diff_thres))
         logger.info("Randomly substitute if no change:{}".format(self.random_sub_if_no_change))
+        self.max_knn_candidates = max_knn_candidates
+        self.min_word_cos_sim = min_word_cos_sim
+        
+        self.filters = filters
+        if 'word_sim' in self.filters and self.nn is None:
+            print ("Must input embedding path for word cos sim filter!")
+            exit()
+        if 'sent_sim' in self.filters and self.sent_encoder is None:
+            print ("Must input sentence encoder path for sent cos sim filter!")
+            exit()
+        if 'lm' in self.filters and self.adv_lm is None:
+            print ("Must input language model (gpt2) path for lm filter!")
+            exit()
+        
+        logger.info("Filters: {}".format(filters))
+
+    def load_knn_path(self, path):
+        word_embeddings_file = "paragram.npy"
+        word_list_file = "wordlist.pickle"
+        nn_matrix_file = "nn.npy"
+        cos_sim_file = "cos_sim.p"
+        word_embeddings_file = os.path.join(path, word_embeddings_file)
+        word_list_file = os.path.join(path, word_list_file)
+        nn_matrix_file = os.path.join(path, nn_matrix_file)
+        cos_sim_file = os.path.join(path, cos_sim_file)
+
+        self.word_embeddings = np.load(word_embeddings_file)
+        self.word_embedding_word2index = np.load(word_list_file, allow_pickle=True)
+        self.nn = np.load(nn_matrix_file)
+        with open(cos_sim_file, "rb") as f:
+            self.cos_sim_mat = pickle.load(f)
+
+        # Build glove dict and index.
+        self.word_embedding_index2word = {}
+        for word, index in self.word_embedding_word2index.items():
+            self.word_embedding_index2word[index] = word
+
+    def _get_knn_words(self, word):
+        """ Returns a list of possible 'candidate words' to replace a word in a sentence 
+            or phrase. Based on nearest neighbors selected word embeddings.
+        """
+        try:
+            word_id = self.word_embedding_word2index[word.lower()]
+            nnids = self.nn[word_id][1 : self.max_knn_candidates + 1]
+            candidate_words = []
+            for i, nbr_id in enumerate(nnids):
+                nbr_word = self.word_embedding_index2word[nbr_id]
+                candidate_words.append(recover_word_case(nbr_word, word))
+            return candidate_words
+        except KeyError:
+            # This word is not in our word embedding database, so return an empty list.
+            return []
+
+    def get_word_cos_sim(self, a, b):
+        """ Returns the cosine similarity of words with IDs a and b."""
+        if a not in self.word_embedding_word2index or b not in self.word_embedding_word2index:
+            return None
+        if isinstance(a, str):
+            a = self.word_embedding_word2index[a]
+        if isinstance(b, str):
+            b = self.word_embedding_word2index[b]
+        a, b = min(a, b), max(a, b)
+        try:
+            cos_sim = self.cos_sim_mat[a][b]
+        except KeyError:
+            e1 = self.word_embeddings[a]
+            e2 = self.word_embeddings[b]
+            e1 = torch.tensor(e1)
+            e2 = torch.tensor(e2)
+            cos_sim = torch.nn.CosineSimilarity(dim=0)(e1, e2)
+            self.cos_sim_mat[a][b] = cos_sim
+        return cos_sim
 
     def _word2id(self, word):
         if word in self.word2id:
@@ -597,7 +699,7 @@ class BlackBoxAttacker(object):
         perp_diff = perplexity[1:] - perplexity[0]
         return perp_diff
 
-    def filter_cands(self, tokens, cands, idx, debug=False):
+    def filter_cands_with_lm(self, tokens, cands, idx, debug=False):
         new_cands, new_perp_diff = [], []
         # (cand_size)
         perp_diff = self.get_perp_diff(tokens, cands, idx)
@@ -606,6 +708,41 @@ class BlackBoxAttacker(object):
                 new_cands.append(cands[i])
                 new_perp_diff.append(perp_diff[i])
         return new_cands, np.array(new_perp_diff), perp_diff
+
+    def filter_cands_with_word_sim(self, token, cands, debug=False):
+        new_cands= []
+        new_sims, all_sims = [], []
+        # (cand_size)
+        for i in range(len(cands)):
+            sim = self.get_word_cos_sim(token, cands[i])
+            all_sims.append(sim)
+            if sim is not None and sim >= self.min_word_cos_sim:
+                new_cands.append(cands[i])
+                new_sims.append(sim)
+        return new_cands, new_sims, all_sims
+
+    def cos_sim(self, e1, e2):
+        e1 = torch.tensor(e1)
+        e2 = torch.tensor(e2)
+        cos_sim = torch.nn.CosineSimilarity(dim=0)(e1, e2)
+        return cos_sim.numpy()
+
+    def filter_cands_with_sent_sim(self, tokens, cands, idx, debug=False):
+        batch_tokens, _ = self.gen_cand_batch(tokens, cands, idx, tokens)
+        sents = [' '.join(toks) for toks in batch_tokens]
+        # sent-0 is original sent
+        with tf.device('/cpu:0'):
+            sent_embeds = self.sent_encoder(sents).numpy()
+        new_cands= []
+        new_sims, all_sims = [], []
+        # (cand_size)
+        for i in range(1,len(cands)):
+            sim = self.cos_sim(sent_embeds[i], sent_embeds[0])
+            all_sims.append(sim)
+            if sim >= self.min_sent_cos_sim:
+                new_cands.append(cands[i])
+                new_sims.append(sim)
+        return new_cands, new_sims, all_sims
 
     def get_best_cand(self, score, change_score):
         cand_rank = (-score).argsort()
@@ -647,6 +784,8 @@ class BlackBoxAttacker(object):
             return []
 
     def get_candidate_set(self, token, tag):
+        if token.lower() in self.stop_words:
+            return []
         sememe_cands = self.get_sememe_cands(token, tag)
         #print ("sememe:", sememe_cands)
         synonyms = self.get_synonyms(token, tag)
@@ -655,6 +794,11 @@ class BlackBoxAttacker(object):
         for syn in synonyms:
             if syn not in candidate_set:
                 candidate_set.append(syn)
+        if self.nn is not None:
+            knn_cands = self._get_knn_words(token)
+            for c in knn_cands:
+                if c not in candidate_set:
+                    candidate_set.append(c)
         return candidate_set
         
     def attack(self, tokens, tags, heads, rel_ids, debug=False):
@@ -700,9 +844,29 @@ class BlackBoxAttacker(object):
             if self.symbolic_root and idx == 0: continue
             cands = neigbhours_list[idx]
             all_cands = cands.copy()
+            if "word_sim" in self.filters:
+                cands, w_sims, all_w_sims = self.filter_cands_with_word_sim(adv_token[idx], cands)
+                if len(cands) == 0:
+                    if debug == 3:
+                        print ("--------------------------")
+                        print ("Idx={}({}), all word_sim less than min, continue\ncands:{}\nword_sims:{}".format(idx, tokens[idx], all_cands, all_w_sims))
+                else:
+                    print ("--------------------------")
+                    print ("Idx={}({})\ncands:{}\nword_sims:{}".format(idx, tokens[idx], all_cands, all_w_sims))
+            all_cands = cands.copy()
+            if "sent_sim" in self.filters:
+                cands, s_sims, all_s_sims = self.filter_cands_with_sent_sim(adv_tokens, cands, idx)
+                if len(cands) == 0:
+                    if debug == 3:
+                        print ("--------------------------")
+                        print ("Idx={}({}), all sent_sim less than min, continue\ncands:{}\nsent_sims:{}".format(idx, tokens[idx], all_cands, all_s_sims))
+                else:
+                    print ("--------------------------")
+                    print ("Idx={}({})\ncands:{}\nsent_sims:{}".format(idx, tokens[idx], all_cands, all_s_sims))
             # filter with language model
-            if self.adv_lm is not None:
-                cands, perp_diff, all_perp_diff = self.filter_cands(adv_tokens, cands, idx, debug==2)
+            all_cands = cands.copy()
+            if "lm" in self.filters:
+                cands, perp_diff, all_perp_diff = self.filter_cands_with_lm(adv_tokens, cands, idx, debug==2)
                 if len(cands) == 0:
                     if debug == 3:
                         print ("--------------------------")
@@ -719,7 +883,7 @@ class BlackBoxAttacker(object):
                         print ("--------------------------")
                         print ("Idx={}({}), no cand can make change, continue\ncands:{}\nchange_scores:{}".format(idx, tokens[idx], cands, change_score))
                 else:
-                    if (self.adv_lm is not None and total_perp_diff>max_perp_diff):
+                    if ("lm" in self.filters and total_perp_diff>max_perp_diff):
                         continue
                     else:
                         num_nochange_sub = 0
@@ -733,15 +897,15 @@ class BlackBoxAttacker(object):
                         chosen_idx = change_rank[chosen_rank_idx]
                         adv_tokens[idx] = cands[chosen_idx]
                         num_edit += 1
-                        if self.adv_lm is not None:
+                        if "lm" in self.filters:
                             total_perp_diff += blocked_perp_diff[chosen_idx]
                         if debug == 3:
                             print ("--------------------------")
                             print ("Idx={}({}), randomly chose:{} since no cand makes change\ncands:{}\nchange_scores:{}".format(idx, tokens[idx], cands[chosen_idx], cands, change_score))
-                            if self.adv_lm is not None:
+                            if "lm" in self.filters:
                                 print ("perp diff: {}".format(perp_diff))  
                 continue
-            if self.adv_lm is not None:
+            if "lm" in self.filters:
                 # penalize the score for disfluency substitution
                 # if the perplexity of new sent is lower than the original one, no bonus
                 score = (1 - self.fluency_ratio) * change_score - self.fluency_ratio * blocked_perp_diff
@@ -751,7 +915,7 @@ class BlackBoxAttacker(object):
             if best_cand_idx is None:
                 print ("--------------------------")
                 print ("Idx={}({}), can't find best cand, continue\ncands:{}\nchange_scores:{}".format(idx, tokens[idx], cands, change_score))
-                if self.adv_lm is not None:
+                if "lm" in self.filters:
                         print ("perp diff: {}\nscores: {}".format(perp_diff, score))
                 continue
             #cand_rank = (-score).argsort()
@@ -759,26 +923,26 @@ class BlackBoxAttacker(object):
             best_c_score = change_score[best_cand_idx]
             best_score = score[best_cand_idx]
             new_ratio = (total_change_score + best_c_score) / (num_edit + 1)
-            if (self.adv_lm is not None and total_perp_diff<=max_perp_diff) or (new_ratio > change_edit_ratio):
+            if ("lm" in self.filters and total_perp_diff<=max_perp_diff) or (new_ratio > change_edit_ratio):
                 change_edit_ratio = new_ratio
                 num_edit += 1
                 total_change_score += best_c_score
                 total_score += best_score
                 adv_tokens[idx] = best_cand
-                if self.adv_lm is not None:
+                if "lm" in self.filters:
                     total_perp_diff += blocked_perp_diff[best_cand_idx]
                 if debug == 3:
                     print ("--------------------------")
                     print ("Idx={}({}), chosen cand:{}, total_change_score:{}, change_edit_ratio:{}\ncands: {}\nchange_scores: {}".format(
                             idx, tokens[idx], best_cand, total_change_score, change_edit_ratio, cands, change_score))
-                    if self.adv_lm is not None:
+                    if "lm" in self.filters:
                         print ("perp diff: {}\nscores: {}".format(perp_diff, score))
             else:
                 if debug == 3:
                     print ("------------Stopping------------")
                     print ("Idx={}({}), chosen cand:{}, total_change_score:{}, change_edit_ratio:{}\ncands: {}\nchange_scores: {}".format(
                             idx, tokens[idx], best_cand, total_change_score, change_edit_ratio, cands, change_score))
-                    if self.adv_lm is not None:
+                    if "lm" in self.filters:
                         print ("perp diff: {}\nscores: {}".format(perp_diff, score))
                 break
         if adv_tokens == tokens:

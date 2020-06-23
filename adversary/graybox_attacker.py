@@ -6,6 +6,7 @@ nlp = spacy.load('en_core_web_sm')
 from functools import partial
 import numpy as np
 import torch
+import random
 
 from neuronlp2.io import get_logger
 from neuronlp2.io.common import PAD_CHAR, PAD, PAD_POS, PAD_TYPE, PAD_ID_CHAR, PAD_ID_TAG, PAD_ID_WORD
