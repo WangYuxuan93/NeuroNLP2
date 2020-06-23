@@ -347,6 +347,7 @@ def recover_word_case(word, reference_word):
 
 class BlackBoxAttacker(object):
     def __init__(self, model, candidates, vocab, synonyms, filters=['word_sim', 'sent_sim', 'lm'],
+                generators=['synonym', 'sememe', 'embedding'],
                 knn_path=None, max_knn_candidates=50, sent_encoder_path=None,
                 min_word_cos_sim=0.8, min_sent_cos_sim=0.8,  
                 adv_lms=None, rel_ratio=0.5, fluency_ratio=0.2,
@@ -402,6 +403,7 @@ class BlackBoxAttacker(object):
         self.min_sent_cos_sim = min_sent_cos_sim
         
         self.filters = filters
+        self.generators = generators
         if 'word_sim' in self.filters and self.nn is None:
             print ("Must input embedding path for word cos sim filter!")
             exit()
@@ -410,6 +412,10 @@ class BlackBoxAttacker(object):
             exit()
         if 'lm' in self.filters and self.adv_lm is None:
             print ("Must input language model (gpt2) path for lm filter!")
+            exit()
+
+        if 'embedding' in self.generators and self.nn is None:
+            print ("Must input embedding path for embedding generator!")
             exit()
         
         logger.info("Filters: {}".format(filters))
@@ -725,6 +731,39 @@ class BlackBoxAttacker(object):
                 new_sims.append(sim)
         return new_cands, new_sims, all_sims
 
+    def filter_cands(self, tokens, cands, idx, debug=False):
+        all_cands = cands.copy()
+        if "word_sim" in self.filters:
+            cands, w_sims, all_w_sims = self.filter_cands_with_word_sim(tokens[idx], cands)
+            if len(cands) == 0:
+                if debug == 3:
+                    print ("--------------------------")
+                    print ("Idx={}({}), all word_sim less than min, continue\ncands:{}\nword_sims:{}".format(idx, tokens[idx], all_cands, all_w_sims))
+            else:
+                print ("--------------------------")
+                print ("Idx={}({})\ncands:{}\nword_sims:{}".format(idx, tokens[idx], all_cands, all_w_sims))
+        all_cands = cands.copy()
+        if "sent_sim" in self.filters:
+            cands, s_sims, all_s_sims = self.filter_cands_with_sent_sim(tokens, cands, idx)
+            if len(cands) == 0:
+                if debug == 3:
+                    print ("--------------------------")
+                    print ("Idx={}({}), all sent_sim less than min, continue\ncands:{}\nsent_sims:{}".format(idx, tokens[idx], all_cands, all_s_sims))
+            else:
+                print ("--------------------------")
+                print ("Idx={}({})\ncands:{}\nsent_sims:{}".format(idx, tokens[idx], all_cands, all_s_sims))
+        # filter with language model
+        all_cands = cands.copy()
+        perp_diff = None
+        if "lm" in self.filters:
+            cands, perp_diff, all_perp_diff = self.filter_cands_with_lm(tokens, cands, idx, debug==2)
+            if len(cands) == 0:
+                if debug == 3:
+                    print ("--------------------------")
+                    print ("Idx={}({}), all perp_diff above thres, continue\ncands:{}\nperp_diff:{}".format(idx, tokens[idx], all_cands, all_perp_diff))
+                continue
+        return cands, perp_diff
+
     def cos_sim(self, e1, e2):
         e1 = torch.tensor(e1)
         e2 = torch.tensor(e2)
@@ -787,19 +826,36 @@ class BlackBoxAttacker(object):
         else:
             return []
 
-    def get_candidate_set(self, token, tag):
+    def get_knn_cands(self, tokens, tag, idx):
+        cands = []
+        knn_cands = self._get_knn_words(token)
+        for cand in knn_cands:
+            tokens[idx] = cand
+            cand_tag = nltk.pos_tag(tokens)[idx][1]
+            if cand_tag == tag:
+                cands.append(cand)
+        return cands
+
+    def get_candidate_set(self, tokens, tag, idx):
+        token = tokens[idx]
         if token.lower() in self.stop_words:
             return []
-        sememe_cands = self.get_sememe_cands(token, tag)
-        #print ("sememe:", sememe_cands)
-        synonyms = self.get_synonyms(token, tag)
-        #print ("syn:", synonyms)
-        candidate_set = sememe_cands
-        for syn in synonyms:
-            if syn not in candidate_set:
-                candidate_set.append(syn)
-        if self.nn is not None:
-            knn_cands = self._get_knn_words(token)
+        candidate_set = []
+        if 'sememe' in self.generators:
+            sememe_cands = self.get_sememe_cands(token, tag)
+            for c in sememe_cands:
+                if c not in candidate_set:
+                    candidate_set.append(c)
+            #print ("sememe:", sememe_cands)
+        if 'synonym' in self.generators:
+            synonyms = self.get_synonyms(token, tag)
+            #print ("syn:", synonyms)
+            for c in synonyms:
+                if c not in candidate_set:
+                    candidate_set.append(c)
+        if 'embedding' in self.generators:
+            knn_cands = self.get_knn_cands(tokens, tag, idx)
+            print ("knn cands:\n", knn_cands)
             for c in knn_cands:
                 if c not in candidate_set:
                     candidate_set.append(c)
@@ -822,7 +878,7 @@ class BlackBoxAttacker(object):
         #stop_words = nltk.corpus.stopwords.words('english')
         for i in range(x_len):
             #print (adv_tokens[i], self._word2id(adv_tokens[i]))
-            neigbhours_list.append(self.get_candidate_set(adv_tokens[i], tags[i]))
+            neigbhours_list.append(self.get_candidate_set(adv_tokens, tags[i], i))
         neighbours_len = [len(x) for x in neigbhours_list]
         #print (neigbhours_list)
         if np.sum(neighbours_len) == 0:
@@ -847,7 +903,10 @@ class BlackBoxAttacker(object):
             # skip the edit for ROOT
             if self.symbolic_root and idx == 0: continue
             cands = neigbhours_list[idx]
+
+            cands, perp_diff = self.filter_cands(adv_tokens, cands, idx, debug=debug)
             all_cands = cands.copy()
+            """
             if "word_sim" in self.filters:
                 cands, w_sims, all_w_sims = self.filter_cands_with_word_sim(adv_tokens[idx], cands)
                 if len(cands) == 0:
@@ -876,6 +935,9 @@ class BlackBoxAttacker(object):
                         print ("--------------------------")
                         print ("Idx={}({}), all perp_diff above thres, continue\ncands:{}\nperp_diff:{}".format(idx, tokens[idx], all_cands, all_perp_diff))
                     continue
+                blocked_perp_diff = np.where(perp_diff>0, perp_diff, 0)
+            """
+            if "lm" in self.filters:
                 blocked_perp_diff = np.where(perp_diff>0, perp_diff, 0)
             # (cand_size)
             change_score = self.get_change_score(adv_tokens, cands, idx, tags, heads, rel_ids, debug==2)
