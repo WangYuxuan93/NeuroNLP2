@@ -360,20 +360,24 @@ class BlackBoxAttacker(object):
         self.candidates = candidates
         self.synonyms = synonyms
         self.word2id = vocab
+        self.filters = filters
+        self.generators = generators
+        logger.info("Filters: {}".format(filters))
+        logger.info("Generators: {}".format(generators))
         self.id2word = {i:w for (w,i) in vocab.items()}
-        if knn_path is not None:
+        if ('word_sim' in self.filters or 'embedding' in self.generators) and knn_path is not None:
             logger.info("Loading knn from: {}".format(knn_path))
             self.load_knn_path(knn_path)
             logger.info("Min word cosine similarity: {}".format(min_word_cos_sim))
         else:
             self.nn = None
-        if sent_encoder_path is not None:
+        if 'sent_sim' in self.filters and sent_encoder_path is not None:
             logger.info("Loading sent encoder from: {}".format(sent_encoder_path))
             self.sent_encoder = hub.load(sent_encoder_path)
             logger.info("Min sent cosine similarity: {}".format(min_sent_cos_sim))
         else:
             self.sent_encoder = None
-        if adv_lms is not None:
+        if 'lm' in self.filters and adv_lms is not None:
             self.adv_tokenizer, self.adv_lm = adv_lms
         else:
             self.adv_tokenizer, self.adv_lm = None, None
@@ -402,8 +406,6 @@ class BlackBoxAttacker(object):
         self.min_word_cos_sim = min_word_cos_sim
         self.min_sent_cos_sim = min_sent_cos_sim
         
-        self.filters = filters
-        self.generators = generators
         if 'word_sim' in self.filters and self.nn is None:
             print ("Must input embedding path for word cos sim filter!")
             exit()
@@ -417,8 +419,6 @@ class BlackBoxAttacker(object):
         if 'embedding' in self.generators and self.nn is None:
             print ("Must input embedding path for embedding generator!")
             exit()
-        
-        logger.info("Filters: {}".format(filters))
 
     def load_knn_path(self, path):
         word_embeddings_file = "paragram.npy"
@@ -761,7 +761,6 @@ class BlackBoxAttacker(object):
                 if debug == 3:
                     print ("--------------------------")
                     print ("Idx={}({}), all perp_diff above thres, continue\ncands:{}\nperp_diff:{}".format(idx, tokens[idx], all_cands, all_perp_diff))
-                continue
         return cands, perp_diff
 
     def cos_sim(self, e1, e2):
@@ -905,6 +904,11 @@ class BlackBoxAttacker(object):
             cands = neigbhours_list[idx]
 
             cands, perp_diff = self.filter_cands(adv_tokens, cands, idx, debug=debug)
+            if len(cands) == 0:
+                if debug == 3:
+                    print ("--------------------------")
+                    print ("Idx={}({}), all cands filtered out, continue".format(idx, tokens[idx]))
+                continue
             all_cands = cands.copy()
             """
             if "word_sim" in self.filters:

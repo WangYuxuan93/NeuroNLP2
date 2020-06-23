@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=4 python -u adv_attack.py --mode parse \
- --min_word_cos_sim 0.9 --min_sent_cos_sim 0.9 --filters 'word_sim' \
+ --min_word_cos_sim 0.9 --min_sent_cos_sim 0.9 --filters '' --generators 'synonym:sememe' \
  --batch_size 32 \
  --noscreen \
  --punctuation '.' '``' "''" ':' ',' \

@@ -550,8 +550,10 @@ def parse(args):
     else:
         adv_lms = None
     filters = args.filters.split(':')
+    generators = args.generators.split(':')
     alphabets = word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, pretrained_alphabet
-    attacker = BlackBoxAttacker(network, candidates, vocab, synonyms, filters=filters, knn_path=args.knn_path, 
+    attacker = BlackBoxAttacker(network, candidates, vocab, synonyms, filters=filters, generators=generators,
+                        knn_path=args.knn_path, 
                         max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
                         min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim, 
                         adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, 
@@ -672,6 +674,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--min_sent_cos_sim', type=float, default=0.9, help='Min sent cos similarity')
     args_parser.add_argument('--sent_encoder_path', type=str, help='universal sentence encoder path for sent cos sim')
     args_parser.add_argument('--filters', type=str, default='word_sim:sent_sim:lm', help='filters for word substitution')
+    args_parser.add_argument('--generators', type=str, default='synonym:sememe:embedding', help='generators for word substitution')
 
     args = args_parser.parse_args()
     parse(args)
