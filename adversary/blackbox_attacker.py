@@ -843,20 +843,20 @@ class BlackBoxAttacker(object):
         if 'sememe' in self.generators:
             sememe_cands = self.get_sememe_cands(token, tag)
             for c in sememe_cands:
-                if c not in candidate_set:
+                if c not in candidate_set and c is not token:
                     candidate_set.append(c)
             #print ("sememe:", sememe_cands)
         if 'synonym' in self.generators:
             synonyms = self.get_synonyms(token, tag)
             #print ("syn:", synonyms)
             for c in synonyms:
-                if c not in candidate_set:
+                if c not in candidate_set and c is not token:
                     candidate_set.append(c)
         if 'embedding' in self.generators:
-            knn_cands = self.get_knn_cands(tokens, tag, idx)
-            print ("knn cands:\n", knn_cands)
+            knn_cands = self.get_knn_cands(tokens.copy(), tag, idx)
+            #print ("knn cands:\n", knn_cands)
             for c in knn_cands:
-                if c not in candidate_set:
+                if c not in candidate_set and c is not token:
                     candidate_set.append(c)
         return candidate_set
         
@@ -903,44 +903,13 @@ class BlackBoxAttacker(object):
             if self.symbolic_root and idx == 0: continue
             cands = neigbhours_list[idx]
 
-            cands, perp_diff = self.filter_cands(adv_tokens, cands, idx, debug=debug)
+            cands, perp_diff = self.filter_cands(adv_tokens.copy(), cands, idx, debug=debug)
             if len(cands) == 0:
                 if debug == 3:
                     print ("--------------------------")
                     print ("Idx={}({}), all cands filtered out, continue".format(idx, tokens[idx]))
                 continue
             all_cands = cands.copy()
-            """
-            if "word_sim" in self.filters:
-                cands, w_sims, all_w_sims = self.filter_cands_with_word_sim(adv_tokens[idx], cands)
-                if len(cands) == 0:
-                    if debug == 3:
-                        print ("--------------------------")
-                        print ("Idx={}({}), all word_sim less than min, continue\ncands:{}\nword_sims:{}".format(idx, tokens[idx], all_cands, all_w_sims))
-                else:
-                    print ("--------------------------")
-                    print ("Idx={}({})\ncands:{}\nword_sims:{}".format(idx, tokens[idx], all_cands, all_w_sims))
-            all_cands = cands.copy()
-            if "sent_sim" in self.filters:
-                cands, s_sims, all_s_sims = self.filter_cands_with_sent_sim(adv_tokens, cands, idx)
-                if len(cands) == 0:
-                    if debug == 3:
-                        print ("--------------------------")
-                        print ("Idx={}({}), all sent_sim less than min, continue\ncands:{}\nsent_sims:{}".format(idx, tokens[idx], all_cands, all_s_sims))
-                else:
-                    print ("--------------------------")
-                    print ("Idx={}({})\ncands:{}\nsent_sims:{}".format(idx, tokens[idx], all_cands, all_s_sims))
-            # filter with language model
-            all_cands = cands.copy()
-            if "lm" in self.filters:
-                cands, perp_diff, all_perp_diff = self.filter_cands_with_lm(adv_tokens, cands, idx, debug==2)
-                if len(cands) == 0:
-                    if debug == 3:
-                        print ("--------------------------")
-                        print ("Idx={}({}), all perp_diff above thres, continue\ncands:{}\nperp_diff:{}".format(idx, tokens[idx], all_cands, all_perp_diff))
-                    continue
-                blocked_perp_diff = np.where(perp_diff>0, perp_diff, 0)
-            """
             if "lm" in self.filters:
                 blocked_perp_diff = np.where(perp_diff>0, perp_diff, 0)
             # (cand_size)
