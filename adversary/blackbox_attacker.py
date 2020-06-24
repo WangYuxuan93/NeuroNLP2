@@ -54,6 +54,7 @@ stopwords = set(
             "around",
             "as",
             "at",
+            "be",
             "back",
             "been",
             "before",
