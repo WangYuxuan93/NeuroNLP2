@@ -23,7 +23,9 @@ from torch.optim import SGD, Adam, AdamW
 from torch.nn.utils import clip_grad_norm_
 from neuronlp2.nn.utils import total_grad_norm
 from neuronlp2.io import get_logger, conllx_data, ud_data, conllx_stacked_data #, iterate_data
+from neuronlp2.io import ud_stacked_data
 from neuronlp2.models.robust_parsing import RobustParser
+from neuronlp2.models.stack_pointer import StackPtrParser
 from neuronlp2.optim import ExponentialScheduler, StepScheduler, AttentionScheduler
 from neuronlp2 import utils
 from neuronlp2.io import CoNLLXWriter
@@ -146,12 +148,6 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         if multi_lan_iter:
             lan_id, data = data
             lan_id = torch.LongTensor([lan_id]).to(device)
-        if tokenizer:
-            bpes, first_idx = convert_tokens_to_ids(tokenizer, data['SRC'])
-            bpes = bpes.to(device)
-            first_idx = first_idx.to(device)
-        else:
-            bpes = first_idx = None
         words = data['WORD'].to(device)
         pres = data['PRETRAINED'].to(device)
         chars = data['CHAR'].to(device)
@@ -160,11 +156,23 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         rels = data['TYPE'].numpy()
         lengths = data['LENGTH'].numpy()
         err_types = data['ERR_TYPE']
+        if tokenizer:
+            srcs = data['SRC']
+            if words.size()[0] == 1 and len(srcs) > 1:
+                srcs = [srcs]
+            bpes, first_idx = convert_tokens_to_ids(tokenizer, srcs)
+            bpes = bpes.to(device)
+            first_idx = first_idx.to(device)
+        else:
+            bpes = first_idx = None
         if alg == 'graph':
             masks = data['MASK'].to(device)
             heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, 
                 bpes=bpes, first_idx=first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
-
+        else:
+            masks = data['MASK_ENC'].to(device)
+            heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, 
+                bpes=bpes, first_idx=first_idx, lan_id=lan_id, beam=beam, leading_symbolic=conllx_data.NUM_SYMBOLIC_TAGS)
         words = words.cpu().numpy()
         postags = postags.cpu().numpy()
 
@@ -355,6 +363,10 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
             masks = data['MASK'].to(device)
             heads_pred, rels_pred = network.decode(adv_words, pres, chars, postags, mask=masks, 
                 bpes=bpes, first_idx=first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
+        else:
+            masks = data['MASK_ENC'].to(device)
+            heads_pred, rels_pred = network.decode(adv_words, pres, chars, postags, mask=masks, 
+                bpes=bpes, first_idx=first_idx, lan_id=lan_id, beam=beam, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
 
         adv_words = adv_words.cpu().numpy()
         postags = postags.cpu().numpy()
@@ -500,7 +512,7 @@ def parse(args):
     logger.info("loading network...")
     hyps = json.load(open(os.path.join(model_path, 'config.json'), 'r'))
     model_type = hyps['model']
-    assert model_type in ['Robust']
+    assert model_type in ['Robust', 'StackPtr']
 
     num_lans = 1
     if not args.mix_datasets:
@@ -517,10 +529,16 @@ def parse(args):
     else:
         tokenizer = AutoTokenizer.from_pretrained(lm_path)
 
-    alg = 'graph'
+    logger.info("##### Parser Type: {} #####".format(model_type))
+    alg = 'transition' if model_type == 'StackPtr' else 'graph'
     if model_type == 'Robust':
         network = RobustParser(hyps, num_pretrained, num_words, num_chars, num_pos,
                                num_rels, device=device, basic_word_embedding=args.basic_word_embedding, 
+                               pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
+                               num_lans=num_lans)
+    elif model_type == 'StackPtr':
+        network = StackPtrParser(hyps, num_pretrained, num_words, num_chars, num_pos,
+                               num_rels, device=device, basic_word_embedding=args.basic_word_embedding,
                                pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
                                num_lans=num_lans)
     else:
@@ -592,6 +610,12 @@ def parse(args):
                                           rel_alphabet, normalize_digits=args.normalize_digits, 
                                           symbolic_root=True, pre_alphabet=pretrained_alphabet, 
                                           pos_idx=args.pos_idx)
+    elif alg == 'transition':
+        prior_order = hyps['input']['prior_order']
+        data_test = ud_stacked_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                            normalize_digits=args.normalize_digits, symbolic_root=True,
+                                            pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx, 
+                                            prior_order=prior_order)
 
     beam = args.beam
     pred_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
@@ -610,7 +634,7 @@ def parse(args):
     #gold_filename = os.path.join(result_path, 'gold.txt')
     #gold_writer.start(gold_filename)
 
-    if not args.mix_datasets:
+    if alg == 'graph' and not args.mix_datasets:
         multi_lan_iter = True
     else:
         multi_lan_iter = False
