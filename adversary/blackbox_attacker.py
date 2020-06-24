@@ -776,14 +776,15 @@ class BlackBoxAttacker(object):
         # sent-0 is original sent
         with tf.device('/cpu:0'):
             sent_embeds = self.sent_encoder(sents).numpy()
+        #print ("sent_sim batch toks:\n", batch_tokens)
         new_cands= []
         new_sims, all_sims = [], []
         # (cand_size)
-        for i in range(1,len(cands)):
+        for i in range(1,len(cands)+1):
             sim = self.cos_sim(sent_embeds[i], sent_embeds[0])
             all_sims.append(sim)
             if sim >= self.min_sent_cos_sim:
-                new_cands.append(cands[i])
+                new_cands.append(cands[i-1])
                 new_sims.append(sim)
         return new_cands, new_sims, all_sims
 
@@ -830,8 +831,9 @@ class BlackBoxAttacker(object):
         cands = []
         knn_cands = self._get_knn_words(tokens[idx])
         for cand in knn_cands:
-            tokens[idx] = cand
-            cand_tag = nltk.pos_tag(tokens)[idx][1]
+            #tokens[idx] = cand
+            #cand_tag = nltk.pos_tag(tokens)[idx][1]
+            cand_tag = nltk.pos_tag([cand])[0][1]
             if cand_tag == tag:
                 cands.append(cand)
         return cands
