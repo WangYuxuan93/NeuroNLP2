@@ -9,8 +9,8 @@ import torch
 import random
 import os
 import pickle
-#import tensorflow_hub as hub
-#import tensorflow as tf
+import tensorflow_hub as hub
+import tensorflow as tf
 
 from neuronlp2.io import get_logger
 from neuronlp2.io.common import PAD, ROOT, END
