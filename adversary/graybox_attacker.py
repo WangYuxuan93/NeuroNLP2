@@ -26,12 +26,17 @@ class GrayBoxAttacker(BlackBoxAttacker):
             heads_pred: (batch, seq_len)
             rels_pred: (batch, seq_len)
         """
-        words, pres, chars, pos, masks, bpes, first_idx, lan_id = self.str2id(tokens, tags)
         self.model.eval()
+        heads_prob_list, rels_prob_list = [], []
         with torch.no_grad():
-            head_probs, rel_probs = self.model.get_probs(words, pres, chars, pos, mask=masks, 
-                bpes=bpes, first_idx=first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
-        return head_probs, rel_probs
+            for words, pres, chars, pos, masks, bpes, first_idx, lan_id in self.str2id(tokens, tags):
+                heads_prob, rels_prob = self.model.get_probs(words, pres, chars, pos, mask=masks, 
+                    bpes=bpes, first_idx=first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
+                heads_prob_list.append(heads_prob.detach().cpu())
+                rels_prob_list.append(rels_prob.detach().cpu())
+        heads_prob = torch.cat(heads_prob_list, dim=0)
+        rels_prob = torch.cat(rels_prob_list, dim=0)
+        return heads_prob, rels_prob
 
     def calc_prob_change(self, batch_tokens, batch_tags, heads, rel_ids, debug=False):
         heads_pred, rels_pred = self.get_prediction(batch_tokens, batch_tags)

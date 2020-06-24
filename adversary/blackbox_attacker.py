@@ -549,7 +549,26 @@ class BlackBoxAttacker(object):
         masks = torch.from_numpy(masks).to(self.device)
         pres = torch.from_numpy(pre_inputs).to(self.device)
 
-        return words, pres, chars, pos, masks, bpes, first_idx, lan_id
+        for start_idx in range(0, data_size, self.batch_size):
+            excerpt = slice(start_idx, start_idx + self.batch_size)
+            b_words = words[excerpt, :]
+            b_pres = pres[excerpt, :]
+            b_pos = pos[excerpt, :]
+            b_masks = masks[excerpt, :]
+            if chars is not None:
+                b_chars = chars[excerpt, :]
+            else:
+                b_chars = None
+            if bpes is not None:
+                b_bpes = bpes[excerpt, :]
+            else:
+                b_bpes = None
+            if first_idx is not None:
+                b_first_idx = first_idx[excerpt, :]
+            else:
+                b_first_idx = None
+            b_lan_id = None
+            yield b_words, b_pres, b_chars, b_pos, b_masks, b_bpes, b_first_idx, b_lan_id
 
     def get_prediction(self, tokens, tags):
         """
@@ -560,11 +579,16 @@ class BlackBoxAttacker(object):
             heads_pred: (batch, seq_len)
             rels_pred: (batch, seq_len)
         """
-        words, pres, chars, pos, masks, bpes, first_idx, lan_id = self.str2id(tokens, tags)
         self.model.eval()
+        heads_pred_list, rels_pred_list = [], []
         with torch.no_grad():
-            heads_pred, rels_pred = self.model.decode(words, pres, chars, pos, mask=masks, 
-                bpes=bpes, first_idx=first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
+            for words, pres, chars, pos, masks, bpes, first_idx, lan_id in self.str2id(tokens, tags):
+                heads_pred, rels_pred = self.model.decode(words, pres, chars, pos, mask=masks, 
+                    bpes=bpes, first_idx=first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
+                heads_pred_list.append(heads_pred)
+                rels_pred_list.append(rels_pred)
+        heads_pred = np.concatenate(heads_pred_list, axis=0)
+        rels_pred = np.concatenate(rels_pred_list, axis=0)
         return heads_pred, rels_pred
 
     def gen_importance_batch(self, tokens, tags):
