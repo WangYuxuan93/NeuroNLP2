@@ -9,8 +9,8 @@ import torch
 import random
 import os
 import pickle
-import tensorflow_hub as hub
-import tensorflow as tf
+#import tensorflow_hub as hub
+#import tensorflow as tf
 
 from neuronlp2.io import get_logger
 from neuronlp2.io.common import PAD, ROOT, END
@@ -357,6 +357,7 @@ class BlackBoxAttacker(object):
                 batch_size=32, random_sub_if_no_change=False):
         super(BlackBoxAttacker, self).__init__()
         logger = get_logger("Attacker")
+        logger.info("##### Attacker Type: {} #####".format(self.__class__.__name__))
         self.model = model
         self.candidates = candidates
         self.synonyms = synonyms
@@ -989,4 +990,12 @@ class BlackBoxAttacker(object):
                 break
         if adv_tokens == tokens:
             return None
+        sent_str = ""
+        for x,y in zip(tokens, adv_tokens):
+            if x == y:
+                sent_str += x + " "
+            else:
+                sent_str += y + " [ " + x + " ] "
+        print ("~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+        print ("Success attack, adv sent:\n{}".format(sent_str))
         return adv_tokens, num_edit, total_score, total_change_score, total_perp_diff
