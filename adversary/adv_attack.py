@@ -38,6 +38,7 @@ from neuronlp2.io.batcher import multi_language_iterate_data, iterate_data
 from neuronlp2.io import multi_ud_data
 from neuronlp2.io.common import PAD_CHAR, PAD, PAD_POS, PAD_TYPE, PAD_ID_CHAR, PAD_ID_TAG, PAD_ID_WORD
 from adversary.blackbox_attacker import BlackBoxAttacker
+from adversary.random_attacker import RandomAttacker
 from adversary.graybox_attacker import GrayBoxAttacker
 
 def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgrad, weight_decay, 
@@ -437,7 +438,8 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
     #print('Error Token Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%' % (
     #    accum_ucorr_err_nopunc, accum_lcorr_err_nopunc, accum_total_err_nopunc, 
     #    accum_ucorr_err_nopunc * 100 / accum_total_err_nopunc, accum_lcorr_err_nopunc * 100 / accum_total_err_nopunc))
-
+    if accum_total_edit == 0:
+        accum_total_edit = 1
     print('Attack: success/total examples = %d/%d, Average score: %.2f, change score: %.2f, perp diff: %.2f, edit dist: %.2f, change-edit ratio: %.2f' % (
         accum_success_attack, accum_total_sent, accum_total_score/accum_total_sent, 
         accum_total_change_score/accum_total_sent, accum_total_perp_diff/accum_total_sent, 
@@ -462,6 +464,7 @@ def parse(args):
     logger = get_logger("Parsing")
     logger.info("Random seed: {}".format(args.seed))
     random.seed(args.seed)
+    np.random.seed(args.seed)
     args.cuda = torch.cuda.is_available()
     device = torch.device('cuda', 0) if args.cuda else torch.device('cpu')
     data_format = args.format
@@ -580,7 +583,17 @@ def parse(args):
                         perp_diff_thres=args.perp_diff_thres,
                         alphabets=alphabets, tokenizer=tokenizer, device=device, lm_device=lm_device,
                         batch_size=args.adv_batch_size, random_sub_if_no_change=args.random_sub_if_no_change)
-    else:
+    elif args.mode == 'random':
+        attacker = RandomAttacker(network, candidates, vocab, synonyms, filters=filters, generators=generators,
+                        knn_path=args.knn_path, 
+                        max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
+                        min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim, 
+                        adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, 
+                        fluency_ratio=args.adv_fluency_ratio, max_perp_diff_per_token=args.max_perp_diff_per_token,
+                        perp_diff_thres=args.perp_diff_thres,
+                        alphabets=alphabets, tokenizer=tokenizer, device=device, lm_device=lm_device,
+                        batch_size=args.adv_batch_size, random_sub_if_no_change=args.random_sub_if_no_change)
+    elif args.mode == 'gray':
         attacker = GrayBoxAttacker(network, candidates, vocab, synonyms, filters=filters, generators=generators,
                         knn_path=args.knn_path, 
                         max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
@@ -662,7 +675,7 @@ def parse(args):
 
 if __name__ == '__main__':
     args_parser = argparse.ArgumentParser(description='Tuning with graph-based parsing')
-    args_parser.add_argument('--mode', choices=['black', 'gray'], required=True, help='processing mode')
+    args_parser.add_argument('--mode', choices=['black', 'random', 'gray'], required=True, help='processing mode')
     args_parser.add_argument('--seed', type=int, default=666, help='Random seed for torch and numpy (-1 for random)')
     args_parser.add_argument('--config', type=str, help='config file')
     args_parser.add_argument('--vocab', type=str, help='vocab file for attacker')
