@@ -1,0 +1,13 @@
+{
+	"src_path": "py3.6/bin/activate",
+  "main_path": "adv_attack.py",
+  "batch": 16,
+  "adv_batch": 16,
+  "lm_path": "roberta-base",
+  "sent_path": "universal_sentence_encoder",
+  "vocab_path": "vocab.json",
+  "cand_path": "cands.json",
+  "syn_path": "synonym.json",
+  "knn_path": "knn",
+  "test": "ptb-dev.conll"
+}

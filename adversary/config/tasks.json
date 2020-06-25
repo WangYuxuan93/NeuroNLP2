@@ -1,0 +1,34 @@
+{
+	"black-nopos-roberta-v0": {
+		"parser": "ptb-nopos-roberta-v0",
+		"mode": "black",
+		"lm": "roberta",
+  	"lm_path": "roberta-base",
+  	"generator": "synonym",
+  	"filter": "lm",
+  	"wsim": 0.9,
+  	"ssim": 0.98,
+  	"max_knn": 50,
+  	"rel_ratio": 0.5,
+  	"flu_ratio": 0.1,
+  	"ppl_diff_per_tok": 2.0,
+  	"ppl_diff_thres": 30.0
+	},
+
+	"black-nopos-roberta-v1": {
+		"parser": "ptb-nopos-roberta-v0",
+		"mode": "black",
+		"lm": "electra",
+  	"lm_path": "electra-base",
+  	"generator": "synonym",
+  	"filter": "lm",
+  	"wsim": 0.7,
+  	"ssim": 0.9,
+  	"max_knn": 50,
+  	"rel_ratio": 0.5,
+  	"flu_ratio": 0.1,
+  	"ppl_diff_per_tok": 2.0,
+  	"ppl_diff_thres": 30.0
+	}
+  
+}
