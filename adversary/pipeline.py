@@ -16,9 +16,10 @@ class Attacker(object):
 		#print (self.common_dict)
 
 	def build_cmd(self, dict):
-		cmd = "CUDA_VISIBLE_DEVICES={gpu} OMP_NUM_THREADS=4 python -u {main_path} --mode {mode} \
+		cmd = "CUDA_VISIBLE_DEVICES={gpu} OMP_NUM_THREADS=4 python -u {main_path} --mode {mode} --seed {seed} \
 --generators {generator} --filters {filter} --batch_size {batch} --adv_batch_size {adv_batch} \
---pretrained_lm {lm} --lm_path {lm_path} --sentence_encoder_path {sent_path} \
+--pretrained_lm {lm} --lm_path {lm_path} --sent_encoder_path {sent_path} \
+--adv_lm_path {adv_lm_path} {basic_emb} \
 --vocab {vocab_path} --cand {cand_path} --syn {syn_path} --knn_path {knn_path} \
 --min_word_cos_sim {wsim} --min_sent_cos_sim {ssim} --max_knn_candidates {max_knn} \
 --adv_rel_ratio {rel_ratio} --adv_fluency_ratio {flu_ratio} \
@@ -53,7 +54,7 @@ class Attacker(object):
 		cmd = self.src + cmd
 		print ("\n##### Running task: {} #####".format(name))
 		print (cmd)
-		#os.system(cmd)
+		os.system(cmd)
 
 	def start(self):
 		for name in self.tasks:

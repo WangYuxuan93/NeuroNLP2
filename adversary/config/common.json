@@ -1,13 +1,13 @@
 {
-	"src_path": "py3.6/bin/activate",
-  "main_path": "adv_attack.py",
+  "src_path": "/users2/yxwang/work/env/py3.6/bin/activate",
+  "main_path": "/users2/yxwang/work/codes/NeuroNLP2/adversary/adv_attack.py",
   "batch": 16,
   "adv_batch": 16,
-  "lm_path": "roberta-base",
-  "sent_path": "universal_sentence_encoder",
-  "vocab_path": "vocab.json",
-  "cand_path": "cands.json",
-  "syn_path": "synonym.json",
-  "knn_path": "knn",
-  "test": "ptb-dev.conll"
+  "adv_lm_path": "/users2/yxwang/work/experiments/adversarial/lm/saves/gpt2-ptb_train-v0",
+  "sent_path": "/users2/yxwang/work/data/models/universal_sentence_encoder",
+  "vocab_path": "/users2/yxwang/work/experiments/adversarial/data/ptb.train.vocab.json",
+  "cand_path": "/users2/yxwang/work/experiments/adversarial/data/ptb.train.candidates.pkl",
+  "syn_path": "/users2/yxwang/work/experiments/adversarial/data/ptb.train-dev.synonyms.json",
+  "knn_path": "/users2/yxwang/work/data/embeddings/paragramcf",
+  "test": "/users2/yxwang/work/data/ptb/dependency-stanford-chen14/PTB_dev_auto.conll"
 }
