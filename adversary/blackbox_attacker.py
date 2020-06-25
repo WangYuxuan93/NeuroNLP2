@@ -354,7 +354,7 @@ def recover_word_case(word, reference_word):
 
 class BlackBoxAttacker(object):
     def __init__(self, model, candidates, vocab, synonyms, filters=['word_sim', 'sent_sim', 'lm'],
-                generators=['synonym', 'sememe', 'embedding'],
+                generators=['synonym', 'sememe', 'embedding'], tagger="nltk",
                 knn_path=None, max_knn_candidates=50, sent_encoder_path=None,
                 min_word_cos_sim=0.8, min_sent_cos_sim=0.8,  
                 adv_lms=None, rel_ratio=0.5, fluency_ratio=0.2,
@@ -370,8 +370,10 @@ class BlackBoxAttacker(object):
         self.word2id = vocab
         self.filters = filters
         self.generators = generators
+        self.tagger = tagger
         logger.info("Filters: {}".format(filters))
         logger.info("Generators: {}".format(generators))
+        logger.info("POS tagger: {}".format(tagger))
         self.id2word = {i:w for (w,i) in vocab.items()}
         if ('word_sim' in self.filters or 'embedding' in self.generators) and knn_path is not None:
             logger.info("Loading knn from: {}".format(knn_path))
@@ -864,7 +866,10 @@ class BlackBoxAttacker(object):
         for cand in knn_cands:
             #tokens[idx] = cand
             #cand_tag = nltk.pos_tag(tokens)[idx][1]
-            cand_tag = nltk.pos_tag([cand])[0][1]
+            if self.tagger = "nltk":
+                cand_tag = nltk.pos_tag([cand.lower()])[0][1]
+            else:
+                cand_tag = nlp(cand.lower())[0].tag_
             if cand_tag == tag:
                 cands.append(cand)
         return cands
