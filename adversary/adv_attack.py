@@ -40,6 +40,7 @@ from neuronlp2.io.common import PAD_CHAR, PAD, PAD_POS, PAD_TYPE, PAD_ID_CHAR, P
 from adversary.blackbox_attacker import BlackBoxAttacker
 from adversary.random_attacker import RandomAttacker
 from adversary.graybox_attacker import GrayBoxAttacker
+from adversary.graybox_single_attacker import GrayBoxSingleAttacker
 
 def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgrad, weight_decay, 
                   warmup_steps, schedule='step', hidden_size=200, decay_steps=5000):
@@ -603,6 +604,16 @@ def parse(args):
                         perp_diff_thres=args.perp_diff_thres,
                         alphabets=alphabets, tokenizer=tokenizer, device=device, lm_device=lm_device,
                         batch_size=args.adv_batch_size, random_sub_if_no_change=args.random_sub_if_no_change)
+    elif args.mode == 'gray_single':
+        attacker = GrayBoxSingleAttacker(network, candidates, vocab, synonyms, filters=filters, generators=generators,
+                        knn_path=args.knn_path, 
+                        max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
+                        min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim, 
+                        adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, 
+                        fluency_ratio=args.adv_fluency_ratio, max_perp_diff_per_token=args.max_perp_diff_per_token,
+                        perp_diff_thres=args.perp_diff_thres,
+                        alphabets=alphabets, tokenizer=tokenizer, device=device, lm_device=lm_device,
+                        batch_size=args.adv_batch_size, random_sub_if_no_change=args.random_sub_if_no_change)
     #tokens = ["_ROOT", "The", "Dow", "fell", "22.6", "%", "on", "black", "Monday"]#, "."]
     #tags = ["_ROOT_POS", "DT", "NNP", "VBD", "CD", ".", "IN", "NNP", "NNP"]#, "."]
     #heads = [0, 2, 3, 0, 5, 3, 3, 8, 6]#, 3]
@@ -675,7 +686,7 @@ def parse(args):
 
 if __name__ == '__main__':
     args_parser = argparse.ArgumentParser(description='Tuning with graph-based parsing')
-    args_parser.add_argument('--mode', choices=['black', 'random', 'gray'], required=True, help='processing mode')
+    args_parser.add_argument('--mode', choices=['black', 'random', 'gray', 'gray_single'], required=True, help='processing mode')
     args_parser.add_argument('--seed', type=int, default=666, help='Random seed for torch and numpy (-1 for random)')
     args_parser.add_argument('--config', type=str, help='config file')
     args_parser.add_argument('--vocab', type=str, help='vocab file for attacker')
