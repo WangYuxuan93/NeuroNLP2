@@ -748,8 +748,15 @@ class BlackBoxAttacker(object):
 
     def filter_cands_with_lm(self, tokens, cands, idx, debug=False):
         new_cands, new_perp_diff = [], []
+        clean_toks = []
+        for tok in tokens:
+            if tok != PAD:
+                clean_toks.append(tok)
+            else:
+                break
         # (cand_size)
-        perp_diff = self.get_perp_diff(tokens, cands, idx)
+        #perp_diff = self.get_perp_diff(tokens, cands, idx)
+        perp_diff = self.get_perp_diff(clean_toks, cands, idx)
         for i in range(len(cands)):
             if perp_diff[i] <= self.perp_diff_thres:
                 new_cands.append(cands[i])
@@ -807,7 +814,14 @@ class BlackBoxAttacker(object):
         return cos_sim.numpy()
 
     def filter_cands_with_sent_sim(self, tokens, cands, idx, debug=False):
-        batch_tokens, _ = self.gen_cand_batch(tokens, cands, idx, tokens)
+        clean_toks = []
+        for tok in tokens:
+            if tok != PAD:
+                clean_toks.append(tok)
+            else:
+                break
+        batch_tokens, _ = self.gen_cand_batch(clean_toks, cands, idx, tokens)
+        #batch_tokens, _ = self.gen_cand_batch(tokens, cands, idx, tokens)
         sents = [' '.join(toks) for toks in batch_tokens]
         # sent-0 is original sent
         with tf.device('/cpu:0'):
