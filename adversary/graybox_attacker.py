@@ -91,6 +91,8 @@ class GrayBoxAttacker(BlackBoxAttacker):
             return None
         change_edit_ratio = -1
         total_change_score = 0
+        total_head_change = 0
+        total_rel_change = 0
         total_perp_diff = 0.0
         total_score = 0
         num_edit = 0
@@ -126,7 +128,7 @@ class GrayBoxAttacker(BlackBoxAttacker):
             #print ("prob_change:", prob_change)
             #print ("prob_change_rank:", prob_change_rank)
             # (cand_size)
-            change_score = self.get_change_score(adv_tokens, cands, idx, tags, heads, rel_ids, debug==2)
+            change_score, head_change, rel_change = self.get_change_score(adv_tokens, cands, idx, tags, heads, rel_ids, debug==2)
             change_rank = (-change_score).argsort()
             # this means the biggest change is 0
             if change_score[change_rank[0]] <= 0:
@@ -177,6 +179,8 @@ class GrayBoxAttacker(BlackBoxAttacker):
                 num_edit += 1
                 total_change_score += best_c_score
                 total_score += best_score
+                total_head_change += head_change[best_cand_idx]
+                total_rel_change += rel_change[best_cand_idx]
                 adv_tokens[idx] = best_cand
                 # clear the track once there is profit
                 no_profit_change_track = []
@@ -210,5 +214,8 @@ class GrayBoxAttacker(BlackBoxAttacker):
             else:
                 sent_str += y + " [ " + x + " ] "
         print ("~~~~~~~~~~~~~~~~~~~~~~~~~~~")
-        print ("Success attack, adv sent:\n{}".format(sent_str))
-        return adv_tokens, num_edit, total_score, total_change_score, total_perp_diff
+        print ("Success attack (change: head:{}, rel:{}, score:{}), adv sent:\n{}".format(
+                total_head_change, total_rel_change, total_change_score, sent_str))
+        adv_infos = (num_edit, total_score, total_change_score, total_perp_diff,
+                    total_head_change, total_rel_change)
+        return adv_tokens, adv_infos

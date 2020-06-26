@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=4 python -u adv_attack.py --mode gray \
+CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=4 python -u adv_attack.py --mode gray_single \
  --min_word_cos_sim 0.9 --min_sent_cos_sim 0.9 --filters '' --generators 'synonym:sememe' \
  --batch_size 32 \
  --noscreen \
@@ -15,5 +15,6 @@ CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=4 python -u adv_attack.py --mode gray \
  --syn "synonyms.json" \
  --adv_rel_ratio 0.5 --adv_fluency_ratio 0.2 --max_perp_diff_per_token 0.6 \
  --max_knn_candidates 20 --knn_path "/mnt/hgfs/share/embedding/paragramcf" \
+ #--use_pad
  #--random_sub_if_no_change 
  # --mix_datasets

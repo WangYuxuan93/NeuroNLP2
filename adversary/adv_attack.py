@@ -261,7 +261,8 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
 
 def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, pos_alphabet, 
         device, beam=1, batch_size=256, write_to_tmp=True, prev_best_lcorr=0, prev_best_ucorr=0,
-        pred_filename=None, tokenizer=None, multi_lan_iter=False, debug=1, pretrained_alphabet=None):
+        pred_filename=None, tokenizer=None, multi_lan_iter=False, debug=1, pretrained_alphabet=None,
+        use_pad=False):
     network.eval()
     accum_ucorr = 0.0
     accum_lcorr = 0.0
@@ -291,6 +292,8 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
     accum_total_perp_diff = 0.0
     accum_success_attack = 0
     accum_total_sent = 0.0
+    accum_total_head_change = 0.0
+    accum_total_rel_change = 0.0
 
     all_words = []
     all_postags = []
@@ -325,12 +328,17 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
         for i in range(len(lengths)):
             accum_total_sent += 1
             length = lengths[i]
-            adv_tokens = [word_alphabet.get_instance(w) for w in words[i]]#[:length]]
-            adv_tokens[:length] = data['SRC'][i].copy()
-            #adv_tokens = data['SRC'][i].copy() 
-            adv_postags = [pos_alphabet.get_instance(w) for w in postags[i]]#[:length]]
-            adv_heads = heads[i]#[:length]
-            adv_rels = rels[i]#[:length]
+            if use_pad:
+                adv_tokens = [word_alphabet.get_instance(w) for w in words[i]]
+                adv_tokens[:length] = data['SRC'][i].copy()
+                adv_postags = [pos_alphabet.get_instance(w) for w in postags[i]]
+                adv_heads = heads[i]
+                adv_rels = rels[i]
+            else:
+                adv_tokens = data['SRC'][i].copy() 
+                adv_postags = [pos_alphabet.get_instance(w) for w in postags[i][:length]]
+                adv_heads = heads[i][:length]
+                adv_rels = rels[i][:length]
             adv_rels[0] = 0
             if debug == 3: 
                 print ("\n###############################")
@@ -339,9 +347,10 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
             if debug == 1: print ("original sent:", adv_tokens)
             result = attacker.attack(adv_tokens, adv_postags, adv_heads, adv_rels, debug=debug)
             if result is None:
-                adv_src.append(adv_tokens)
+                adv_src.append(adv_tokens[:length])
                 continue
-            adv_tokens, num_edit, total_score, total_change_score, total_perp_diff = result
+            adv_tokens, adv_infos = result
+            num_edit, total_score, total_change_score, total_perp_diff, total_head_change, total_rel_change = adv_infos
             if total_change_score <= 0:
                 adv_src.append(data['SRC'][i])
                 continue
@@ -350,12 +359,16 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
             accum_total_score += total_score
             accum_total_change_score += total_change_score
             accum_total_perp_diff += total_perp_diff
+            accum_total_head_change += total_head_change
+            accum_total_rel_change += total_rel_change
             if debug == 1: print ("adv sent:", adv_tokens)
-            adv_src.append(adv_tokens)
-            adv_words[i] = torch.from_numpy(np.array([word_alphabet.get_index(w) for w in adv_tokens]))
-            #adv_words[i][:length] = torch.from_numpy(np.array([word_alphabet.get_index(w) for w in adv_tokens]))
-            adv_pres[i] = torch.from_numpy(np.array([pretrained_alphabet.get_index(w) for w in adv_tokens]))
-            #adv_pres[i][:length] = torch.from_numpy(np.array([pretrained_alphabet.get_index(w) for w in adv_tokens]))
+            adv_src.append(adv_tokens[:length])
+            if use_pad:
+                adv_words[i] = torch.from_numpy(np.array([word_alphabet.get_index(w) for w in adv_tokens]))
+                adv_pres[i] = torch.from_numpy(np.array([pretrained_alphabet.get_index(w) for w in adv_tokens]))
+            else:
+                adv_words[i][:length] = torch.from_numpy(np.array([word_alphabet.get_index(w) for w in adv_tokens]))
+                adv_pres[i][:length] = torch.from_numpy(np.array([pretrained_alphabet.get_index(w) for w in adv_tokens]))
         adv_words = adv_words.to(device)
         adv_pres = adv_pres.to(device)
         #print ("orig_words:\n{}\nadv_words:\n{}".format(words, adv_words))
@@ -447,8 +460,10 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
     #    accum_ucorr_err_nopunc * 100 / accum_total_err_nopunc, accum_lcorr_err_nopunc * 100 / accum_total_err_nopunc))
     if accum_total_edit == 0:
         accum_total_edit = 1
-    print('Attack: success/total examples = %d/%d, Average score: %.2f, change score: %.2f, perp diff: %.2f, edit dist: %.2f, change-edit ratio: %.2f' % (
-        accum_success_attack, accum_total_sent, accum_total_score/accum_total_sent, 
+    print('Attack: success/total examples = %d/%d\nTotal head change: %d, rel change: %d, change score: %.2f\nAverage score: %.2f, change score: %.2f, perp diff: %.2f, edit dist: %.2f, change-edit ratio: %.2f' % (
+        accum_success_attack, accum_total_sent, 
+        accum_total_head_change, accum_total_rel_change, accum_total_change_score,
+        accum_total_score/accum_total_sent, 
         accum_total_change_score/accum_total_sent, accum_total_perp_diff/accum_total_sent, 
         accum_total_edit/accum_total_sent, accum_total_change_score/accum_total_edit))
 
@@ -678,11 +693,13 @@ def parse(args):
     print ('\n------------------\n')
     with torch.no_grad():
         print('Attacking...')
+        logger.info("use pad in input to attacker: {}".format(args.use_pad))
         start_time = time.time()
         # debug = 1: show orig/adv tokens / debug = 2: show log inside attacker
         attack(attacker, alg, data_test, network, adv_writer, punct_set, word_alphabet, 
             pos_alphabet, device, beam, batch_size=args.batch_size, tokenizer=tokenizer, 
-            multi_lan_iter=multi_lan_iter, debug=3, pretrained_alphabet=pretrained_alphabet)
+            multi_lan_iter=multi_lan_iter, debug=3, pretrained_alphabet=pretrained_alphabet,
+            use_pad=args.use_pad)
         print('Time: %.2fs' % (time.time() - start_time))
         
 
@@ -741,6 +758,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--filters', type=str, default='word_sim:sent_sim:lm', help='filters for word substitution')
     args_parser.add_argument('--generators', type=str, default='synonym:sememe:embedding', help='generators for word substitution')
     args_parser.add_argument('--tagger', choices=['nltk', 'spacy'], default='nltk', help='POS tagger for POS checking in KNN embedding candidates')
+    args_parser.add_argument('--use_pad', action='store_true', default=False, help='use PAD in input to attacker')
 
     args = args_parser.parse_args()
     parse(args)

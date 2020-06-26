@@ -881,6 +881,8 @@ class BlackBoxAttacker(object):
         token = tokens[idx]
         if token.lower() in self.stop_words:
             return []
+        if token == PAD:
+            return []
         candidate_set = []
         if 'sememe' in self.generators:
             sememe_cands = self.get_sememe_cands(token, tag)
@@ -1041,4 +1043,6 @@ class BlackBoxAttacker(object):
         print ("~~~~~~~~~~~~~~~~~~~~~~~~~~~")
         print ("Success attack (change: head:{}, rel:{}, score:{}), adv sent:\n{}".format(
                 total_head_change, total_rel_change, total_change_score, sent_str))
-        return adv_tokens, num_edit, total_score, total_change_score, total_perp_diff
+        adv_infos = (num_edit, total_score, total_change_score, total_perp_diff,
+                    total_head_change, total_rel_change)
+        return adv_tokens, adv_infos
