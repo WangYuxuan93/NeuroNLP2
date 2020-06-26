@@ -9,8 +9,11 @@ import torch
 import random
 import os
 import pickle
-import tensorflow_hub as hub
-import tensorflow as tf
+try:
+    import tensorflow_hub as hub
+    import tensorflow as tf
+except:
+    print ("Can not import tensorflow_hub!")
 
 from neuronlp2.io import get_logger
 from neuronlp2.io.common import PAD, ROOT, END
@@ -659,11 +662,11 @@ class BlackBoxAttacker(object):
             print ("rels change:\n", rels_change)
         
         importance = (1-self.rel_ratio) * heads_change + self.rel_ratio * rels_change
-        return importance
+        return importance, heads_change, rels_change
 
     def calc_word_rank(self, tokens, tags, heads, rel_ids, debug=False):
         batch_tokens, batch_tags = self.gen_importance_batch(tokens, tags)
-        importance = self.calc_importance(batch_tokens, batch_tags, heads, rel_ids, debug)
+        importance, _, _ = self.calc_importance(batch_tokens, batch_tags, heads, rel_ids, debug)
         word_rank = (-importance).argsort()
         if debug:
             print ("importance:\n", importance)
@@ -688,15 +691,16 @@ class BlackBoxAttacker(object):
 
     def get_change_score(self, tokens, cands, idx, tags, heads, rel_ids, debug=False):
         batch_tokens, batch_tags = self.gen_cand_batch(tokens, cands, idx, tags)
+        debug = True
         # (cand_size+1), the 1st is the original sentence
-        change_score = self.calc_importance(batch_tokens, batch_tags, heads, rel_ids, debug)
+        change_score, head_change, rel_change = self.calc_importance(batch_tokens, batch_tags, heads, rel_ids, debug)
         # ignore the original sent
         change_score = change_score[1:]
         if debug:
             #print ("batch tokens:\n", batch_tokens)
             print ("importance:\n", change_score)
             #print ("word_rank:\n", word_rank)
-        return change_score
+        return change_score, head_change[1:], rel_change[1:]
 
     def get_batch(self, input_ids):
         # (cand_size+1, seq_len)
@@ -923,6 +927,8 @@ class BlackBoxAttacker(object):
             return None
         change_edit_ratio = -1
         total_change_score = 0
+        total_head_change = 0
+        total_rel_change = 0
         total_perp_diff = 0.0
         total_score = 0
         num_edit = 0
@@ -952,7 +958,7 @@ class BlackBoxAttacker(object):
             if "lm" in self.filters:
                 blocked_perp_diff = np.where(perp_diff>0, perp_diff, 0)
             # (cand_size)
-            change_score = self.get_change_score(adv_tokens, cands, idx, tags, heads, rel_ids, debug==2)
+            change_score, head_change, rel_change = self.get_change_score(adv_tokens, cands, idx, tags, heads, rel_ids, debug==2)
             change_rank = (-change_score).argsort()
             # this means the biggest change is 0
             if change_score[change_rank[0]] <= 0:
@@ -1006,6 +1012,8 @@ class BlackBoxAttacker(object):
                 num_edit += 1
                 total_change_score += best_c_score
                 total_score += best_score
+                total_head_change += head_change[best_cand_idx]
+                total_rel_change += rel_change[best_cand_idx]
                 adv_tokens[idx] = best_cand
                 if "lm" in self.filters:
                     total_perp_diff += blocked_perp_diff[best_cand_idx]
@@ -1032,5 +1040,6 @@ class BlackBoxAttacker(object):
             else:
                 sent_str += y + " [ " + x + " ] "
         print ("~~~~~~~~~~~~~~~~~~~~~~~~~~~")
-        print ("Success attack (change_score:{}), adv sent:\n{}".format(total_change_score, sent_str))
+        print ("Success attack (change: head:{}, rel:{}, score:{}), adv sent:\n{}".format(
+                total_head_change, total_rel_change, total_change_score, sent_str))
         return adv_tokens, num_edit, total_score, total_change_score, total_perp_diff
