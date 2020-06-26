@@ -11,6 +11,10 @@ current_path = os.path.dirname(os.path.realpath(__file__))
 root_path = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.append(root_path)
 
+try:
+    from allennlp.modules.elmo import batch_to_ids
+except:
+    print ("can not import batch_to_ids")
 import time
 import argparse
 import math
@@ -441,10 +445,8 @@ def train(args):
     else:
         tokenizer = None
     """
-    if pretrained_lm == 'none':
-        tokenizer = None
-    elif pretrained_lm == 'elmo':
-        from allennlp.modules.elmo import batch_to_ids
+    if pretrained_lm in ['none','elmo']:
+        tokenizer = None 
     else:
         tokenizer = AutoTokenizer.from_pretrained(lm_path)
 
@@ -638,11 +640,11 @@ def train(args):
                     bpes = bpes.to(device)
                     first_idx = None
                     try:
-                        assert bpes.size() == words.size()
+                        assert bpes.size()[:2] == words.size()
                     except:
-                        print ("bpes:\n",bpes)
                         print ("src:\n", data['SRC'])
-                        print ("words:{},\n{}".format(words.size(), words))
+                        print ("bpes:",bpes.size())
+                        print ("words:{}".format(words.size()))
                 else:
                     bpes, first_idx = convert_tokens_to_ids(tokenizer, srcs)
                     bpes = bpes.to(device)

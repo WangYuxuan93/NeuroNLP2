@@ -866,7 +866,7 @@ class BlackBoxAttacker(object):
         for cand in knn_cands:
             #tokens[idx] = cand
             #cand_tag = nltk.pos_tag(tokens)[idx][1]
-            if self.tagger = "nltk":
+            if self.tagger == "nltk":
                 cand_tag = nltk.pos_tag([cand.lower()])[0][1]
             else:
                 cand_tag = nlp(cand.lower())[0].tag_

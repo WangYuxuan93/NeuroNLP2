@@ -1,6 +1,7 @@
 __author__ = 'max'
 
 import os
+import json
 from overrides import overrides
 import numpy as np
 from enum import Enum
@@ -46,14 +47,14 @@ class PositionEmbeddingLayer(nn.Module):
 
 def load_elmo(path):
     from allennlp.modules.elmo import Elmo, batch_to_ids
-    options_file = os.path.join(lm_path, "options.json")
-    weight_file = os.path.join(lm_path, "weights.hdf5")
+    options_file = os.path.join(path, "options.json")
+    weight_file = os.path.join(path, "weights.hdf5")
     if not os.path.exists(options_file):
         print ("Did not find options.json in {}".format(path))
     if not os.path.exists(weight_file):
         print ("Did not find weights.hdf5 in {}".format(path))
     elmo = Elmo(options_file, weight_file, 1, dropout=0)
-    conf = json.loads(open(options_file, 'w'))
+    conf = json.loads(open(options_file, 'r').read())
     output_size = conf['lstm']['projection_dim'] * 2
     return elmo, output_size
 
@@ -155,6 +156,10 @@ class RobustParser(nn.Module):
             self.word_embed = None
         elif self.pretrained_lm == 'elmo':
             self.lm_encoder, lm_hidden_size = load_elmo(lm_path)
+            self.basic_word_embed = None
+            self.word_embed = None
+            logger.info("Pretrained Language Model Type: ELMo")
+            logger.info("Pretrained Language Model Path: %s" % (lm_path))
         elif self.basic_word_embedding:
             self.basic_word_embed = nn.Embedding(num_words, word_dim, padding_idx=1)
             self.word_embed = nn.Embedding(num_pretrained, word_dim, _weight=embedd_word, padding_idx=1)
