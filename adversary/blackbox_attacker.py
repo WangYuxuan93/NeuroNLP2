@@ -357,7 +357,7 @@ def recover_word_case(word, reference_word):
 
 class BlackBoxAttacker(object):
     def __init__(self, model, candidates, vocab, synonyms, filters=['word_sim', 'sent_sim', 'lm'],
-                generators=['synonym', 'sememe', 'embedding'], tagger="nltk",
+                generators=['synonym', 'sememe', 'embedding'], tagger="nltk", use_pad=False,
                 knn_path=None, max_knn_candidates=50, sent_encoder_path=None,
                 min_word_cos_sim=0.8, min_sent_cos_sim=0.8,  
                 adv_lms=None, rel_ratio=0.5, fluency_ratio=0.2,
@@ -374,9 +374,11 @@ class BlackBoxAttacker(object):
         self.filters = filters
         self.generators = generators
         self.tagger = tagger
+        self.use_pad = use_pad
         logger.info("Filters: {}".format(filters))
         logger.info("Generators: {}".format(generators))
         logger.info("POS tagger: {}".format(tagger))
+        logger.info("Use PAD input: {}".format(use_pad))
         self.id2word = {i:w for (w,i) in vocab.items()}
         if ('word_sim' in self.filters or 'embedding' in self.generators) and knn_path is not None:
             logger.info("Loading knn from: {}".format(knn_path))
@@ -748,12 +750,15 @@ class BlackBoxAttacker(object):
 
     def filter_cands_with_lm(self, tokens, cands, idx, debug=False):
         new_cands, new_perp_diff = [], []
-        clean_toks = []
-        for tok in tokens:
-            if tok != PAD:
-                clean_toks.append(tok)
-            else:
-                break
+        if self.use_pad:
+            clean_toks = []
+            for tok in tokens:
+                if tok != PAD:
+                    clean_toks.append(tok)
+                else:
+                    break
+        else:
+            clean_toks = tokens
         # (cand_size)
         #perp_diff = self.get_perp_diff(tokens, cands, idx)
         perp_diff = self.get_perp_diff(clean_toks, cands, idx)
@@ -814,12 +819,15 @@ class BlackBoxAttacker(object):
         return cos_sim.numpy()
 
     def filter_cands_with_sent_sim(self, tokens, cands, idx, debug=False):
-        clean_toks = []
-        for tok in tokens:
-            if tok != PAD:
-                clean_toks.append(tok)
-            else:
-                break
+        if self.use_pad:
+            clean_toks = []
+            for tok in tokens:
+                if tok != PAD:
+                    clean_toks.append(tok)
+                else:
+                    break
+        else:
+            clean_toks = tokens
         batch_tokens, _ = self.gen_cand_batch(clean_toks, cands, idx, tokens)
         #batch_tokens, _ = self.gen_cand_batch(tokens, cands, idx, tokens)
         sents = [' '.join(toks) for toks in batch_tokens]
