@@ -1032,5 +1032,5 @@ class BlackBoxAttacker(object):
             else:
                 sent_str += y + " [ " + x + " ] "
         print ("~~~~~~~~~~~~~~~~~~~~~~~~~~~")
-        print ("Success attack, adv sent:\n{}".format(sent_str))
+        print ("Success attack (change_score:{}), adv sent:\n{}".format(total_change_score, sent_str))
         return adv_tokens, num_edit, total_score, total_change_score, total_perp_diff
