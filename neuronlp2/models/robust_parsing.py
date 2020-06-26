@@ -1,5 +1,6 @@
 __author__ = 'max'
 
+import os
 from overrides import overrides
 import numpy as np
 from enum import Enum
@@ -43,6 +44,18 @@ class PositionEmbeddingLayer(nn.Module):
             print ("embeddings:",embeddings)
         return embeddings
 
+def load_elmo(path):
+    from allennlp.modules.elmo import Elmo, batch_to_ids
+    options_file = os.path.join(lm_path, "options.json")
+    weight_file = os.path.join(lm_path, "weights.hdf5")
+    if not os.path.exists(options_file):
+        print ("Did not find options.json in {}".format(path))
+    if not os.path.exists(weight_file):
+        print ("Did not find weights.hdf5 in {}".format(path))
+    elmo = Elmo(options_file, weight_file, 1, dropout=0)
+    conf = json.loads(open(options_file, 'w'))
+    output_size = conf['lstm']['projection_dim'] * 2
+    return elmo, output_size
 
 class RobustParser(nn.Module):
     def __init__(self, hyps, num_pretrained, num_words, num_chars, num_pos, num_labels,
@@ -108,7 +121,7 @@ class RobustParser(nn.Module):
         # Initialization
         # to collect all params other than langauge model
         self.basic_parameters = []
-        if not self.pretrained_lm == 'none':
+        if not self.pretrained_lm in ['none', 'elmo']:
             """
             if self.pretrained_lm == 'bert':
                 self.lm_encoder = BertModel.from_pretrained(lm_path)
@@ -140,6 +153,8 @@ class RobustParser(nn.Module):
             #lm_hidden_size = 768
             self.basic_word_embed = None
             self.word_embed = None
+        elif self.pretrained_lm == 'elmo':
+            self.lm_encoder, lm_hidden_size = load_elmo(lm_path)
         elif self.basic_word_embedding:
             self.basic_word_embed = nn.Embedding(num_words, word_dim, padding_idx=1)
             self.word_embed = nn.Embedding(num_pretrained, word_dim, _weight=embedd_word, padding_idx=1)
@@ -395,42 +410,44 @@ class RobustParser(nn.Module):
             input_ids: (batch, max_bpe_len)
             first_index: (batch, seq_len)
         """
-
-        if self.pretrained_lm.startswith('tc_'):
-            if self.mask_error_input:
-                if self.training:
-                    masked_input_ids = self._mask_random_input(input_ids)
-                    # logits: (batch, max_bpe_len, lm_encoder.config.num_labels)
-                    logits, all_hidden_states = self.lm_encoder(masked_input_ids)
-                    lm_output = all_hidden_states[-1]
+        if self.pretrained_lm == 'elmo':
+            output = self.lm_encoder(input_ids)['elmo_representations'][0]
+        else:
+            if self.pretrained_lm.startswith('tc_'):
+                if self.mask_error_input:
+                    if self.training:
+                        masked_input_ids = self._mask_random_input(input_ids)
+                        # logits: (batch, max_bpe_len, lm_encoder.config.num_labels)
+                        logits, all_hidden_states = self.lm_encoder(masked_input_ids)
+                        lm_output = all_hidden_states[-1]
+                    else:
+                        logits, all_hidden_states = self.lm_encoder(input_ids)
+                        masked_input_ids = self._mask_error_input(input_ids, logits)
+                        # run lm encoder again, with error tokens replaced by [mask]
+                        # do not batchprop to the first iter
+                        logits, all_hidden_states = self.lm_encoder(masked_input_ids.detach())
+                        # (batch, max_bpe_len, hidden_size)
+                        lm_output = all_hidden_states[-1]
                 else:
+                    if self.mask_random_input:
+                        input_ids = self._mask_random_input(input_ids)
+                    # logits: (batch, max_bpe_len, lm_encoder.config.num_labels)
                     logits, all_hidden_states = self.lm_encoder(input_ids)
-                    masked_input_ids = self._mask_error_input(input_ids, logits)
-                    # run lm encoder again, with error tokens replaced by [mask]
-                    # do not batchprop to the first iter
-                    logits, all_hidden_states = self.lm_encoder(masked_input_ids.detach())
                     # (batch, max_bpe_len, hidden_size)
                     lm_output = all_hidden_states[-1]
+                    if self.mask_error_token:
+                        lm_output = self._mask_error_token(lm_output, logits)
             else:
                 if self.mask_random_input:
                     input_ids = self._mask_random_input(input_ids)
-                # logits: (batch, max_bpe_len, lm_encoder.config.num_labels)
-                logits, all_hidden_states = self.lm_encoder(input_ids)
                 # (batch, max_bpe_len, hidden_size)
-                lm_output = all_hidden_states[-1]
-                if self.mask_error_token:
-                    lm_output = self._mask_error_token(lm_output, logits)
-        else:
-            if self.mask_random_input:
-                input_ids = self._mask_random_input(input_ids)
-            # (batch, max_bpe_len, hidden_size)
-            lm_output = self.lm_encoder(input_ids)[0]
-        size = list(first_index.size()) + [lm_output.size()[-1]]
-        # (batch, seq_len, hidden_size)
-        output = lm_output.gather(1, first_index.unsqueeze(-1).expand(size))
-        if debug:
-            print (lm_output.size())
-            print (output.size())
+                lm_output = self.lm_encoder(input_ids)[0]
+            size = list(first_index.size()) + [lm_output.size()[-1]]
+            # (batch, seq_len, hidden_size)
+            output = lm_output.gather(1, first_index.unsqueeze(-1).expand(size))
+            if debug:
+                print (lm_output.size())
+                print (output.size())
         return output
 
     def _embed(self, input_word, input_pretrained, input_char, input_pos, bpes=None, 

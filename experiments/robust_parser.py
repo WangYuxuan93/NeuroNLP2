@@ -98,6 +98,9 @@ def convert_tokens_to_ids(tokenizer, tokens):
 
     return input_ids, first_indices
 
+def elmo_batch_to_ids(tokens):
+    input_ids = batch_to_ids(tokens)
+    return input_ids
 
 def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, 
         device, beam=1, batch_size=256, write_to_tmp=True, prev_best_lcorr=0, prev_best_ucorr=0,
@@ -151,10 +154,14 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         rels = data['TYPE'].numpy()
         lengths = data['LENGTH'].numpy()
         err_types = data['ERR_TYPE']
-        if tokenizer:
-            srcs = data['SRC']
-            if words.size()[0] == 1 and len(srcs) > 1:
-                srcs = [srcs]
+        srcs = data['SRC']
+        if words.size()[0] == 1 and len(srcs) > 1:
+            srcs = [srcs]
+        if network.pretrained_lm == 'elmo':
+            bpes = elmo_batch_to_ids(srcs)
+            bpes = bpes.to(device)
+            first_idx = None
+        elif tokenizer:
             bpes, first_idx = convert_tokens_to_ids(tokenizer, srcs)
             bpes = bpes.to(device)
             first_idx = first_idx.to(device)
@@ -436,6 +443,8 @@ def train(args):
     """
     if pretrained_lm == 'none':
         tokenizer = None
+    elif pretrained_lm == 'elmo':
+        from allennlp.modules.elmo import batch_to_ids
     else:
         tokenizer = AutoTokenizer.from_pretrained(lm_path)
 
@@ -624,16 +633,27 @@ def train(args):
                 srcs = data['SRC']
                 if words.size()[0] == 1 and len(srcs) > 1:
                     srcs = [srcs]
-                bpes, first_idx = convert_tokens_to_ids(tokenizer, srcs)
-                bpes = bpes.to(device)
-                first_idx = first_idx.to(device)
-                try:
-                    assert first_idx.size() == words.size()
-                except:
-                    print ("bpes:\n",bpes)
-                    print ("src:\n", data['SRC'])
-                    print ("first_idx:{}\n{}".format(first_idx.size(), first_idx))
-                    print ("words:{},\n{}".format(words.size(), words))
+                if pretrained_lm == 'elmo':
+                    bpes = elmo_batch_to_ids(srcs)
+                    bpes = bpes.to(device)
+                    first_idx = None
+                    try:
+                        assert bpes.size() == words.size()
+                    except:
+                        print ("bpes:\n",bpes)
+                        print ("src:\n", data['SRC'])
+                        print ("words:{},\n{}".format(words.size(), words))
+                else:
+                    bpes, first_idx = convert_tokens_to_ids(tokenizer, srcs)
+                    bpes = bpes.to(device)
+                    first_idx = first_idx.to(device)
+                    try:
+                        assert first_idx.size() == words.size()
+                    except:
+                        print ("bpes:\n",bpes)
+                        print ("src:\n", data['SRC'])
+                        print ("first_idx:{}\n{}".format(first_idx.size(), first_idx))
+                        print ("words:{},\n{}".format(words.size(), words))
             else:
                 bpes = first_idx = None
             if alg == 'graph':
@@ -1012,7 +1032,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--word_path', help='path for word embedding dict')
     args_parser.add_argument('--char_embedding', choices=['random', 'polyglot'], help='Embedding for characters')
     args_parser.add_argument('--char_path', help='path for character embedding dict')
-    args_parser.add_argument('--pretrained_lm', default='none', choices=['none', 'bert', 'bart', 'roberta', 'xlm-r', 'electra', 'tc_bert', 'tc_bart', 'tc_roberta', 'tc_electra'], help='Pre-trained language model')
+    args_parser.add_argument('--pretrained_lm', default='none', choices=['none', 'elmo', 'bert', 'bart', 'roberta', 'xlm-r', 'electra', 'tc_bert', 'tc_bart', 'tc_roberta', 'tc_electra'], help='Pre-trained language model')
     args_parser.add_argument('--lm_path', help='path for pretrained language model')
     args_parser.add_argument('--lm_lr', type=float, default=2e-5, help='Learning rate of pretrained language model')
     args_parser.add_argument('--normalize_digits', default=False, action='store_true', help='normalize digits to 0 ?')
