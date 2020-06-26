@@ -691,7 +691,6 @@ class BlackBoxAttacker(object):
 
     def get_change_score(self, tokens, cands, idx, tags, heads, rel_ids, debug=False):
         batch_tokens, batch_tags = self.gen_cand_batch(tokens, cands, idx, tags)
-        debug = True
         # (cand_size+1), the 1st is the original sentence
         change_score, head_change, rel_change = self.calc_importance(batch_tokens, batch_tags, heads, rel_ids, debug)
         # ignore the original sent

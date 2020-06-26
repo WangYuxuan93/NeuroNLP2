@@ -261,7 +261,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
 
 def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, pos_alphabet, 
         device, beam=1, batch_size=256, write_to_tmp=True, prev_best_lcorr=0, prev_best_ucorr=0,
-        pred_filename=None, tokenizer=None, multi_lan_iter=False, debug=1):
+        pred_filename=None, tokenizer=None, multi_lan_iter=False, debug=1, pretrained_alphabet=None):
     network.eval()
     accum_ucorr = 0.0
     accum_lcorr = 0.0
@@ -320,15 +320,17 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
         err_types = data['ERR_TYPE']
 
         adv_words = words.clone()
+        adv_pres = pres.clone()
         adv_src = []
         for i in range(len(lengths)):
             accum_total_sent += 1
             length = lengths[i]
-            #adv_tokens = [word_alphabet.get_instance(w) for w in words[i][:length]]
-            adv_tokens = data['SRC'][i].copy()
-            adv_postags = [pos_alphabet.get_instance(w) for w in postags[i][:length]]
-            adv_heads = heads[i][:length]
-            adv_rels = rels[i][:length]
+            adv_tokens = [word_alphabet.get_instance(w) for w in words[i]]#[:length]]
+            adv_tokens[:length] = data['SRC'][i].copy()
+            #adv_tokens = data['SRC'][i].copy() 
+            adv_postags = [pos_alphabet.get_instance(w) for w in postags[i]]#[:length]]
+            adv_heads = heads[i]#[:length]
+            adv_rels = rels[i]#[:length]
             adv_rels[0] = 0
             if debug == 3: 
                 print ("\n###############################")
@@ -350,8 +352,12 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
             accum_total_perp_diff += total_perp_diff
             if debug == 1: print ("adv sent:", adv_tokens)
             adv_src.append(adv_tokens)
-            adv_words[i][:length] = torch.from_numpy(np.array([word_alphabet.get_index(w) for w in adv_tokens]))
+            adv_words[i] = torch.from_numpy(np.array([word_alphabet.get_index(w) for w in adv_tokens]))
+            #adv_words[i][:length] = torch.from_numpy(np.array([word_alphabet.get_index(w) for w in adv_tokens]))
+            adv_pres[i] = torch.from_numpy(np.array([pretrained_alphabet.get_index(w) for w in adv_tokens]))
+            #adv_pres[i][:length] = torch.from_numpy(np.array([pretrained_alphabet.get_index(w) for w in adv_tokens]))
         adv_words = adv_words.to(device)
+        adv_pres = adv_pres.to(device)
         #print ("orig_words:\n{}\nadv_words:\n{}".format(words, adv_words))
 
         if tokenizer:
@@ -363,11 +369,11 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
 
         if alg == 'graph':
             masks = data['MASK'].to(device)
-            heads_pred, rels_pred = network.decode(adv_words, pres, chars, postags, mask=masks, 
+            heads_pred, rels_pred = network.decode(adv_words, adv_pres, chars, postags, mask=masks, 
                 bpes=bpes, first_idx=first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
         else:
             masks = data['MASK_ENC'].to(device)
-            heads_pred, rels_pred = network.decode(adv_words, pres, chars, postags, mask=masks, 
+            heads_pred, rels_pred = network.decode(adv_words, adv_pres, chars, postags, mask=masks, 
                 bpes=bpes, first_idx=first_idx, lan_id=lan_id, beam=beam, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
 
         adv_words = adv_words.cpu().numpy()
@@ -676,7 +682,7 @@ def parse(args):
         # debug = 1: show orig/adv tokens / debug = 2: show log inside attacker
         attack(attacker, alg, data_test, network, adv_writer, punct_set, word_alphabet, 
             pos_alphabet, device, beam, batch_size=args.batch_size, tokenizer=tokenizer, 
-            multi_lan_iter=multi_lan_iter, debug=3)
+            multi_lan_iter=multi_lan_iter, debug=3, pretrained_alphabet=pretrained_alphabet)
         print('Time: %.2fs' % (time.time() - start_time))
         
 
