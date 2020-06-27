@@ -14,6 +14,10 @@ try:
     import tensorflow as tf
 except:
     print ("Can not import tensorflow_hub!")
+try:
+    from allennlp.modules.elmo import batch_to_ids
+except:
+    print ("can not import batch_to_ids!")
 
 from neuronlp2.io import get_logger
 from neuronlp2.io.common import PAD, ROOT, END
@@ -513,14 +517,18 @@ class BlackBoxAttacker(object):
             tag_ids = None
         if not self.model.hyps['input']['use_char']:
             chars = None
-        if not self.model.pretrained_lm == "none":
+        if not self.model.lan_emb_as_input:
+            lan_id = None
+        if self.model.pretrained_lm == 'elmo':
+            bpes = batch_to_ids(tokens)
+            bpes = bpes.to(self.device)
+            first_idx = None
+        elif self.model.pretrained_lm != "none":
             bpes, first_idx = convert_tokens_to_ids(self.tokenizer, tokens)
             bpes = bpes.to(self.device)
             first_idx = first_idx.to(self.device)
         else:
             bpes, first_idx = None, None
-        if not self.model.lan_emb_as_input:
-            lan_id = None
 
         data_size = len(tokens)
         max_length = max([len(s) for s in tokens])

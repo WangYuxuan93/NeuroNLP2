@@ -1,7 +1,3 @@
-"""
-Implementation of Graph-based dependency parsing.
-"""
-
 import os
 import sys
 import gc
@@ -14,7 +10,7 @@ sys.path.append(root_path)
 try:
     from allennlp.modules.elmo import batch_to_ids
 except:
-    print ("can not import batch_to_ids")
+    print ("can not import batch_to_ids!")
 import time
 import argparse
 import math
@@ -102,10 +98,6 @@ def convert_tokens_to_ids(tokenizer, tokens):
 
     return input_ids, first_indices
 
-def elmo_batch_to_ids(tokens):
-    input_ids = batch_to_ids(tokens)
-    return input_ids
-
 def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, 
         device, beam=1, batch_size=256, write_to_tmp=True, prev_best_lcorr=0, prev_best_ucorr=0,
         pred_filename=None, tokenizer=None, multi_lan_iter=False):
@@ -162,7 +154,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         if words.size()[0] == 1 and len(srcs) > 1:
             srcs = [srcs]
         if network.pretrained_lm == 'elmo':
-            bpes = elmo_batch_to_ids(srcs)
+            bpes = batch_to_ids(srcs)
             bpes = bpes.to(device)
             first_idx = None
         elif tokenizer:
@@ -930,8 +922,8 @@ def parse(args):
     else:
         tokenizer = None
     """
-    if pretrained_lm == 'none':
-        tokenizer = None
+    if pretrained_lm in ['none','elmo']:
+        tokenizer = None 
     else:
         tokenizer = AutoTokenizer.from_pretrained(lm_path)
 

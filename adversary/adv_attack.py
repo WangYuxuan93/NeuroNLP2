@@ -1,7 +1,3 @@
-"""
-Implementation of Graph-based dependency parsing.
-"""
-
 import os
 import sys
 import gc
@@ -11,6 +7,11 @@ import pickle
 current_path = os.path.dirname(os.path.realpath(__file__))
 root_path = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.append(root_path)
+
+try:
+    from allennlp.modules.elmo import batch_to_ids
+except:
+    print ("can not import batch_to_ids!")
 
 import time
 import argparse
@@ -158,10 +159,14 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         rels = data['TYPE'].numpy()
         lengths = data['LENGTH'].numpy()
         err_types = data['ERR_TYPE']
-        if tokenizer:
-            srcs = data['SRC']
-            if words.size()[0] == 1 and len(srcs) > 1:
-                srcs = [srcs]
+        srcs = data['SRC']
+        if words.size()[0] == 1 and len(srcs) > 1:
+            srcs = [srcs]
+        if network.pretrained_lm == 'elmo':
+            bpes = batch_to_ids(srcs)
+            bpes = bpes.to(device)
+            first_idx = None
+        elif tokenizer:
             bpes, first_idx = convert_tokens_to_ids(tokenizer, srcs)
             bpes = bpes.to(device)
             first_idx = first_idx.to(device)
@@ -373,7 +378,11 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
         adv_pres = adv_pres.to(device)
         #print ("orig_words:\n{}\nadv_words:\n{}".format(words, adv_words))
 
-        if tokenizer:
+        if network.pretrained_lm == 'elmo':
+            bpes = batch_to_ids(adv_src)
+            bpes = bpes.to(device)
+            first_idx = None
+        elif tokenizer:
             bpes, first_idx = convert_tokens_to_ids(tokenizer, adv_src)
             bpes = bpes.to(device)
             first_idx = first_idx.to(device)
@@ -549,8 +558,8 @@ def parse(args):
         num_lans = language_alphabet.size()
         data_reader = multi_ud_data
 
-    if pretrained_lm == 'none':
-        tokenizer = None
+    if pretrained_lm in ['none','elmo']:
+        tokenizer = None 
     else:
         tokenizer = AutoTokenizer.from_pretrained(lm_path)
 
@@ -729,7 +738,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--word_path', help='path for word embedding dict')
     args_parser.add_argument('--char_embedding', choices=['random', 'polyglot'], help='Embedding for characters')
     args_parser.add_argument('--char_path', help='path for character embedding dict')
-    args_parser.add_argument('--pretrained_lm', default='none', choices=['none', 'bert', 'bart', 'roberta', 'xlm-r', 'electra', 'tc_bert', 'tc_bart', 'tc_roberta', 'tc_electra'], help='Pre-trained language model')
+    args_parser.add_argument('--pretrained_lm', default='none', choices=['none', 'elmo', 'bert', 'bart', 'roberta', 'xlm-r', 'electra', 'tc_bert', 'tc_bart', 'tc_roberta', 'tc_electra'], help='Pre-trained language model')
     args_parser.add_argument('--lm_path', help='path for pretrained language model')
     args_parser.add_argument('--normalize_digits', default=False, action='store_true', help='normalize digits to 0 ?')
     args_parser.add_argument('--mix_datasets', default=False, action='store_true', help='Mix dataset from different languages ? (should be False for CPGLSTM)')
