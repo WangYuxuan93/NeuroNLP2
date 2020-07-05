@@ -11,7 +11,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("vocab", type=str, help="input vocab (json)")
 parser.add_argument("output", type=str, help="output path for word candidates")
 #parser.add_argument("--out_vocab", type=str, default="vocab.json", help="output path for vocab")
-parser.add_argument("--lemma", type=str, default="lemma.pkl", help="input path for lemma")
+#parser.add_argument("--lemma", type=str, default="lemma.pkl", help="input path for lemma")
 #parser.add_argument("--save_binary", action="store_true", help="whether save in binary")
 args = parser.parse_args()
 

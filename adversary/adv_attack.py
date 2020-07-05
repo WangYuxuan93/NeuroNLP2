@@ -264,7 +264,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
            (accum_root_corr, accum_total_root, accum_total_inst)
 
 
-def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, pos_alphabet, 
+def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set, word_alphabet, pos_alphabet, 
         device, beam=1, batch_size=256, write_to_tmp=True, prev_best_lcorr=0, prev_best_ucorr=0,
         pred_filename=None, tokenizer=None, multi_lan_iter=False, debug=1, pretrained_alphabet=None,
         use_pad=False):
@@ -411,7 +411,7 @@ def attack(attacker, alg, data, network, pred_writer, punct_set, word_alphabet, 
             all_lengths.append(lengths)
             all_src_words.append(adv_src)
 
-        #gold_writer.write(words, postags, heads, rels, lengths, symbolic_root=True)
+        adv_gold_writer.write(words, postags, heads, rels, lengths, symbolic_root=True, src_words=data['SRC'] ,adv_words=adv_src)
         #print ("heads_pred:\n", heads_pred)
         #print ("rels_pred:\n", rels_pred)
         #print ("heads:\n", heads)
@@ -675,16 +675,22 @@ def parse(args):
     pred_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
     gold_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
     adv_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
+    adv_gold_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
     if args.output_filename:
         pred_filename = args.output_filename
     else:
-        pred_filename = os.path.join(result_path, 'pred.txt')
+        pred_filename = os.path.join(result_path, 'pred.conll')
     pred_writer.start(pred_filename)
     if args.adv_filename:
         adv_filename = args.adv_filename
     else:
-        adv_filename = os.path.join(result_path, 'adv.txt')
+        adv_filename = os.path.join(result_path, 'adv.conll')
+    if args.adv_gold_filename:
+        adv_gold_filename = args.adv_gold_filename
+    else:
+        adv_gold_filename = os.path.join(result_path, 'adv_gold.conll')
     adv_writer.start(adv_filename)
+    adv_gold_writer.start(adv_gold_filename)
     #gold_filename = os.path.join(result_path, 'gold.txt')
     #gold_writer.start(gold_filename)
 
@@ -705,7 +711,7 @@ def parse(args):
         logger.info("use pad in input to attacker: {}".format(args.use_pad))
         start_time = time.time()
         # debug = 1: show orig/adv tokens / debug = 2: show log inside attacker
-        attack(attacker, alg, data_test, network, adv_writer, punct_set, word_alphabet, 
+        attack(attacker, alg, data_test, network, adv_writer, adv_gold_writer, punct_set, word_alphabet, 
             pos_alphabet, device, beam, batch_size=args.batch_size, tokenizer=tokenizer, 
             multi_lan_iter=multi_lan_iter, debug=3, pretrained_alphabet=pretrained_alphabet,
             use_pad=args.use_pad)
@@ -753,6 +759,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--adv_lm_path', help='path for pretrained language model (gpt2) for adv filtering')
     args_parser.add_argument('--output_filename', type=str, help='output filename for parse')
     args_parser.add_argument('--adv_filename', type=str, help='output adversarial filename')
+    args_parser.add_argument('--adv_gold_filename', type=str, help='output adversarial text with gold heads & rels')
     args_parser.add_argument('--adv_rel_ratio', type=float, default=0.5, help='Relation importance in adversarial attack')
     args_parser.add_argument('--adv_fluency_ratio', type=float, default=0.2, help='Fluency importance in adversarial attack')
     args_parser.add_argument('--max_perp_diff_per_token', type=float, default=0.8, help='Maximum allowed perplexity difference per token in adversarial attack')
