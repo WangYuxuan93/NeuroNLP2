@@ -370,10 +370,11 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
             adv_src.append(adv_tokens[:length])
             pre_list = []
             for w in adv_tokens:
-                pid = self.pretrained_alphabet.get_index(w)
+                pid = pretrained_alphabet.get_index(w)
                 if pid == 0:
-                    pid = self.pretrained_alphabet.get_index(w.lower())
+                    pid = pretrained_alphabet.get_index(w.lower())
                 pre_list.append(pid)
+            pre_list = np.array(pre_list)
             if use_pad:
                 adv_words[i] = torch.from_numpy(np.array([word_alphabet.get_index(w) for w in adv_tokens]))
                 adv_pres[i] = torch.from_numpy(pre_list)
