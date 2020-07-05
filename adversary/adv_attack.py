@@ -368,12 +368,18 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
             accum_total_rel_change += total_rel_change
             if debug == 1: print ("adv sent:", adv_tokens)
             adv_src.append(adv_tokens[:length])
+            pre_list = []
+            for w in adv_tokens:
+                pid = self.pretrained_alphabet.get_index(w)
+                if pid == 0:
+                    pid = self.pretrained_alphabet.get_index(w.lower())
+                pre_list.append(pid)
             if use_pad:
                 adv_words[i] = torch.from_numpy(np.array([word_alphabet.get_index(w) for w in adv_tokens]))
-                adv_pres[i] = torch.from_numpy(np.array([pretrained_alphabet.get_index(w) for w in adv_tokens]))
+                adv_pres[i] = torch.from_numpy(pre_list)
             else:
                 adv_words[i][:length] = torch.from_numpy(np.array([word_alphabet.get_index(w) for w in adv_tokens]))
-                adv_pres[i][:length] = torch.from_numpy(np.array([pretrained_alphabet.get_index(w) for w in adv_tokens]))
+                adv_pres[i][:length] = torch.from_numpy(pre_list)
         adv_words = adv_words.to(device)
         adv_pres = adv_pres.to(device)
         #print ("orig_words:\n{}\nadv_words:\n{}".format(words, adv_words))
