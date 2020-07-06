@@ -510,7 +510,16 @@ class BlackBoxAttacker(object):
 
     def str2id(self, tokens, tags):
         word_ids = [[self.word_alphabet.get_index(x) for x in s] for s in tokens]
-        pre_ids = [[self.pretrained_alphabet.get_index(x) for x in s] for s in tokens]
+        #pre_ids = [[self.pretrained_alphabet.get_index(x) for x in s] for s in tokens]
+        pre_ids = []
+        for s in tokens:
+            pre_list = []
+            for w in s:
+                pid = self.pretrained_alphabet.get_index(w)
+                if pid == 0:
+                    pid = self.pretrained_alphabet.get_index(w.lower())
+                pre_list.append(pid)
+            pre_ids.append(pre_list)
         if self.model.hyps['input']['use_pos']:
             tag_ids = [[self.pos_alphabet.get_index(x) for x in s] for s in tags]
         else:
