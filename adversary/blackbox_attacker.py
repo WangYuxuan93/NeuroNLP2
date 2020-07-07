@@ -630,7 +630,7 @@ class BlackBoxAttacker(object):
             batch_tokens: List[List[str]], (batch, seq_len)
             batch_tags: List[List[str]], (batch, seq_len)
         """
-        if not self.model.pretrained_lm == "none":
+        if not self.model.pretrained_lm in ["none", "elmo"]:
             unk_token = self.tokenizer.unk_token
         else: # this is defined in alphabet.py
             unk_token = '<_UNK>'
