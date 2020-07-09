@@ -329,7 +329,8 @@ def train(args):
                                                                                              embedd_dict=word_dict, max_vocabulary_size=400000,
                                                                                              normalize_digits=args.normalize_digits,
                                                                                              pos_idx=args.pos_idx)
-    pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path, word_dict, word_alphabet.instances, max_vocabulary_size=400000)
+    pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path, word_dict, 
+                                word_alphabet.instances, max_vocabulary_size=400000, do_trim=args.do_trim)
 
     num_words = word_alphabet.size()
     num_pretrained = pretrained_alphabet.size()
@@ -883,6 +884,7 @@ def parse(args):
     num_pretrained = pretrained_alphabet.size()
 
     logger.info("Word Alphabet Size: %d" % num_words)
+    logger.info("Pretrained Alphabet Size: %d" % num_pretrained)
     logger.info("Character Alphabet Size: %d" % num_chars)
     logger.info("POS Alphabet Size: %d" % num_pos)
     logger.info("Rel Alphabet Size: %d" % num_rels)
@@ -1022,6 +1024,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--pos_idx', type=int, default=4, choices=[3, 4], help='Index in Conll file line for Part-of-speech tags')
     args_parser.add_argument('--beam', type=int, default=1, help='Beam size for decoding')
     args_parser.add_argument('--basic_word_embedding', action='store_true', help='Whether to use extra randomly initialized trainable word embedding.')
+    args_parser.add_argument('--do_trim', default=False, action='store_true', help='Whether to trim pretrained alphabet with training/dev/test data')
     args_parser.add_argument('--word_embedding', choices=['glove', 'senna', 'sskip', 'polyglot'], help='Embedding for words')
     args_parser.add_argument('--word_path', help='path for word embedding dict')
     args_parser.add_argument('--char_embedding', choices=['random', 'polyglot'], help='Embedding for characters')

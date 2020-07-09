@@ -109,7 +109,8 @@ def load_embedding_dict(embedding, embedding_path, normalize_digits=True):
         raise ValueError("embedding should choose from [word2vec, senna, glove, sskip, polyglot]")
 
 
-def create_alphabet_from_embedding(alphabet_directory, embedd_dict=None, vocabs=None, max_vocabulary_size=100000):
+def create_alphabet_from_embedding(alphabet_directory, embedd_dict=None, vocabs=None, max_vocabulary_size=100000,
+                                    do_trim=True):
     _START_VOCAB = [PAD, ROOT, END]
     logger = get_logger("Create Pretrained Alphabets")
     pretrained_alphabet = Alphabet('pretrained', default_value=True)
@@ -125,13 +126,22 @@ def create_alphabet_from_embedding(alphabet_directory, embedd_dict=None, vocabs=
 
         pretrained_vocab = list(embedd_dict.keys())
         n_oov = 0
-        for word in vocabs:
-            if word in pretrained_vocab:
+        if do_trim:
+            logger.info("Trim pretrained vocab by data")
+            for word in vocabs:
+                if word in pretrained_vocab:
+                    pretrained_alphabet.add(word)
+                elif word.lower() in pretrained_vocab:
+                    pretrained_alphabet.add(word.lower())
+                elif word not in _START_VOCAB:
+                    n_oov += 1
+        else:
+            logger.info("Not trim pretrained vocab by data")
+            for word in pretrained_vocab:
                 pretrained_alphabet.add(word)
-            elif word.lower() in pretrained_vocab:
-                pretrained_alphabet.add(word.lower())
-            elif word not in _START_VOCAB:
-                n_oov += 1
+            for word in vocabs:
+                if word not in pretrained_vocab and word.lower() not in pretrained_vocab:
+                    n_oov += 1
         #vocab_size = min(len(pretrained_vocab), max_vocabulary_size)
         logger.info("Loaded/Total Pretrained Vocab Size: %d/%d, OOV Words: %d" % (pretrained_alphabet.size(),len(pretrained_vocab),n_oov))
         

@@ -537,6 +537,7 @@ def parse(args):
     num_pretrained = pretrained_alphabet.size()
 
     logger.info("Word Alphabet Size: %d" % num_words)
+    logger.info("Pretrained Alphabet Size: %d" % num_pretrained)
     logger.info("Character Alphabet Size: %d" % num_chars)
     logger.info("POS Alphabet Size: %d" % num_pos)
     logger.info("Rel Alphabet Size: %d" % num_rels)
