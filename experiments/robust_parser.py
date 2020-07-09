@@ -328,7 +328,8 @@ def train(args):
                                                                                              data_paths=data_paths, 
                                                                                              embedd_dict=word_dict, max_vocabulary_size=400000,
                                                                                              normalize_digits=args.normalize_digits,
-                                                                                             pos_idx=args.pos_idx)
+                                                                                             pos_idx=args.pos_idx,
+                                                                                             expand_with_pretrained=(not args.do_trim and not basic_word_embedding))
     pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path, word_dict, 
                                 word_alphabet.instances, max_vocabulary_size=400000, do_trim=args.do_trim)
 
