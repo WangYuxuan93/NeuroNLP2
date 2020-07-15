@@ -23,6 +23,7 @@ from neuronlp2.io import get_logger
 from neuronlp2.io.common import PAD, ROOT, END
 from neuronlp2.io.common import PAD_CHAR, PAD, PAD_POS, PAD_TYPE, PAD_ID_CHAR, PAD_ID_TAG, PAD_ID_WORD
 from neuronlp2.io import common
+from adversary.lm.bert import Bert
 #from adversary.adv_attack import convert_tokens_to_ids
 
 stopwords = set(
@@ -363,7 +364,8 @@ class BlackBoxAttacker(object):
     def __init__(self, model, candidates, vocab, synonyms, filters=['word_sim', 'sent_sim', 'lm'],
                 generators=['synonym', 'sememe', 'embedding'], tagger="nltk", use_pad=False,
                 knn_path=None, max_knn_candidates=50, sent_encoder_path=None,
-                min_word_cos_sim=0.8, min_sent_cos_sim=0.8,  
+                min_word_cos_sim=0.8, min_sent_cos_sim=0.8, 
+                cand_mlm=None, temperature=1.0, top_k=100, top_p=None, n_mlm_cands=50,
                 adv_lms=None, rel_ratio=0.5, fluency_ratio=0.2,
                 max_perp_diff_per_token=0.8, perp_diff_thres=20 ,alphabets=None, tokenizer=None, 
                 device=None, lm_device=None, symbolic_root=True, symbolic_end=False, mask_out_root=False, 
@@ -398,8 +400,17 @@ class BlackBoxAttacker(object):
             self.sent_encoder = None
         if 'lm' in self.filters and adv_lms is not None:
             self.adv_tokenizer, self.adv_lm = adv_lms
+            #logger.info("Min per ppl increase: {}".format(perp_diff_thres))
         else:
             self.adv_tokenizer, self.adv_lm = None, None
+        if 'mlm' in self.generators and cand_mlm is not None:
+            logger.info("Loading MLM generator from: {}".format(cand_mlm))
+            self.cand_mlm_model = Bert(cand_mlm, device=device, temperature=temperature, top_k=top_k, top_p=top_p)
+            self.cand_mlm_model.eval()
+            self.n_mlm_cands = n_mlm_cands
+        else:
+            self.cand_mlm_model = None
+            self.n_mlm_cands = None
         if alphabets is not None:
             self.word_alphabet, self.char_alphabet, self.pos_alphabet, self.rel_alphabet, self.pretrained_alphabet = alphabets
         self.tokenizer = tokenizer
@@ -434,9 +445,11 @@ class BlackBoxAttacker(object):
         if 'lm' in self.filters and self.adv_lm is None:
             print ("Must input language model (gpt2) path for lm filter!")
             exit()
-
         if 'embedding' in self.generators and self.nn is None:
             print ("Must input embedding path for embedding generator!")
+            exit()
+        if 'mlm' in self.generators and self.cand_mlm_model is None:
+            print ("Must input bert path for mlm generator!")
             exit()
 
     def load_knn_path(self, path):
@@ -905,16 +918,45 @@ class BlackBoxAttacker(object):
     def get_knn_cands(self, tokens, tag, idx):
         cands = []
         knn_cands = self._get_knn_words(tokens[idx])
+        tmps = tokens.copy()
         for cand in knn_cands:
+            tmps[idx] = cand
             #tokens[idx] = cand
             #cand_tag = nltk.pos_tag(tokens)[idx][1]
             if self.tagger == "nltk":
-                cand_tag = nltk.pos_tag([cand.lower()])[0][1]
+                #cand_tag = nltk.pos_tag([cand.lower()])[0][1]
+                cand_tag = nltk.pos_tag(tmps)[idx][1]
             else:
                 cand_tag = nlp(cand.lower())[0].tag_
             if cand_tag == tag:
                 cands.append(cand)
         return cands
+
+    def get_mlm_cands(self, tokens, tag, idx):
+        cands = []
+        mlm_cands = self._get_mlm_cands(tokens, idx, n=self.n_mlm_cands)
+        tmps = tokens.copy()
+        for cand in mlm_cands:
+            tmps[idx] = cand
+            #cand_tag = nltk.pos_tag(tokens)[idx][1]
+            if self.tagger == "nltk":
+                #cand_tag = nltk.pos_tag([cand.lower()])[0][1]
+                cand_tag = nltk.pos_tag(tmps)[idx][1]
+            else:
+                cand_tag = nlp(cand.lower())[0].tag_
+            if cand_tag == tag:
+                cands.append(cand)
+        return cands
+
+    def _get_mlm_cands(self, tokens, idx, n=50):
+        original_word = tokens[idx]
+        tmps = tokens.copy()
+        tmps[idx] = self.cand_mlm_model.MASK_TOKEN
+        masked_text = ' '.join(tmps)
+
+        candidates = self.cand_mlm_model.predict(masked_text, target_word=original_word, n=n)
+
+        return [candidate[0] for candidate in candidates]
 
     def get_candidate_set(self, tokens, tag, idx):
         token = tokens[idx]
@@ -923,24 +965,39 @@ class BlackBoxAttacker(object):
         if token == PAD:
             return []
         candidate_set = []
+        lower_set = set()
         if 'sememe' in self.generators:
             sememe_cands = self.get_sememe_cands(token, tag)
             for c in sememe_cands:
-                if c not in candidate_set and c is not token:
-                    candidate_set.append(c)
+                if c.lower() not in lower_set and c.lower() is not token.lower():
+                    #candidate_set.append(c)
+                    candidate_set.append(recover_word_case(c, token))
+                    lower_set.add(c.lower())
             #print ("sememe:", sememe_cands)
         if 'synonym' in self.generators:
             synonyms = self.get_synonyms(token, tag)
             #print ("syn:", synonyms)
             for c in synonyms:
-                if c not in candidate_set and c is not token:
-                    candidate_set.append(c)
+                if c.lower() not in lower_set and c.lower() is not token.lower():
+                    #candidate_set.append(c)
+                    candidate_set.append(recover_word_case(c, token))
+                    lower_set.add(c.lower())
         if 'embedding' in self.generators:
             knn_cands = self.get_knn_cands(tokens.copy(), tag, idx)
             #print ("knn cands:\n", knn_cands)
             for c in knn_cands:
-                if c not in candidate_set and c is not token:
-                    candidate_set.append(c)
+                if c.lower() not in lower_set and c.lower() is not token.lower():
+                    #candidate_set.append(c)
+                    candidate_set.append(recover_word_case(c, token))
+                    lower_set.add(c.lower())
+        if 'mlm' in self.generators:
+            mlm_cands = self.get_mlm_cands(tokens.copy(), tag, idx)
+            print ("mlm cands:\n", mlm_cands)
+            for c in mlm_cands:
+                if c.lower() not in lower_set and c.lower() is not token.lower():
+                    #candidate_set.append(c)
+                    candidate_set.append(recover_word_case(c, token))
+                    lower_set.add(c.lower())
         return candidate_set
         
     def attack(self, tokens, tags, heads, rel_ids, debug=False):

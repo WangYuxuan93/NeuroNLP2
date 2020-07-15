@@ -617,6 +617,7 @@ def parse(args):
                         tagger=args.tagger, use_pad=args.use_pad, knn_path=args.knn_path, 
                         max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
                         min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim, 
+                        cand_mlm=args.cand_mlm, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, n_mlm_cands=args.n_mlm_cands,
                         adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, 
                         fluency_ratio=args.adv_fluency_ratio, max_perp_diff_per_token=args.max_perp_diff_per_token,
                         perp_diff_thres=args.perp_diff_thres,
@@ -626,7 +627,8 @@ def parse(args):
         attacker = RandomAttacker(network, candidates, vocab, synonyms, filters=filters, generators=generators,
                         tagger=args.tagger, use_pad=args.use_pad, knn_path=args.knn_path, 
                         max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
-                        min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim, 
+                        min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim,
+                        cand_mlm=args.cand_mlm, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, n_mlm_cands=args.n_mlm_cands,
                         adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, 
                         fluency_ratio=args.adv_fluency_ratio, max_perp_diff_per_token=args.max_perp_diff_per_token,
                         perp_diff_thres=args.perp_diff_thres,
@@ -637,6 +639,7 @@ def parse(args):
                         tagger=args.tagger, use_pad=args.use_pad, knn_path=args.knn_path, 
                         max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
                         min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim, 
+                        cand_mlm=args.cand_mlm, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, n_mlm_cands=args.n_mlm_cands,
                         adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, 
                         fluency_ratio=args.adv_fluency_ratio, max_perp_diff_per_token=args.max_perp_diff_per_token,
                         perp_diff_thres=args.perp_diff_thres,
@@ -647,6 +650,7 @@ def parse(args):
                         tagger=args.tagger, use_pad=args.use_pad, knn_path=args.knn_path, 
                         max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
                         min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim, 
+                        cand_mlm=args.cand_mlm, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, n_mlm_cands=args.n_mlm_cands,
                         adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, 
                         fluency_ratio=args.adv_fluency_ratio, max_perp_diff_per_token=args.max_perp_diff_per_token,
                         perp_diff_thres=args.perp_diff_thres,
@@ -765,6 +769,11 @@ if __name__ == '__main__':
     args_parser.add_argument('--test', help='path for test file.', required=True)
     args_parser.add_argument('--model_path', help='path for saving model file.', required=True)
     args_parser.add_argument('--adv_lm_path', help='path for pretrained language model (gpt2) for adv filtering')
+    args_parser.add_argument('--cand_mlm', help='path for mlm candidate generating')
+    args_parser.add_argument('--temp', type=float, default=1.0, help='Temperature for mlm candidate generating')
+    args_parser.add_argument('--n_mlm_cands', type=int, default=50, help='Select candidate number for mlm candidate generating')
+    args_parser.add_argument('--top_k', type=int, default=100, help='Top candidate number for filtering mlm candidate generating')
+    args_parser.add_argument('--top_p', type=float, default=None, help='Top proportion for filtering mlm candidate generating')
     args_parser.add_argument('--output_filename', type=str, help='output filename for parse')
     args_parser.add_argument('--adv_filename', type=str, help='output adversarial filename')
     args_parser.add_argument('--adv_gold_filename', type=str, help='output adversarial text with gold heads & rels')
@@ -783,6 +792,6 @@ if __name__ == '__main__':
     args_parser.add_argument('--generators', type=str, default='synonym:sememe:embedding', help='generators for word substitution')
     args_parser.add_argument('--tagger', choices=['nltk', 'spacy'], default='nltk', help='POS tagger for POS checking in KNN embedding candidates')
     args_parser.add_argument('--use_pad', action='store_true', default=False, help='use PAD in input to attacker')
-
+    
     args = args_parser.parse_args()
     parse(args)
