@@ -406,7 +406,7 @@ class BlackBoxAttacker(object):
         if 'mlm' in self.generators and cand_mlm is not None:
             logger.info("Loading MLM generator from: {}".format(cand_mlm))
             self.cand_mlm_model = Bert(cand_mlm, device=device, temperature=temperature, top_k=top_k, top_p=top_p)
-            self.cand_mlm_model.eval()
+            self.cand_mlm_model.model.eval()
             self.n_mlm_cands = n_mlm_cands
         else:
             self.cand_mlm_model = None
@@ -992,7 +992,7 @@ class BlackBoxAttacker(object):
                     lower_set.add(c.lower())
         if 'mlm' in self.generators:
             mlm_cands = self.get_mlm_cands(tokens.copy(), tag, idx)
-            print ("mlm cands:\n", mlm_cands)
+            #print ("mlm cands:\n", mlm_cands)
             for c in mlm_cands:
                 if c.lower() not in lower_set and c.lower() is not token.lower():
                     #candidate_set.append(c)

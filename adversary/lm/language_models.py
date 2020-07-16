@@ -68,7 +68,7 @@ class LanguageModels:
         top_n_ids = np.random.choice(probas.size(0), n, False, probas.cpu().numpy()).tolist()
         
         probas = probas.cpu() if self.device == 'cuda' else probas
-        probas = probas.detach().data.numpy()
+        probas = probas.cpu().detach().data.numpy()
         top_n_probas = [probas[_id] for _id in top_n_ids]
 
         return top_n_ids, top_n_probas
