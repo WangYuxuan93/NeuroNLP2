@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import random
 import os
+import json
 import pickle
 try:
     import tensorflow_hub as hub
@@ -365,7 +366,7 @@ class BlackBoxAttacker(object):
                 generators=['synonym', 'sememe', 'embedding'], tagger="nltk", use_pad=False,
                 knn_path=None, max_knn_candidates=50, sent_encoder_path=None,
                 min_word_cos_sim=0.8, min_sent_cos_sim=0.8, 
-                cand_mlm=None, temperature=1.0, top_k=100, top_p=None, n_mlm_cands=50,
+                cand_mlm=None, temperature=1.0, top_k=100, top_p=None, n_mlm_cands=50, mlm_cand_file=None,
                 adv_lms=None, rel_ratio=0.5, fluency_ratio=0.2,
                 max_perp_diff_per_token=0.8, perp_diff_thres=20 ,alphabets=None, tokenizer=None, 
                 device=None, lm_device=None, symbolic_root=True, symbolic_end=False, mask_out_root=False, 
@@ -403,13 +404,20 @@ class BlackBoxAttacker(object):
             #logger.info("Min per ppl increase: {}".format(perp_diff_thres))
         else:
             self.adv_tokenizer, self.adv_lm = None, None
-        if 'mlm' in self.generators and cand_mlm is not None:
-            logger.info("Loading MLM generator from: {}".format(cand_mlm))
-            self.cand_mlm_model = Bert(cand_mlm, device=device, temperature=temperature, top_k=top_k, top_p=top_p)
-            self.cand_mlm_model.model.eval()
-            self.n_mlm_cands = n_mlm_cands
+        if 'mlm' in self.generators:
+            if mlm_cand_file is not None:
+                self.mlm_cand_dict = json.load(open(mlm_cand_file, 'r'))
+                logger.info("Loading MLM candidates from: {} ({} sentences)".format(mlm_cand_file, len(self.mlm_cand_dict)))
+                self.mlm_cand_model = None
+            elif cand_mlm is not None:
+                logger.info("Loading MLM generator from: {}".format(cand_mlm))
+                self.mlm_cand_model = Bert(cand_mlm, device=device, temperature=temperature, top_k=top_k, top_p=top_p)
+                self.mlm_cand_model.model.eval()
+                self.n_mlm_cands = n_mlm_cands
+                self.mlm_cand_dict = None
         else:
-            self.cand_mlm_model = None
+            self.mlm_cand_model = None
+            self.mlm_cand_dict = None
             self.n_mlm_cands = None
         if alphabets is not None:
             self.word_alphabet, self.char_alphabet, self.pos_alphabet, self.rel_alphabet, self.pretrained_alphabet = alphabets
@@ -448,7 +456,7 @@ class BlackBoxAttacker(object):
         if 'embedding' in self.generators and self.nn is None:
             print ("Must input embedding path for embedding generator!")
             exit()
-        if 'mlm' in self.generators and self.cand_mlm_model is None:
+        if 'mlm' in self.generators and self.mlm_cand_model is None:
             print ("Must input bert path for mlm generator!")
             exit()
 
@@ -932,9 +940,9 @@ class BlackBoxAttacker(object):
                 cands.append(cand)
         return cands
 
-    def get_mlm_cands(self, tokens, tag, idx):
+    def get_mlm_cands(self, tokens, tag, idx, sent_id=None):
         cands = []
-        mlm_cands = self._get_mlm_cands(tokens, idx, n=self.n_mlm_cands)
+        mlm_cands = self._get_mlm_cands(tokens, idx, n=self.n_mlm_cands, sent_id=sent_id)
         tmps = tokens.copy()
         for cand in mlm_cands:
             tmps[idx] = cand
@@ -948,17 +956,27 @@ class BlackBoxAttacker(object):
                 cands.append(cand)
         return cands
 
-    def _get_mlm_cands(self, tokens, idx, n=50):
-        original_word = tokens[idx]
-        tmps = tokens.copy()
-        tmps[idx] = self.cand_mlm_model.MASK_TOKEN
-        masked_text = ' '.join(tmps)
+    def _get_mlm_cands(self, tokens, idx, n=50, sent_id=None):
+        # load directly from preprocessed file
+        if self.mlm_cand_dict is not None:
+            sent_mlm_cands = self.mlm_cand_dict[sent_id]
+            #if self.symbolic_root:
+            #    sent_mlm_cands = [{"orig":ROOT, "cands":[]}] + sent_mlm_cands
+            assert len(sent_mlm_cands) == (len(tokens) - self.symbolic_root)
+            mlm_cands = sent_mlm_cands[idx-self.symbolic_root]
+            assert mlm_cands["orig"] == tokens[idx]
+            return mlm_cands["cands"]
+        elif self.mlm_cand_model is not None:
+            original_word = tokens[idx]
+            tmps = tokens.copy()
+            tmps[idx] = self.mlm_cand_model.MASK_TOKEN
+            masked_text = ' '.join(tmps)
 
-        candidates = self.cand_mlm_model.predict(masked_text, target_word=original_word, n=n)
+            candidates = self.mlm_cand_model.predict(masked_text, target_word=original_word, n=n)
 
-        return [candidate[0] for candidate in candidates]
+            return [candidate[0] for candidate in candidates]
 
-    def get_candidate_set(self, tokens, tag, idx):
+    def get_candidate_set(self, tokens, tag, idx, sent_id=None):
         token = tokens[idx]
         if token.lower() in self.stop_words:
             return []
@@ -991,7 +1009,7 @@ class BlackBoxAttacker(object):
                     candidate_set.append(recover_word_case(c, token))
                     lower_set.add(c.lower())
         if 'mlm' in self.generators:
-            mlm_cands = self.get_mlm_cands(tokens.copy(), tag, idx)
+            mlm_cands = self.get_mlm_cands(tokens.copy(), tag, idx, sent_id=sent_id)
             #print ("mlm cands:\n", mlm_cands)
             for c in mlm_cands:
                 if c.lower() not in lower_set and c.lower() is not token.lower():
@@ -1000,7 +1018,7 @@ class BlackBoxAttacker(object):
                     lower_set.add(c.lower())
         return candidate_set
         
-    def attack(self, tokens, tags, heads, rel_ids, debug=False):
+    def attack(self, tokens, tags, heads, rel_ids, sent_id=None, debug=False):
         """
         Input:
             tokens: List[str], (seq_len)
@@ -1017,7 +1035,7 @@ class BlackBoxAttacker(object):
         #stop_words = nltk.corpus.stopwords.words('english')
         for i in range(x_len):
             #print (adv_tokens[i], self._word2id(adv_tokens[i]))
-            neigbhours_list.append(self.get_candidate_set(adv_tokens, tags[i], i))
+            neigbhours_list.append(self.get_candidate_set(adv_tokens, tags[i], i, sent_id=sent_id))
         neighbours_len = [len(x) for x in neigbhours_list]
         #print (neigbhours_list)
         if np.sum(neighbours_len) == 0:

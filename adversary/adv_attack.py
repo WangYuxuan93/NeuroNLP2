@@ -350,7 +350,7 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
                 print ("Attacking sent-{}".format(int(accum_total_sent)-1))
                 print ("tokens:\n", adv_tokens)
             if debug == 1: print ("original sent:", adv_tokens)
-            result = attacker.attack(adv_tokens, adv_postags, adv_heads, adv_rels, debug=debug)
+            result = attacker.attack(adv_tokens, adv_postags, adv_heads, adv_rels, sent_id=int(accum_total_sent)-1, debug=debug)
             if result is None:
                 adv_src.append(adv_tokens[:length])
                 continue
@@ -617,7 +617,8 @@ def parse(args):
                         tagger=args.tagger, use_pad=args.use_pad, knn_path=args.knn_path, 
                         max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
                         min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim, 
-                        cand_mlm=args.cand_mlm, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, n_mlm_cands=args.n_mlm_cands,
+                        cand_mlm=args.cand_mlm, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, 
+                        n_mlm_cands=args.n_mlm_cands, mlm_cand_file=args.mlm_cand_file,
                         adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, 
                         fluency_ratio=args.adv_fluency_ratio, max_perp_diff_per_token=args.max_perp_diff_per_token,
                         perp_diff_thres=args.perp_diff_thres,
@@ -628,7 +629,8 @@ def parse(args):
                         tagger=args.tagger, use_pad=args.use_pad, knn_path=args.knn_path, 
                         max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
                         min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim,
-                        cand_mlm=args.cand_mlm, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, n_mlm_cands=args.n_mlm_cands,
+                        cand_mlm=args.cand_mlm, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, 
+                        n_mlm_cands=args.n_mlm_cands, mlm_cand_file=args.mlm_cand_file,
                         adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, 
                         fluency_ratio=args.adv_fluency_ratio, max_perp_diff_per_token=args.max_perp_diff_per_token,
                         perp_diff_thres=args.perp_diff_thres,
@@ -639,7 +641,8 @@ def parse(args):
                         tagger=args.tagger, use_pad=args.use_pad, knn_path=args.knn_path, 
                         max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
                         min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim, 
-                        cand_mlm=args.cand_mlm, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, n_mlm_cands=args.n_mlm_cands,
+                        cand_mlm=args.cand_mlm, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, 
+                        n_mlm_cands=args.n_mlm_cands, mlm_cand_file=args.mlm_cand_file,
                         adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, 
                         fluency_ratio=args.adv_fluency_ratio, max_perp_diff_per_token=args.max_perp_diff_per_token,
                         perp_diff_thres=args.perp_diff_thres,
@@ -650,7 +653,8 @@ def parse(args):
                         tagger=args.tagger, use_pad=args.use_pad, knn_path=args.knn_path, 
                         max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
                         min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim, 
-                        cand_mlm=args.cand_mlm, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, n_mlm_cands=args.n_mlm_cands,
+                        cand_mlm=args.cand_mlm, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, 
+                        n_mlm_cands=args.n_mlm_cands, mlm_cand_file=args.mlm_cand_file,
                         adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, 
                         fluency_ratio=args.adv_fluency_ratio, max_perp_diff_per_token=args.max_perp_diff_per_token,
                         perp_diff_thres=args.perp_diff_thres,
@@ -770,6 +774,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--model_path', help='path for saving model file.', required=True)
     args_parser.add_argument('--adv_lm_path', help='path for pretrained language model (gpt2) for adv filtering')
     args_parser.add_argument('--cand_mlm', help='path for mlm candidate generating')
+    args_parser.add_argument('--mlm_cand_file', help='path for mlm candidate preprocessed json file')
     args_parser.add_argument('--temp', type=float, default=1.0, help='Temperature for mlm candidate generating')
     args_parser.add_argument('--n_mlm_cands', type=int, default=50, help='Select candidate number for mlm candidate generating')
     args_parser.add_argument('--top_k', type=int, default=100, help='Top candidate number for filtering mlm candidate generating')
