@@ -826,6 +826,7 @@ class BlackBoxAttacker(object):
                 if debug == 3:
                     print ("--------------------------")
                     print ("Idx={}({}), all word_sim less than min, continue\ncands:{}\nword_sims:{}".format(idx, tokens[idx], all_cands, all_w_sims))
+                return cands, None
             else:
                 print ("--------------------------")
                 print ("Idx={}({})\ncands:{}\nword_sims:{}".format(idx, tokens[idx], all_cands, all_w_sims))
@@ -836,6 +837,7 @@ class BlackBoxAttacker(object):
                 if debug == 3:
                     print ("--------------------------")
                     print ("Idx={}({}), all sent_sim less than min, continue\ncands:{}\nsent_sims:{}".format(idx, tokens[idx], all_cands, all_s_sims))
+                return cands, None
             else:
                 print ("--------------------------")
                 print ("Idx={}({})\ncands:{}\nsent_sims:{}".format(idx, tokens[idx], all_cands, all_s_sims))
@@ -848,6 +850,9 @@ class BlackBoxAttacker(object):
                 if debug == 3:
                     print ("--------------------------")
                     print ("Idx={}({}), all perp_diff above thres, continue\ncands:{}\nperp_diff:{}".format(idx, tokens[idx], all_cands, all_perp_diff))
+                else:
+                    print ("--------------------------")
+                    print ("Idx={}({})\ncands:{}\nsent_sims:{}".format(idx, tokens[idx], all_cands, all_perp_diff))
         return cands, perp_diff
 
     def cos_sim(self, e1, e2):
