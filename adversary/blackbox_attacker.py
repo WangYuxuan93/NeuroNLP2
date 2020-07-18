@@ -2,6 +2,7 @@ import nltk
 from nltk.corpus import wordnet as wn
 import spacy
 nlp = spacy.load('en_core_web_sm')
+import language_check
 
 from functools import partial
 import numpy as np
@@ -10,6 +11,7 @@ import random
 import os
 import json
 import pickle
+import string
 try:
     import tensorflow_hub as hub
     import tensorflow as tf
@@ -29,6 +31,7 @@ from adversary.lm.bert import Bert
 
 stopwords = set(
         [
+            "'s",
             "a",
             "about",
             "above",
@@ -169,6 +172,7 @@ stopwords = set(
             "mustn't",
             "my",
             "myself",
+            "n't",
             "namely",
             "needn",
             "needn't",
@@ -404,6 +408,11 @@ class BlackBoxAttacker(object):
             #logger.info("Min per ppl increase: {}".format(perp_diff_thres))
         else:
             self.adv_tokenizer, self.adv_lm = None, None
+        if 'grammar' in self.filters:
+            self.grammar_checker = language_check.LanguageTool('en-US')
+        else:
+            self.grammar_checker = None
+
         if 'mlm' in self.generators:
             if mlm_cand_file is not None:
                 self.mlm_cand_dict = json.load(open(mlm_cand_file, 'r'))
@@ -435,6 +444,7 @@ class BlackBoxAttacker(object):
         self.batch_size = batch_size
         #self.stop_words = nltk.corpus.stopwords.words('english')
         self.stop_words = stopwords
+        self.stop_tags = ['PRP','PRP$','DT','CC','CD','UH','WDT','WP','WP$','-LRB-','-RRB-','.','``',"\'\'",':',',','?',';']
         self.random_sub_if_no_change = random_sub_if_no_change
         
         logger.info("Relation ratio:{}, Fluency ratio:{}".format(rel_ratio, fluency_ratio))
@@ -818,29 +828,77 @@ class BlackBoxAttacker(object):
                 new_sims.append(sim)
         return new_cands, new_sims, all_sims
 
+    def list2str(self, tokens):
+        str = ""
+        no_blank_toks = ['.',',','!',':',';','?',"'s", "n't"]
+        for tok in tokens:
+            if tok in no_blank_toks:
+                str += tok
+            else:
+                str += ' ' + tok
+        return str
+
+    def filter_cands_with_grammar_checker(self, tokens, cands, idx, debug=False):
+        new_cands = []
+        all_errors = []
+        batch_tokens, _ = self.gen_cand_batch(tokens, cands, idx, tokens)
+        # remove the virtual ROOT symbol
+        if self.symbolic_root:
+            batch_tokens = [toks[1:] for toks in batch_tokens]
+        #batch_sents = [' '.join(toks) for toks in batch_tokens]
+        batch_sents = [self.list2str(toks) for toks in batch_tokens]
+        origin_matches = self.grammar_checker.check(batch_sents[0])
+        num_origin_err = len(origin_matches)
+        origin_errors = [(match.fromx, match.tox, match.msg) for match in origin_matches]
+        # (cand_size)
+        for i in range(1,len(batch_sents)):
+            matches = self.grammar_checker.check(batch_sents[i])
+            # only keep substitutes that do not increase grammar error
+            if len(matches) <= num_origin_err:
+                new_cands.append(cands[i-1])
+            error = []
+            for match in matches:
+                error_tok = batch_sents[i][match.fromx: match.tox]
+                if match not in origin_matches:
+                    error.append((match.fromx, match.tox, error_tok, match.msg))
+            all_errors.append(error)
+        return new_cands, all_errors, origin_errors, batch_sents[0]
+
     def filter_cands(self, tokens, cands, idx, debug=False):
+        new_cands = []
+        #print ("raw cands:", cands)
+        # filter out stop words from candidates
+        for cand in cands:
+            if cand not in self.stop_words:
+                new_cands.append(cand)
+        cands = new_cands
+        #print ("cands:", cands)
         all_cands = cands.copy()
         if "word_sim" in self.filters:
             cands, w_sims, all_w_sims = self.filter_cands_with_word_sim(tokens[idx], cands)
             if len(cands) == 0:
                 if debug == 3:
                     print ("--------------------------")
-                    print ("Idx={}({}), all word_sim less than min, continue\ncands:{}\nword_sims:{}".format(idx, tokens[idx], all_cands, all_w_sims))
+                    print ("Idx={}({}), all word_sim less than min, continue".format(idx, tokens[idx]))
+                    print ("word_sims:", *zip(all_cands, all_w_sims))
                 return cands, None
             else:
                 print ("--------------------------")
-                print ("Idx={}({})\ncands:{}\nword_sims:{}".format(idx, tokens[idx], all_cands, all_w_sims))
+                print ("Idx={}({})".format(idx, tokens[idx]))
+                print ("word_sims:", *zip(all_cands, all_w_sims))
         all_cands = cands.copy()
         if "sent_sim" in self.filters:
             cands, s_sims, all_s_sims = self.filter_cands_with_sent_sim(tokens, cands, idx)
             if len(cands) == 0:
                 if debug == 3:
                     print ("--------------------------")
-                    print ("Idx={}({}), all sent_sim less than min, continue\ncands:{}\nsent_sims:{}".format(idx, tokens[idx], all_cands, all_s_sims))
+                    print ("Idx={}({}), all sent_sim less than min, continue".format(idx, tokens[idx]))
+                    print ("sent_sim:", *zip(all_cands, all_s_sims))
                 return cands, None
             else:
                 print ("--------------------------")
-                print ("Idx={}({})\ncands:{}\nsent_sims:{}".format(idx, tokens[idx], all_cands, all_s_sims))
+                print ("Idx={}({})".format(idx, tokens[idx]))
+                print ("sent_sim:", *zip(all_cands, all_s_sims))
         # filter with language model
         all_cands = cands.copy()
         perp_diff = None
@@ -849,10 +907,30 @@ class BlackBoxAttacker(object):
             if len(cands) == 0:
                 if debug == 3:
                     print ("--------------------------")
-                    print ("Idx={}({}), all perp_diff above thres, continue\ncands:{}\nperp_diff:{}".format(idx, tokens[idx], all_cands, all_perp_diff))
-                else:
+                    print ("Idx={}({}), all perp_diff above thres, continue".format(idx, tokens[idx]))
+                    print ("ppl_diff:", *zip(all_cands, all_perp_diff))
+                return cands, None
+            else:
+                print ("--------------------------")
+                print ("Idx={}({})".format(idx, tokens[idx]))
+                print ("ppl_diff:", *zip(all_cands, all_perp_diff))
+        all_cands = cands.copy()
+        if "grammar" in self.filters:
+            cands, all_errors, origin_errors, origin_str = self.filter_cands_with_grammar_checker(tokens, cands, idx, debug==2)
+            if len(cands) == 0:
+                if debug == 3:
                     print ("--------------------------")
-                    print ("Idx={}({})\ncands:{}\nsent_sims:{}".format(idx, tokens[idx], all_cands, all_perp_diff))
+                    print ("origin sent:", origin_str)
+                    print ("origin errors:", origin_errors)
+                    print ("Idx={}({}), all fail grammar checker, continue".format(idx, tokens[idx]))
+                    print ("errors:", *zip(all_cands, all_errors))
+                return cands, None
+            else:
+                print ("--------------------------")
+                print ("origin sent:", origin_str)
+                print ("origin errors:", origin_errors)
+                print ("Idx={}({})".format(idx, tokens[idx]))
+                print ("errors:", *zip(all_cands, all_errors))
         return cands, perp_diff
 
     def cos_sim(self, e1, e2):
@@ -981,46 +1059,40 @@ class BlackBoxAttacker(object):
 
             return [candidate[0] for candidate in candidates]
 
+    def update_cand_set(self, token, cand_set, cands, lower_set):
+        for c in cands:
+            if c.lower() not in lower_set and c.lower() != token.lower():
+                #candidate_set.append(c)
+                cand_set.append(recover_word_case(c, token))
+                lower_set.add(c.lower())
+        return cand_set, lower_set
+
     def get_candidate_set(self, tokens, tag, idx, sent_id=None):
         token = tokens[idx]
         if token.lower() in self.stop_words:
+            return []
+        if tag in self.stop_tags:
             return []
         if token == PAD:
             return []
         candidate_set = []
         lower_set = set()
+        #print ("origin token: ", token)
         if 'sememe' in self.generators:
             sememe_cands = self.get_sememe_cands(token, tag)
-            for c in sememe_cands:
-                if c.lower() not in lower_set and c.lower() is not token.lower():
-                    #candidate_set.append(c)
-                    candidate_set.append(recover_word_case(c, token))
-                    lower_set.add(c.lower())
+            self.update_cand_set(token, candidate_set, sememe_cands, lower_set)
             #print ("sememe:", sememe_cands)
         if 'synonym' in self.generators:
             synonyms = self.get_synonyms(token, tag)
+            self.update_cand_set(token, candidate_set, synonyms, lower_set)
             #print ("syn:", synonyms)
-            for c in synonyms:
-                if c.lower() not in lower_set and c.lower() is not token.lower():
-                    #candidate_set.append(c)
-                    candidate_set.append(recover_word_case(c, token))
-                    lower_set.add(c.lower())
         if 'embedding' in self.generators:
             knn_cands = self.get_knn_cands(tokens.copy(), tag, idx)
+            self.update_cand_set(token, candidate_set, knn_cands, lower_set)
             #print ("knn cands:\n", knn_cands)
-            for c in knn_cands:
-                if c.lower() not in lower_set and c.lower() is not token.lower():
-                    #candidate_set.append(c)
-                    candidate_set.append(recover_word_case(c, token))
-                    lower_set.add(c.lower())
         if 'mlm' in self.generators:
             mlm_cands = self.get_mlm_cands(tokens.copy(), tag, idx, sent_id=sent_id)
-            #print ("mlm cands:\n", mlm_cands)
-            for c in mlm_cands:
-                if c.lower() not in lower_set and c.lower() is not token.lower():
-                    #candidate_set.append(c)
-                    candidate_set.append(recover_word_case(c, token))
-                    lower_set.add(c.lower())
+            self.update_cand_set(token, candidate_set, mlm_cands, lower_set)
         return candidate_set
         
     def attack(self, tokens, tags, heads, rel_ids, sent_id=None, debug=False):
@@ -1139,15 +1211,16 @@ class BlackBoxAttacker(object):
                     total_perp_diff += blocked_perp_diff[best_cand_idx]
                 if debug == 3:
                     print ("--------------------------")
-                    print ("Idx={}({}), chosen cand:{}, total_change_score:{}, change_edit_ratio:{}\ncands: {}\nchange_scores: {}".format(
-                            idx, tokens[idx], best_cand, total_change_score, change_edit_ratio, cands, change_score))
+                    print ("Idx={}({}), chosen cand:{}, total_change_score:{}, change_edit_ratio:{}".format(
+                            idx, tokens[idx], best_cand, total_change_score, change_edit_ratio))
+                    print ("change_scores:", *zip(cands, change_score))
                     if "lm" in self.filters:
                         print ("perp diff: {}\nscores: {}".format(perp_diff, score))
             else:
                 if debug == 3:
                     print ("------------Stopping------------")
-                    print ("Idx={}({}), chosen cand:{}, total_change_score:{}, change_edit_ratio:{}\ncands: {}\nchange_scores: {}".format(
-                            idx, tokens[idx], best_cand, total_change_score, change_edit_ratio, cands, change_score))
+                    print ("Idx={}({}), chosen cand:{}, total_change_score:{}, change_edit_ratio:{}\nchange_scores: {}".format(
+                            idx, tokens[idx], best_cand, total_change_score, change_edit_ratio, *zip(cands, change_score)))
                     if "lm" in self.filters:
                         print ("perp diff: {}\nscores: {}".format(perp_diff, score))
                 break
