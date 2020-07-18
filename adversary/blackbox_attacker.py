@@ -405,6 +405,7 @@ class BlackBoxAttacker(object):
         else:
             self.adv_tokenizer, self.adv_lm = None, None
         if 'mlm' in self.generators:
+            self.n_mlm_cands = n_mlm_cands
             if mlm_cand_file is not None:
                 self.mlm_cand_dict = json.load(open(mlm_cand_file, 'r'))
                 logger.info("Loading MLM candidates from: {} ({} sentences)".format(mlm_cand_file, len(self.mlm_cand_dict)))
@@ -412,8 +413,7 @@ class BlackBoxAttacker(object):
             elif cand_mlm is not None:
                 logger.info("Loading MLM generator from: {}".format(cand_mlm))
                 self.mlm_cand_model = Bert(cand_mlm, device=device, temperature=temperature, top_k=top_k, top_p=top_p)
-                self.mlm_cand_model.model.eval()
-                self.n_mlm_cands = n_mlm_cands
+                self.mlm_cand_model.model.eval() 
                 self.mlm_cand_dict = None
         else:
             self.mlm_cand_model = None
@@ -456,7 +456,7 @@ class BlackBoxAttacker(object):
         if 'embedding' in self.generators and self.nn is None:
             print ("Must input embedding path for embedding generator!")
             exit()
-        if 'mlm' in self.generators and self.mlm_cand_model is None:
+        if 'mlm' in self.generators and self.mlm_cand_model is None and self.mlm_cand_dict is None:
             print ("Must input bert path for mlm generator!")
             exit()
 
@@ -959,11 +959,14 @@ class BlackBoxAttacker(object):
     def _get_mlm_cands(self, tokens, idx, n=50, sent_id=None):
         # load directly from preprocessed file
         if self.mlm_cand_dict is not None:
-            sent_mlm_cands = self.mlm_cand_dict[sent_id]
+            if self.symbolic_root and idx == 0: return []
+            sent_mlm_cands = self.mlm_cand_dict[str(sent_id)]
             #if self.symbolic_root:
             #    sent_mlm_cands = [{"orig":ROOT, "cands":[]}] + sent_mlm_cands
             assert len(sent_mlm_cands) == (len(tokens) - self.symbolic_root)
             mlm_cands = sent_mlm_cands[idx-self.symbolic_root]
+            #print (idx, tokens[idx])
+            #print (mlm_cands)
             assert mlm_cands["orig"] == tokens[idx]
             return mlm_cands["cands"]
         elif self.mlm_cand_model is not None:
