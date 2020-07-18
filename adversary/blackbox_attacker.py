@@ -899,21 +899,7 @@ class BlackBoxAttacker(object):
                 print ("--------------------------")
                 print ("Idx={}({})".format(idx, tokens[idx]))
                 print ("sent_sim:", *zip(all_cands, all_s_sims))
-        # filter with language model
-        all_cands = cands.copy()
-        perp_diff = None
-        if "lm" in self.filters:
-            cands, perp_diff, all_perp_diff = self.filter_cands_with_lm(tokens, cands, idx, debug==2)
-            if len(cands) == 0:
-                if debug == 3:
-                    print ("--------------------------")
-                    print ("Idx={}({}), all perp_diff above thres, continue".format(idx, tokens[idx]))
-                    print ("ppl_diff:", *zip(all_cands, all_perp_diff))
-                return cands, None
-            else:
-                print ("--------------------------")
-                print ("Idx={}({})".format(idx, tokens[idx]))
-                print ("ppl_diff:", *zip(all_cands, all_perp_diff))
+        # filter with grammar checker
         all_cands = cands.copy()
         if "grammar" in self.filters:
             cands, all_errors, origin_errors, origin_str = self.filter_cands_with_grammar_checker(tokens, cands, idx, debug==2)
@@ -931,6 +917,22 @@ class BlackBoxAttacker(object):
                 print ("origin errors:", origin_errors)
                 print ("Idx={}({})".format(idx, tokens[idx]))
                 print ("errors:", *zip(all_cands, all_errors))
+        # filter with language model
+        all_cands = cands.copy()
+        perp_diff = None
+        if "lm" in self.filters:
+            cands, perp_diff, all_perp_diff = self.filter_cands_with_lm(tokens, cands, idx, debug==2)
+            if len(cands) == 0:
+                if debug == 3:
+                    print ("--------------------------")
+                    print ("Idx={}({}), all perp_diff above thres, continue".format(idx, tokens[idx]))
+                    print ("ppl_diff:", *zip(all_cands, all_perp_diff))
+                return cands, None
+            else:
+                print ("--------------------------")
+                print ("Idx={}({})".format(idx, tokens[idx]))
+                print ("ppl_diff:", *zip(all_cands, all_perp_diff))
+
         return cands, perp_diff
 
     def cos_sim(self, e1, e2):
