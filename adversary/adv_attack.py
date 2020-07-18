@@ -619,9 +619,8 @@ def parse(args):
                         min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim, 
                         cand_mlm=args.cand_mlm, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, 
                         n_mlm_cands=args.n_mlm_cands, mlm_cand_file=args.mlm_cand_file,
-                        adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, 
-                        fluency_ratio=args.adv_fluency_ratio, max_perp_diff_per_token=args.max_perp_diff_per_token,
-                        perp_diff_thres=args.perp_diff_thres,
+                        adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, fluency_ratio=args.adv_fluency_ratio,
+                        ppl_inc_thres=args.ppl_inc_thres,
                         alphabets=alphabets, tokenizer=tokenizer, device=device, lm_device=lm_device,
                         batch_size=args.adv_batch_size, random_sub_if_no_change=args.random_sub_if_no_change)
     elif args.mode == 'random':
@@ -632,8 +631,8 @@ def parse(args):
                         cand_mlm=args.cand_mlm, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, 
                         n_mlm_cands=args.n_mlm_cands, mlm_cand_file=args.mlm_cand_file,
                         adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, 
-                        fluency_ratio=args.adv_fluency_ratio, max_perp_diff_per_token=args.max_perp_diff_per_token,
-                        perp_diff_thres=args.perp_diff_thres,
+                        fluency_ratio=args.adv_fluency_ratio,
+                        ppl_inc_thres=args.ppl_inc_thres,
                         alphabets=alphabets, tokenizer=tokenizer, device=device, lm_device=lm_device,
                         batch_size=args.adv_batch_size, random_sub_if_no_change=args.random_sub_if_no_change)
     elif args.mode == 'gray':
@@ -644,8 +643,8 @@ def parse(args):
                         cand_mlm=args.cand_mlm, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, 
                         n_mlm_cands=args.n_mlm_cands, mlm_cand_file=args.mlm_cand_file,
                         adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, 
-                        fluency_ratio=args.adv_fluency_ratio, max_perp_diff_per_token=args.max_perp_diff_per_token,
-                        perp_diff_thres=args.perp_diff_thres,
+                        fluency_ratio=args.adv_fluency_ratio, 
+                        ppl_inc_thres=args.ppl_inc_thres,
                         alphabets=alphabets, tokenizer=tokenizer, device=device, lm_device=lm_device,
                         batch_size=args.adv_batch_size, random_sub_if_no_change=args.random_sub_if_no_change)
     elif args.mode == 'gray_single':
@@ -656,8 +655,8 @@ def parse(args):
                         cand_mlm=args.cand_mlm, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, 
                         n_mlm_cands=args.n_mlm_cands, mlm_cand_file=args.mlm_cand_file,
                         adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, 
-                        fluency_ratio=args.adv_fluency_ratio, max_perp_diff_per_token=args.max_perp_diff_per_token,
-                        perp_diff_thres=args.perp_diff_thres,
+                        fluency_ratio=args.adv_fluency_ratio, 
+                        ppl_inc_thres=args.ppl_inc_thres,
                         alphabets=alphabets, tokenizer=tokenizer, device=device, lm_device=lm_device,
                         batch_size=args.adv_batch_size, random_sub_if_no_change=args.random_sub_if_no_change)
     #tokens = ["_ROOT", "The", "Dow", "fell", "22.6", "%", "on", "black", "Monday"]#, "."]
@@ -784,8 +783,9 @@ if __name__ == '__main__':
     args_parser.add_argument('--adv_gold_filename', type=str, help='output adversarial text with gold heads & rels')
     args_parser.add_argument('--adv_rel_ratio', type=float, default=0.5, help='Relation importance in adversarial attack')
     args_parser.add_argument('--adv_fluency_ratio', type=float, default=0.2, help='Fluency importance in adversarial attack')
-    args_parser.add_argument('--max_perp_diff_per_token', type=float, default=0.8, help='Maximum allowed perplexity difference per token in adversarial attack')
-    args_parser.add_argument('--perp_diff_thres', type=float, default=20.0, help='Perplexity difference threshold in adversarial attack')
+    #args_parser.add_argument('--max_perp_diff_per_token', type=float, default=0.8, help='Maximum allowed perplexity difference per token in adversarial attack')
+    args_parser.add_argument('--ppl_inc_thres', type=float, default=20.0, help='Perplexity difference threshold in adversarial attack')
+    args_parser.add_argument('--max_mod_percent', type=float, default=0.05, help='Maximum modification percentage of words')
     args_parser.add_argument('--adv_batch_size', type=int, default=16, help='Number of sentences in adv lm each batch')
     args_parser.add_argument('--random_sub_if_no_change', action='store_true', default=False, help='randomly substitute if no change')
     args_parser.add_argument('--knn_path', type=str, help='knn embedding path for adversarial attack')

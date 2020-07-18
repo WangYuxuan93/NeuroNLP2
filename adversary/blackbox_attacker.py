@@ -367,12 +367,13 @@ def recover_word_case(word, reference_word):
 
 class BlackBoxAttacker(object):
     def __init__(self, model, candidates, vocab, synonyms, filters=['word_sim', 'sent_sim', 'lm'],
-                generators=['synonym', 'sememe', 'embedding'], tagger="nltk", use_pad=False,
+                generators=['synonym', 'sememe', 'embedding'], max_mod_percent=0.05, 
+                tagger="nltk", use_pad=False,
                 knn_path=None, max_knn_candidates=50, sent_encoder_path=None,
                 min_word_cos_sim=0.8, min_sent_cos_sim=0.8, 
                 cand_mlm=None, temperature=1.0, top_k=100, top_p=None, n_mlm_cands=50, mlm_cand_file=None,
                 adv_lms=None, rel_ratio=0.5, fluency_ratio=0.2,
-                max_perp_diff_per_token=0.8, perp_diff_thres=20 ,alphabets=None, tokenizer=None, 
+                ppl_inc_thres=20 ,alphabets=None, tokenizer=None, 
                 device=None, lm_device=None, symbolic_root=True, symbolic_end=False, mask_out_root=False, 
                 batch_size=32, random_sub_if_no_change=False):
         super(BlackBoxAttacker, self).__init__()
@@ -386,8 +387,10 @@ class BlackBoxAttacker(object):
         self.generators = generators
         self.tagger = tagger
         self.use_pad = use_pad
+        self.max_mod_percent = max_mod_percent
         logger.info("Filters: {}".format(filters))
         logger.info("Generators: {}".format(generators))
+        logger.info("Max modification percentage: {}".format(max_mod_percent))
         logger.info("POS tagger: {}".format(tagger))
         logger.info("Use PAD input: {}".format(use_pad))
         self.id2word = {i:w for (w,i) in vocab.items()}
@@ -405,7 +408,7 @@ class BlackBoxAttacker(object):
             self.sent_encoder = None
         if 'lm' in self.filters and adv_lms is not None:
             self.adv_tokenizer, self.adv_lm = adv_lms
-            #logger.info("Min per ppl increase: {}".format(perp_diff_thres))
+            #logger.info("Min per ppl increase: {}".format(ppl_inc_thres))
         else:
             self.adv_tokenizer, self.adv_lm = None, None
         if 'grammar' in self.filters:
@@ -439,8 +442,8 @@ class BlackBoxAttacker(object):
         assert rel_ratio >= 0 and rel_ratio <= 1
         self.rel_ratio = rel_ratio
         self.fluency_ratio = fluency_ratio
-        self.max_perp_diff_per_token = max_perp_diff_per_token
-        self.perp_diff_thres = perp_diff_thres
+        #self.max_perp_diff_per_token = max_perp_diff_per_token
+        self.ppl_inc_thres = ppl_inc_thres
         self.batch_size = batch_size
         #self.stop_words = nltk.corpus.stopwords.words('english')
         self.stop_words = stopwords
@@ -448,7 +451,8 @@ class BlackBoxAttacker(object):
         self.random_sub_if_no_change = random_sub_if_no_change
         
         logger.info("Relation ratio:{}, Fluency ratio:{}".format(rel_ratio, fluency_ratio))
-        logger.info("Max ppl difference per token:{}, ppl diff threshold:{}".format(max_perp_diff_per_token, perp_diff_thres))
+        #logger.info("Max ppl difference per token:{}, ppl diff threshold:{}".format(max_perp_diff_per_token, ppl_inc_thres))
+        logger.info("Max ppl inc threshold:{}".format(ppl_inc_thres))
         logger.info("Randomly substitute if no change:{}".format(self.random_sub_if_no_change))
         self.max_knn_candidates = max_knn_candidates
         self.min_word_cos_sim = min_word_cos_sim
@@ -811,7 +815,7 @@ class BlackBoxAttacker(object):
         #perp_diff = self.get_perp_diff(tokens, cands, idx)
         perp_diff = self.get_perp_diff(clean_toks, cands, idx)
         for i in range(len(cands)):
-            if perp_diff[i] <= self.perp_diff_thres:
+            if perp_diff[i] <= self.ppl_inc_thres:
                 new_cands.append(cands[i])
                 new_perp_diff.append(perp_diff[i])
         return new_cands, np.array(new_perp_diff), perp_diff
@@ -1124,7 +1128,9 @@ class BlackBoxAttacker(object):
         total_perp_diff = 0.0
         total_score = 0
         num_edit = 0
-        max_perp_diff = x_len * self.max_perp_diff_per_token
+        #max_perp_diff = x_len * self.max_perp_diff_per_token
+        # at least allow one modification
+        max_mod_token = max(1, int(x_len * self.max_mod_percent))
 
         if debug == 3:
             #print ("tokens:\n", adv_tokens)
@@ -1157,9 +1163,11 @@ class BlackBoxAttacker(object):
                 if not self.random_sub_if_no_change or change_score[change_rank[0]] < 0:
                     if debug == 3:
                         print ("--------------------------")
-                        print ("Idx={}({}), no cand can make change, continue\ncands:{}\nchange_scores:{}".format(idx, tokens[idx], cands, change_score))
+                        print ("Idx={}({}), no cand can make change, continue".format(idx, tokens[idx]))
+                        print ("change_scores:", *zip(cands, change_score))
                 else:
-                    if ("lm" in self.filters and total_perp_diff>max_perp_diff):
+                    #if ("lm" in self.filters and total_perp_diff>max_perp_diff):
+                    if num_edit >= max_mod_token:
                         continue
                     else:
                         num_nochange_sub = 0
@@ -1199,7 +1207,8 @@ class BlackBoxAttacker(object):
             best_c_score = change_score[best_cand_idx]
             best_score = score[best_cand_idx]
             new_ratio = (total_change_score + best_c_score) / (num_edit + 1)
-            if ("lm" in self.filters and total_perp_diff<=max_perp_diff) or (new_ratio > change_edit_ratio):
+            #if ("lm" in self.filters and total_perp_diff<=max_perp_diff) or (new_ratio > change_edit_ratio):
+            if num_edit < max_mod_token:
                 change_edit_ratio = new_ratio
                 num_edit += 1
                 total_change_score += best_c_score
@@ -1219,8 +1228,9 @@ class BlackBoxAttacker(object):
             else:
                 if debug == 3:
                     print ("------------Stopping------------")
-                    print ("Idx={}({}), chosen cand:{}, total_change_score:{}, change_edit_ratio:{}\nchange_scores: {}".format(
-                            idx, tokens[idx], best_cand, total_change_score, change_edit_ratio, *zip(cands, change_score)))
+                    print ("Idx={}({}), chosen cand:{}, total_change_score:{}, change_edit_ratio:{}".format(
+                            idx, tokens[idx], best_cand, total_change_score, change_edit_ratio))
+                    print ("change_scores:", *zip(cands, change_score))
                     if "lm" in self.filters:
                         print ("perp diff: {}\nscores: {}".format(perp_diff, score))
                 break
