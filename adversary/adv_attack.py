@@ -614,7 +614,7 @@ def parse(args):
     alphabets = word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, pretrained_alphabet
     if args.mode == 'black':
         attacker = BlackBoxAttacker(network, candidates, vocab, synonyms, filters=filters, generators=generators,
-                        tagger=args.tagger, use_pad=args.use_pad, knn_path=args.knn_path, 
+                        max_mod_percent=args.max_mod_percent, tagger=args.tagger, use_pad=args.use_pad, knn_path=args.knn_path, 
                         max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
                         min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim, 
                         cand_mlm=args.cand_mlm, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, 
@@ -625,7 +625,7 @@ def parse(args):
                         batch_size=args.adv_batch_size, random_sub_if_no_change=args.random_sub_if_no_change)
     elif args.mode == 'random':
         attacker = RandomAttacker(network, candidates, vocab, synonyms, filters=filters, generators=generators,
-                        tagger=args.tagger, use_pad=args.use_pad, knn_path=args.knn_path, 
+                        max_mod_percent=args.max_mod_percent, tagger=args.tagger, use_pad=args.use_pad, knn_path=args.knn_path, 
                         max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
                         min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim,
                         cand_mlm=args.cand_mlm, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, 
@@ -637,7 +637,7 @@ def parse(args):
                         batch_size=args.adv_batch_size, random_sub_if_no_change=args.random_sub_if_no_change)
     elif args.mode == 'gray':
         attacker = GrayBoxAttacker(network, candidates, vocab, synonyms, filters=filters, generators=generators,
-                        tagger=args.tagger, use_pad=args.use_pad, knn_path=args.knn_path, 
+                        max_mod_percent=args.max_mod_percent, tagger=args.tagger, use_pad=args.use_pad, knn_path=args.knn_path, 
                         max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
                         min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim, 
                         cand_mlm=args.cand_mlm, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, 
@@ -649,7 +649,7 @@ def parse(args):
                         batch_size=args.adv_batch_size, random_sub_if_no_change=args.random_sub_if_no_change)
     elif args.mode == 'gray_single':
         attacker = GrayBoxSingleAttacker(network, candidates, vocab, synonyms, filters=filters, generators=generators,
-                        tagger=args.tagger, use_pad=args.use_pad, knn_path=args.knn_path, 
+                        max_mod_percent=args.max_mod_percent, tagger=args.tagger, use_pad=args.use_pad, knn_path=args.knn_path, 
                         max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
                         min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim, 
                         cand_mlm=args.cand_mlm, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, 
