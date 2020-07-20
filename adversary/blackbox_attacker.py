@@ -368,7 +368,7 @@ def recover_word_case(word, reference_word):
 class BlackBoxAttacker(object):
     def __init__(self, model, candidates, vocab, synonyms, filters=['word_sim', 'sent_sim', 'lm'],
                 generators=['synonym', 'sememe', 'embedding'], max_mod_percent=0.05, 
-                tagger="nltk", use_pad=False,
+                tagger="nltk", use_pad=False, cached_path=None,
                 knn_path=None, max_knn_candidates=50, sent_encoder_path=None,
                 min_word_cos_sim=0.8, min_sent_cos_sim=0.8, 
                 cand_mlm=None, temperature=1.0, top_k=100, top_p=None, n_mlm_cands=50, mlm_cand_file=None,
@@ -388,13 +388,19 @@ class BlackBoxAttacker(object):
         self.tagger = tagger
         self.use_pad = use_pad
         self.max_mod_percent = max_mod_percent
+        self.cached_path = cached_path
         logger.info("Filters: {}".format(filters))
         logger.info("Generators: {}".format(generators))
         logger.info("Max modification percentage: {}".format(max_mod_percent))
         logger.info("POS tagger: {}".format(tagger))
         logger.info("Use PAD input: {}".format(use_pad))
+        if cached_path is not None:
+            logger.info("Loading cached candidates from: %s" % cached_path)
+            self.cached_cands = json.load(open(cached_path, 'r'))
+        else:
+            self.cached_cands = None
         self.id2word = {i:w for (w,i) in vocab.items()}
-        if ('word_sim' in self.filters or 'embedding' in self.generators) and knn_path is not None:
+        if ('word_sim' in self.filters or (self.cached_cands is None and 'embedding' in self.generators)) and knn_path is not None:
             logger.info("Loading knn from: {}".format(knn_path))
             self.load_knn_path(knn_path)
             logger.info("Min word cosine similarity: {}".format(min_word_cos_sim))
@@ -416,7 +422,7 @@ class BlackBoxAttacker(object):
         else:
             self.grammar_checker = None
 
-        if 'mlm' in self.generators:
+        if self.cached_cands is None and 'mlm' in self.generators:
             if mlm_cand_file is not None:
                 self.mlm_cand_dict = json.load(open(mlm_cand_file, 'r'))
                 logger.info("Loading MLM candidates from: {} ({} sentences)".format(mlm_cand_file, len(self.mlm_cand_dict)))
@@ -467,10 +473,10 @@ class BlackBoxAttacker(object):
         if 'lm' in self.filters and self.adv_lm is None:
             print ("Must input language model (gpt2) path for lm filter!")
             exit()
-        if 'embedding' in self.generators and self.nn is None:
+        if self.cached_cands is None and 'embedding' in self.generators and self.nn is None:
             print ("Must input embedding path for embedding generator!")
             exit()
-        if 'mlm' in self.generators and self.mlm_cand_model is None:
+        if self.cached_cands is None and 'mlm' in self.generators and self.mlm_cand_model is None:
             print ("Must input bert path for mlm generator!")
             exit()
 
@@ -1074,7 +1080,27 @@ class BlackBoxAttacker(object):
                 lower_set.add(c.lower())
         return cand_set, lower_set
 
-    def get_candidate_set(self, tokens, tag, idx, sent_id=None, cache=False):
+    def _get_candidate_set_from_cache(self, tokens, tag, idx, sent_id=None):
+        token = tokens[idx]
+        if token.lower() in self.stop_words:
+            return []
+        if tag in self.stop_tags:
+            return []
+        if token == PAD or token == ROOT:
+            return []
+        candidate_set = []
+        lower_set = set()
+        name_map = {'sememe':'sem_cands', 'synonym':'syn_cands', 'embedding':'emb_cands',
+                    'mlm':'mlm_cands'}
+
+        cands = self.cached_cands[sent_id]['tokens'][idx]
+        assert cands['token'] == tokens[idx]
+        for name in name_map:
+            if name in self.generators:
+                self.update_cand_set(token, candidate_set, cands[name_map[name]], lower_set)
+        return candidate_set
+
+    def _get_candidate_set(self, tokens, tag, idx, sent_id=None, cache=False):
         token = tokens[idx]
         if cache:
             cache_data = {'sem_cands':[], 'syn_cands':[], 'emb_cands':[],
@@ -1118,7 +1144,15 @@ class BlackBoxAttacker(object):
                           'mlm_cands':mlm_cands}
             
         return candidate_set, cache_data
-        
+    
+    def get_candidate_set(self, tokens, tag, idx, sent_id=None, cache=False):
+        if self.cached_cands is not None:
+            cand_set = self._get_candidate_set_from_cache(tokens, tag, idx, sent_id=sent_id)
+            cache_data = None
+        else:
+            cand_set, cache_data = self._get_candidate_set(tokens, tag, idx, sent_id=sent_id, cache=cache)
+        return cand_set, cache_data
+
     def attack(self, tokens, tags, heads, rel_ids, sent_id=None, debug=False, cache=False):
         """
         Input:
@@ -1139,7 +1173,7 @@ class BlackBoxAttacker(object):
             #print (adv_tokens[i], self._word2id(adv_tokens[i]))
             cands, cache_data = self.get_candidate_set(adv_tokens, tags[i], i, sent_id=sent_id, cache=cache)
             neigbhours_list.append(cands)
-            if cache:
+            if cache and self.cached_path is None:
                 cache_data['id'] = i
                 cache_data['token'] = tokens[i]
                 cand_cache.append(cache_data)
