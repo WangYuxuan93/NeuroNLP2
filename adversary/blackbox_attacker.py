@@ -1031,6 +1031,7 @@ class BlackBoxAttacker(object):
     def get_mlm_cands(self, tokens, tag, idx, sent_id=None):
         cands = []
         mlm_cands = self._get_mlm_cands(tokens, idx, n=self.n_mlm_cands, sent_id=sent_id)
+        mlm_cands = [recover_word_case(c, tokens[idx]) for c in mlm_cands]
         tmps = tokens.copy()
         for cand in mlm_cands:
             tmps[idx] = cand
