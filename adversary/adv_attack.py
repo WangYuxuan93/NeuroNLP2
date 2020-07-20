@@ -267,7 +267,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
 def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set, word_alphabet, pos_alphabet, 
         device, beam=1, batch_size=256, write_to_tmp=True, prev_best_lcorr=0, prev_best_ucorr=0,
         pred_filename=None, tokenizer=None, multi_lan_iter=False, debug=1, pretrained_alphabet=None,
-        use_pad=False):
+        use_pad=False, cand_cache_path=None):
     network.eval()
     accum_ucorr = 0.0
     accum_lcorr = 0.0
@@ -314,6 +314,15 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
         iterate = iterate_data
         lan_id = None
 
+    if cand_cache_path is not None:
+        save_cache = True
+        if os.path.exists(cand_cache_path):
+            print ("Find existing cache file in %s" % cand_cache_path)
+            exit()
+        all_cand_cache = []
+    else:
+        save_cache = False
+
     for data in iterate(data, batch_size):
         if multi_lan_iter:
             lan_id, data = data
@@ -350,7 +359,10 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
                 print ("Attacking sent-{}".format(int(accum_total_sent)-1))
                 print ("tokens:\n", adv_tokens)
             if debug == 1: print ("original sent:", adv_tokens)
-            result = attacker.attack(adv_tokens, adv_postags, adv_heads, adv_rels, sent_id=int(accum_total_sent)-1, debug=debug)
+            result, cand_cache = attacker.attack(adv_tokens, adv_postags, adv_heads, adv_rels, sent_id=int(accum_total_sent)-1, debug=debug,
+                                                cache=save_cache)
+            if save_cache:
+                all_cand_cache.append({'sent_id':int(accum_total_sent)-1, 'tokens': cand_cache})
             if result is None:
                 adv_src.append(adv_tokens[:length])
                 continue
@@ -491,6 +503,11 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
                 pred_writer.write(all_words[i], all_postags[i], all_heads_pred[i], all_rels_pred[i], 
                                 all_lengths[i], symbolic_root=True, src_words=all_src_words[i])
             pred_writer.close()
+
+    if save_cache:
+        print ('Saving candidate cache file to %s' % cand_cache_path)
+        with open(cand_cache_path, 'w') as cache_f:
+            json.dump(all_cand_cache, cache_f, indent=4)
 
     return (accum_ucorr, accum_lcorr, accum_ucomlpete, accum_lcomplete, accum_total), \
            (accum_ucorr_nopunc, accum_lcorr_nopunc, accum_ucomlpete_nopunc, accum_lcomplete_nopunc, accum_total_nopunc), \
@@ -729,7 +746,7 @@ def parse(args):
         attack(attacker, alg, data_test, network, adv_writer, adv_gold_writer, punct_set, word_alphabet, 
             pos_alphabet, device, beam, batch_size=args.batch_size, tokenizer=tokenizer, 
             multi_lan_iter=multi_lan_iter, debug=3, pretrained_alphabet=pretrained_alphabet,
-            use_pad=args.use_pad)
+            use_pad=args.use_pad, cand_cache_path=args.cand_cache_path)
         print('Time: %.2fs' % (time.time() - start_time))
         
 
@@ -797,6 +814,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--generators', type=str, default='synonym:sememe:embedding', help='generators for word substitution')
     args_parser.add_argument('--tagger', choices=['nltk', 'spacy'], default='nltk', help='POS tagger for POS checking in KNN embedding candidates')
     args_parser.add_argument('--use_pad', action='store_true', default=False, help='use PAD in input to attacker')
-    
+    args_parser.add_argument('--cand_cache_path', type=str, default=None, help='output filename for candidate cache file')
+
     args = args_parser.parse_args()
     parse(args)

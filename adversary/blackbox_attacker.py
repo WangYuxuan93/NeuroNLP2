@@ -1023,8 +1023,9 @@ class BlackBoxAttacker(object):
             if self.tagger == "nltk":
                 #cand_tag = nltk.pos_tag([cand.lower()])[0][1]
                 cand_tag = nltk.pos_tag(tmps)[idx][1]
-            else:
-                cand_tag = nlp(cand.lower())[0].tag_
+            elif self.tagger == 'spacy':
+                #cand_tag = nlp(cand.lower())[0].tag_
+                cand_tag = nlp(' '.join(tmps))[idx].tag_
             if cand_tag == tag:
                 cands.append(cand)
         return cands
@@ -1039,8 +1040,9 @@ class BlackBoxAttacker(object):
             if self.tagger == "nltk":
                 #cand_tag = nltk.pos_tag([cand.lower()])[0][1]
                 cand_tag = nltk.pos_tag(tmps)[idx][1]
-            else:
-                cand_tag = nlp(cand.lower())[0].tag_
+            elif self.tagger == 'spacy':
+                #cand_tag = nlp(cand.lower())[0].tag_
+                cand_tag = nlp(' '.join(tmps))[idx].tag_
             if cand_tag == tag:
                 cands.append(cand)
         return cands
@@ -1076,14 +1078,19 @@ class BlackBoxAttacker(object):
                 lower_set.add(c.lower())
         return cand_set, lower_set
 
-    def get_candidate_set(self, tokens, tag, idx, sent_id=None):
+    def get_candidate_set(self, tokens, tag, idx, sent_id=None, cache=False):
         token = tokens[idx]
+        if cache:
+            cache_data = {'sem_cands':[], 'syn_cands':[], 'emb_cands':[],
+                          'mlm_cands':[]}
+        else:
+            cache_data = None
         if token.lower() in self.stop_words:
-            return []
+            return [], cache_data
         if tag in self.stop_tags:
-            return []
-        if token == PAD:
-            return []
+            return [], cache_data
+        if token == PAD or token == ROOT:
+            return [], cache_data
         candidate_set = []
         lower_set = set()
         #print ("origin token: ", token)
@@ -1091,20 +1098,32 @@ class BlackBoxAttacker(object):
             sememe_cands = self.get_sememe_cands(token, tag)
             self.update_cand_set(token, candidate_set, sememe_cands, lower_set)
             #print ("sememe:", sememe_cands)
+        else:
+            sememe_cands = []
         if 'synonym' in self.generators:
             synonyms = self.get_synonyms(token, tag)
             self.update_cand_set(token, candidate_set, synonyms, lower_set)
             #print ("syn:", synonyms)
+        else:
+            synonyms = []
         if 'embedding' in self.generators:
             knn_cands = self.get_knn_cands(tokens.copy(), tag, idx)
             self.update_cand_set(token, candidate_set, knn_cands, lower_set)
             #print ("knn cands:\n", knn_cands)
+        else:
+            knn_cands = []
         if 'mlm' in self.generators:
             mlm_cands = self.get_mlm_cands(tokens.copy(), tag, idx, sent_id=sent_id)
             self.update_cand_set(token, candidate_set, mlm_cands, lower_set)
-        return candidate_set
+        else:
+            mlm_cands = []
+        if cache:
+            cache_data = {'sem_cands':sememe_cands, 'syn_cands':synonyms, 'emb_cands':knn_cands,
+                          'mlm_cands':mlm_cands}
+            
+        return candidate_set, cache_data
         
-    def attack(self, tokens, tags, heads, rel_ids, sent_id=None, debug=False):
+    def attack(self, tokens, tags, heads, rel_ids, sent_id=None, debug=False, cache=False):
         """
         Input:
             tokens: List[str], (seq_len)
@@ -1118,14 +1137,20 @@ class BlackBoxAttacker(object):
         x_len = len(tokens)
         tag_list = ['JJ', 'NN', 'RB', 'VB']
         neigbhours_list = []
+        cand_cache = []
         #stop_words = nltk.corpus.stopwords.words('english')
         for i in range(x_len):
             #print (adv_tokens[i], self._word2id(adv_tokens[i]))
-            neigbhours_list.append(self.get_candidate_set(adv_tokens, tags[i], i, sent_id=sent_id))
+            cands, cache_data = self.get_candidate_set(adv_tokens, tags[i], i, sent_id=sent_id, cache=cache)
+            neigbhours_list.append(cands)
+            if cache:
+                cache_data['id'] = i
+                cache_data['token'] = tokens[i]
+                cand_cache.append(cache_data)
         neighbours_len = [len(x) for x in neigbhours_list]
         #print (neigbhours_list)
         if np.sum(neighbours_len) == 0:
-            return None
+            return None, cand_cache
         change_edit_ratio = -1
         total_change_score = 0
         total_head_change = 0
@@ -1240,7 +1265,7 @@ class BlackBoxAttacker(object):
                         print ("perp diff: {}\nscores: {}".format(perp_diff, score))
                 break
         if adv_tokens == tokens:
-            return None
+            return None, cand_cache
         sent_str = ""
         for x,y in zip(tokens, adv_tokens):
             if x == y:
@@ -1252,4 +1277,4 @@ class BlackBoxAttacker(object):
                 total_head_change, total_rel_change, total_change_score, sent_str))
         adv_infos = (num_edit, total_score, total_change_score, total_perp_diff,
                     total_head_change, total_rel_change)
-        return adv_tokens, adv_infos
+        return (adv_tokens, adv_infos), cand_cache
