@@ -423,6 +423,7 @@ class BlackBoxAttacker(object):
             self.grammar_checker = None
 
         if self.cached_cands is None and 'mlm' in self.generators:
+            self.n_mlm_cands = n_mlm_cands
             if mlm_cand_file is not None:
                 self.mlm_cand_dict = json.load(open(mlm_cand_file, 'r'))
                 logger.info("Loading MLM candidates from: {} ({} sentences)".format(mlm_cand_file, len(self.mlm_cand_dict)))
@@ -430,8 +431,7 @@ class BlackBoxAttacker(object):
             elif cand_mlm is not None:
                 logger.info("Loading MLM generator from: {}".format(cand_mlm))
                 self.mlm_cand_model = Bert(cand_mlm, device=device, temperature=temperature, top_k=top_k, top_p=top_p)
-                self.mlm_cand_model.model.eval()
-                self.n_mlm_cands = n_mlm_cands
+                self.mlm_cand_model.model.eval() 
                 self.mlm_cand_dict = None
         else:
             self.mlm_cand_model = None
@@ -476,7 +476,7 @@ class BlackBoxAttacker(object):
         if self.cached_cands is None and 'embedding' in self.generators and self.nn is None:
             print ("Must input embedding path for embedding generator!")
             exit()
-        if self.cached_cands is None and 'mlm' in self.generators and self.mlm_cand_model is None:
+        if self.cached_cands is None and 'mlm' in self.generators and self.mlm_cand_model is None and self.mlm_cand_dict is None:
             print ("Must input bert path for mlm generator!")
             exit()
 
@@ -909,21 +909,7 @@ class BlackBoxAttacker(object):
                 print ("--------------------------")
                 print ("Idx={}({})".format(idx, tokens[idx]))
                 print ("sent_sim:", *zip(all_cands, all_s_sims))
-        # filter with language model
-        all_cands = cands.copy()
-        perp_diff = None
-        if "lm" in self.filters:
-            cands, perp_diff, all_perp_diff = self.filter_cands_with_lm(tokens, cands, idx, debug==2)
-            if len(cands) == 0:
-                if debug == 3:
-                    print ("--------------------------")
-                    print ("Idx={}({}), all perp_diff above thres, continue".format(idx, tokens[idx]))
-                    print ("ppl_diff:", *zip(all_cands, all_perp_diff))
-                return cands, None
-            else:
-                print ("--------------------------")
-                print ("Idx={}({})".format(idx, tokens[idx]))
-                print ("ppl_diff:", *zip(all_cands, all_perp_diff))
+        # filter with grammar checker
         all_cands = cands.copy()
         if "grammar" in self.filters:
             cands, all_errors, origin_errors, origin_str = self.filter_cands_with_grammar_checker(tokens, cands, idx, debug==2)
@@ -941,6 +927,22 @@ class BlackBoxAttacker(object):
                 print ("origin errors:", origin_errors)
                 print ("Idx={}({})".format(idx, tokens[idx]))
                 print ("errors:", *zip(all_cands, all_errors))
+        # filter with language model
+        all_cands = cands.copy()
+        perp_diff = None
+        if "lm" in self.filters:
+            cands, perp_diff, all_perp_diff = self.filter_cands_with_lm(tokens, cands, idx, debug==2)
+            if len(cands) == 0:
+                if debug == 3:
+                    print ("--------------------------")
+                    print ("Idx={}({}), all perp_diff above thres, continue".format(idx, tokens[idx]))
+                    print ("ppl_diff:", *zip(all_cands, all_perp_diff))
+                return cands, None
+            else:
+                print ("--------------------------")
+                print ("Idx={}({})".format(idx, tokens[idx]))
+                print ("ppl_diff:", *zip(all_cands, all_perp_diff))
+
         return cands, perp_diff
 
     def cos_sim(self, e1, e2):
@@ -1055,11 +1057,14 @@ class BlackBoxAttacker(object):
     def _get_mlm_cands(self, tokens, idx, n=50, sent_id=None):
         # load directly from preprocessed file
         if self.mlm_cand_dict is not None:
-            sent_mlm_cands = self.mlm_cand_dict[sent_id]
+            if self.symbolic_root and idx == 0: return []
+            sent_mlm_cands = self.mlm_cand_dict[str(sent_id)]
             #if self.symbolic_root:
             #    sent_mlm_cands = [{"orig":ROOT, "cands":[]}] + sent_mlm_cands
             assert len(sent_mlm_cands) == (len(tokens) - self.symbolic_root)
             mlm_cands = sent_mlm_cands[idx-self.symbolic_root]
+            #print (idx, tokens[idx])
+            #print (mlm_cands)
             assert mlm_cands["orig"] == tokens[idx]
             return mlm_cands["cands"]
         elif self.mlm_cand_model is not None:
