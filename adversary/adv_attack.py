@@ -632,7 +632,7 @@ def parse(args):
     if args.mode == 'black':
         attacker = BlackBoxAttacker(network, candidates, vocab, synonyms, filters=filters, generators=generators,
                         max_mod_percent=args.max_mod_percent, tagger=args.tagger, use_pad=args.use_pad, 
-                        cached_path=args.cached_path, knn_path=args.knn_path, 
+                        cached_path=args.cached_path, train_vocab=args.train_vocab, knn_path=args.knn_path, 
                         max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
                         min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim, 
                         cand_mlm=args.cand_mlm, dynamic_mlm_cand=args.dynamic_mlm_cand, temperature=args.temp, 
@@ -641,11 +641,11 @@ def parse(args):
                         adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, fluency_ratio=args.adv_fluency_ratio,
                         ppl_inc_thres=args.ppl_inc_thres,
                         alphabets=alphabets, tokenizer=tokenizer, device=device, lm_device=lm_device,
-                        batch_size=args.adv_batch_size, random_sub_if_no_change=args.random_sub_if_no_change)
+                        batch_size=args.adv_batch_size, random_backoff=args.random_backoff, wordpiece_backoff=args.wordpiece_backoff)
     elif args.mode == 'random':
         attacker = RandomAttacker(network, candidates, vocab, synonyms, filters=filters, generators=generators,
                         max_mod_percent=args.max_mod_percent, tagger=args.tagger, use_pad=args.use_pad, 
-                        cached_path=args.cached_path, knn_path=args.knn_path, 
+                        cached_path=args.cached_path, train_vocab=args.train_vocab, knn_path=args.knn_path, 
                         max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
                         min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim,
                         cand_mlm=args.cand_mlm, dynamic_mlm_cand=args.dynamic_mlm_cand, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, 
@@ -654,7 +654,7 @@ def parse(args):
                         fluency_ratio=args.adv_fluency_ratio,
                         ppl_inc_thres=args.ppl_inc_thres,
                         alphabets=alphabets, tokenizer=tokenizer, device=device, lm_device=lm_device,
-                        batch_size=args.adv_batch_size, random_sub_if_no_change=args.random_sub_if_no_change)
+                        batch_size=args.adv_batch_size, random_backoff=args.random_backoff, wordpiece_backoff=args.wordpiece_backoff)
 
     #tokens = ["_ROOT", "The", "Dow", "fell", "22.6", "%", "on", "black", "Monday"]#, "."]
     #tags = ["_ROOT_POS", "DT", "NNP", "VBD", "CD", ".", "IN", "NNP", "NNP"]#, "."]
@@ -785,12 +785,14 @@ if __name__ == '__main__':
     args_parser.add_argument('--ppl_inc_thres', type=float, default=20.0, help='Perplexity difference threshold in adversarial attack')
     args_parser.add_argument('--max_mod_percent', type=float, default=0.05, help='Maximum modification percentage of words')
     args_parser.add_argument('--adv_batch_size', type=int, default=16, help='Number of sentences in adv lm each batch')
-    args_parser.add_argument('--random_sub_if_no_change', action='store_true', default=False, help='randomly substitute if no change')
+    args_parser.add_argument('--random_backoff', action='store_true', default=False, help='randomly substitute if no change')
+    args_parser.add_argument('--wordpiece_backoff', action='store_true', default=False, help='choose longest wordpiece substitute if no change')
     args_parser.add_argument('--knn_path', type=str, help='knn embedding path for adversarial attack')
     args_parser.add_argument('--max_knn_candidates', type=int, default=50, help='max knn candidate number')
     args_parser.add_argument('--min_word_cos_sim', type=float, default=0.9, help='Min word cos similarity')
     args_parser.add_argument('--min_sent_cos_sim', type=float, default=0.9, help='Min sent cos similarity')
     args_parser.add_argument('--sent_encoder_path', type=str, help='universal sentence encoder path for sent cos sim')
+    args_parser.add_argument('--train_vocab', type=str, help='Training set vocab file (json) for train filter')
     args_parser.add_argument('--filters', type=str, default='word_sim:sent_sim:lm', help='filters for word substitution')
     args_parser.add_argument('--generators', type=str, default='synonym:sememe:embedding', help='generators for word substitution')
     args_parser.add_argument('--tagger', choices=['nltk', 'spacy'], default='nltk', help='POS tagger for POS checking in KNN embedding candidates')

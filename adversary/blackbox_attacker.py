@@ -366,9 +366,9 @@ def recover_word_case(word, reference_word):
         return word
 
 class BlackBoxAttacker(object):
-    def __init__(self, model, candidates, vocab, synonyms, filters=['word_sim', 'sent_sim', 'lm'],
+    def __init__(self, model, candidates, vocab, synonyms, filters=['word_sim', 'sent_sim', 'lm', 'train'],
                 generators=['synonym', 'sememe', 'embedding'], max_mod_percent=0.05, 
-                tagger="nltk", use_pad=False, cached_path=None,
+                tagger="nltk", use_pad=False, cached_path=None, train_vocab=None,
                 knn_path=None, max_knn_candidates=50, sent_encoder_path=None,
                 min_word_cos_sim=0.8, min_sent_cos_sim=0.8, 
                 cand_mlm=None, dynamic_mlm_cand=False, temperature=1.0, top_k=100, top_p=None, 
@@ -376,7 +376,7 @@ class BlackBoxAttacker(object):
                 adv_lms=None, rel_ratio=0.5, fluency_ratio=0.2,
                 ppl_inc_thres=20 ,alphabets=None, tokenizer=None, 
                 device=None, lm_device=None, symbolic_root=True, symbolic_end=False, mask_out_root=False, 
-                batch_size=32, random_sub_if_no_change=False):
+                batch_size=32, random_backoff=False, wordpiece_backoff=False):
         super(BlackBoxAttacker, self).__init__()
         logger = get_logger("Attacker")
         logger.info("##### Attacker Type: {} #####".format(self.__class__.__name__))
@@ -402,6 +402,10 @@ class BlackBoxAttacker(object):
         else:
             self.cached_cands = None
         self.id2word = {i:w for (w,i) in vocab.items()}
+        if 'train' in self.filters and train_vocab is not None:
+            self.train_vocab = json.load(open(train_vocab, 'r'))
+        else:
+            self.train_vocab = None
         if ('word_sim' in self.filters or (self.cached_cands is None and 'embedding' in self.generators)) and knn_path is not None:
             logger.info("Loading knn from: {}".format(knn_path))
             self.load_knn_path(knn_path)
@@ -456,16 +460,23 @@ class BlackBoxAttacker(object):
         #self.stop_words = nltk.corpus.stopwords.words('english')
         self.stop_words = stopwords
         self.stop_tags = ['PRP','PRP$','DT','CC','CD','UH','WDT','WP','WP$','-LRB-','-RRB-','.','``',"\'\'",':',',','?',';']
-        self.random_sub_if_no_change = random_sub_if_no_change
+        self.random_backoff = random_backoff
+        self.wordpiece_backoff = wordpiece_backoff
+        if self.wordpiece_backoff and self.tokenizer is None:
+            print ("Wordpiece backoff requires encoder with tokenizer!")
+            exit()
         
         logger.info("Relation ratio:{}, Fluency ratio:{}".format(rel_ratio, fluency_ratio))
         #logger.info("Max ppl difference per token:{}, ppl diff threshold:{}".format(max_perp_diff_per_token, ppl_inc_thres))
         logger.info("Max ppl inc threshold:{}".format(ppl_inc_thres))
-        logger.info("Randomly substitute if no change:{}".format(self.random_sub_if_no_change))
+        logger.info("Randomly substitute if no change:{}".format(self.random_backoff))
         self.max_knn_candidates = max_knn_candidates
         self.min_word_cos_sim = min_word_cos_sim
         self.min_sent_cos_sim = min_sent_cos_sim
         
+        if 'train' in self.filters and self.train_vocab is None:
+            print ("Must input train vocab path for train filter!")
+            exit()
         if 'word_sim' in self.filters and self.nn is None:
             print ("Must input embedding path for word cos sim filter!")
             exit()
@@ -880,6 +891,14 @@ class BlackBoxAttacker(object):
             all_errors.append(error)
         return new_cands, all_errors, origin_errors, batch_sents[0]
 
+    # only allow cands that have appeared in training set
+    def filter_cands_with_train_vocab(self, cands, debug=False):
+        new_cands = []
+        for c in cands:
+            if c in self.train_vocab or c.lower() in self.train_vocab:
+                new_cands.append(c)
+        return new_cands
+
     def filter_cands(self, tokens, cands, idx, debug=False):
         new_cands = []
         #print ("raw cands:", cands)
@@ -889,6 +908,17 @@ class BlackBoxAttacker(object):
                 new_cands.append(cand)
         cands = new_cands
         #print ("cands:", cands)
+        if "train" in self.filters:
+            cands = self.filter_cands_with_train_vocab(cands)
+            if len(cands) == 0:
+                if debug == 3:
+                    print ("--------------------------")
+                    print ("Idx={}({}), no cand from train, continue".format(idx, tokens[idx]))
+                return cands, None
+            else:
+                print ("--------------------------")
+                print ("Idx={}({})".format(idx, tokens[idx]))
+                print ("cands from train:", cands)
         all_cands = cands.copy()
         if "word_sim" in self.filters:
             cands, w_sims, all_w_sims = self.filter_cands_with_word_sim(tokens[idx], cands)
@@ -1250,22 +1280,43 @@ class BlackBoxAttacker(object):
             change_rank = (-change_score).argsort()
             # this means the biggest change is 0
             if change_score[change_rank[0]] <= 0:
-                if not self.random_sub_if_no_change or change_score[change_rank[0]] < 0:
+                if change_score[change_rank[0]] < 0 or (not self.random_backoff and not self.wordpiece_backoff):
                     if debug == 3:
                         print ("--------------------------")
                         print ("Idx={}({}), no cand can make change, continue".format(idx, tokens[idx]))
                         print ("change_scores:", *zip(cands, change_score))
                 else:
-                    #if ("lm" in self.filters and total_perp_diff>max_perp_diff):
                     if num_edit >= max_mod_token:
                         continue
-                    else:
-                        num_nochange_sub = 0
-                        for i in range(len(change_rank)):
-                            if change_score[change_rank[i]] == 0:
-                                num_nochange_sub += 1
-                            else:
-                                break
+                    num_nochange_sub = 0
+                    for i in range(len(change_rank)):
+                        if change_score[change_rank[i]] == 0:
+                            num_nochange_sub += 1
+                        else:
+                            break
+                    if self.wordpiece_backoff:
+                        nochange_cand_ids = change_rank[:num_nochange_sub]
+                        max_wp_len = 0
+                        chosen_idx = -1
+                        nochange_cands = []
+                        nochange_wp_lens = []
+                        for j in nochange_cand_ids:
+                            wp_len = len(self.tokenizer.tokenize(cands[j]))
+                            nochange_cands.append(cands[j])
+                            nochange_wp_lens.append(wp_len)
+                            if wp_len > max_wp_len:
+                                max_wp_len = wp_len
+                                chosen_idx = j
+                        adv_tokens[idx] = cands[chosen_idx]
+                        num_edit += 1
+                        if "lm" in self.filters:
+                            total_perp_diff += blocked_perp_diff[chosen_idx]
+                        if debug == 3:
+                            print ("--------------------------")
+                            print ("Idx={}({}), wp backoff chose:{} since no cand makes change".format(idx, tokens[idx], cands[chosen_idx]))
+                            print ("wordpiece lens:", *zip(nochange_cands, nochange_wp_lens))
+
+                    elif self.random_backoff:
                         # only choose the subs that will not reduce the error
                         chosen_rank_idx = random.randint(0, num_nochange_sub-1)
                         chosen_idx = change_rank[chosen_rank_idx]
@@ -1275,9 +1326,9 @@ class BlackBoxAttacker(object):
                             total_perp_diff += blocked_perp_diff[chosen_idx]
                         if debug == 3:
                             print ("--------------------------")
-                            print ("Idx={}({}), randomly chose:{} since no cand makes change\ncands:{}\nchange_scores:{}".format(idx, tokens[idx], cands[chosen_idx], cands, change_score))
+                            print ("Idx={}({}), random backoff chose:{} since no cand makes change\ncands:{}\nchange_scores:{}".format(idx, tokens[idx], cands[chosen_idx], cands, change_score))
                             if "lm" in self.filters:
-                                print ("perp diff: {}".format(perp_diff))  
+                                print ("perp diff: {}".format(perp_diff))
                 continue
             if "lm" in self.filters:
                 # penalize the score for disfluency substitution
@@ -1288,7 +1339,8 @@ class BlackBoxAttacker(object):
             best_cand_idx = self.get_best_cand(score, change_score)
             if best_cand_idx is None:
                 print ("--------------------------")
-                print ("Idx={}({}), can't find best cand, continue\ncands:{}\nchange_scores:{}".format(idx, tokens[idx], cands, change_score))
+                print ("Idx={}({}), can't find best cand, continue".format(idx, tokens[idx]))
+                print ("change_scores:", *zip(cands, change_score))
                 if "lm" in self.filters:
                         print ("perp diff: {}\nscores: {}".format(perp_diff, score))
                 continue
