@@ -371,7 +371,8 @@ class BlackBoxAttacker(object):
                 tagger="nltk", use_pad=False, cached_path=None,
                 knn_path=None, max_knn_candidates=50, sent_encoder_path=None,
                 min_word_cos_sim=0.8, min_sent_cos_sim=0.8, 
-                cand_mlm=None, temperature=1.0, top_k=100, top_p=None, n_mlm_cands=50, mlm_cand_file=None,
+                cand_mlm=None, dynamic_mlm_cand=False, temperature=1.0, top_k=100, top_p=None, 
+                n_mlm_cands=50, mlm_cand_file=None,
                 adv_lms=None, rel_ratio=0.5, fluency_ratio=0.2,
                 ppl_inc_thres=20 ,alphabets=None, tokenizer=None, 
                 device=None, lm_device=None, symbolic_root=True, symbolic_end=False, mask_out_root=False, 
@@ -389,6 +390,7 @@ class BlackBoxAttacker(object):
         self.use_pad = use_pad
         self.max_mod_percent = max_mod_percent
         self.cached_path = cached_path
+        self.dynamic_mlm_cand = dynamic_mlm_cand
         logger.info("Filters: {}".format(filters))
         logger.info("Generators: {}".format(generators))
         logger.info("Max modification percentage: {}".format(max_mod_percent))
@@ -424,7 +426,7 @@ class BlackBoxAttacker(object):
 
         if self.cached_cands is None and 'mlm' in self.generators:
             self.n_mlm_cands = n_mlm_cands
-            if mlm_cand_file is not None:
+            if mlm_cand_file is not None and not self.dynamic_mlm_cand:
                 self.mlm_cand_dict = json.load(open(mlm_cand_file, 'r'))
                 logger.info("Loading MLM candidates from: {} ({} sentences)".format(mlm_cand_file, len(self.mlm_cand_dict)))
                 self.mlm_cand_model = None
@@ -477,8 +479,12 @@ class BlackBoxAttacker(object):
             print ("Must input embedding path for embedding generator!")
             exit()
         if self.cached_cands is None and 'mlm' in self.generators and self.mlm_cand_model is None and self.mlm_cand_dict is None:
-            print ("Must input bert path for mlm generator!")
+            print ("Must input bert path or cached mlm cands for mlm generator!")
             exit()
+        if 'mlm' in self.generators and self.dynamic_mlm_cand and self.mlm_cand_model is None:
+            print ("Using dynamic mlm candidates, Must input bert path for mlm generator!")
+            exit()
+
 
     def load_knn_path(self, path):
         word_embeddings_file = "paragram.npy"
@@ -1056,7 +1062,7 @@ class BlackBoxAttacker(object):
 
     def _get_mlm_cands(self, tokens, idx, n=50, sent_id=None):
         # load directly from preprocessed file
-        if self.mlm_cand_dict is not None:
+        if not self.dynamic_mlm_cand and self.mlm_cand_dict is not None:
             if self.symbolic_root and idx == 0: return []
             sent_mlm_cands = self.mlm_cand_dict[str(sent_id)]
             #if self.symbolic_root:
@@ -1102,7 +1108,12 @@ class BlackBoxAttacker(object):
         assert cands['token'] == tokens[idx]
         for name in name_map:
             if name in self.generators:
-                self.update_cand_set(token, candidate_set, cands[name_map[name]], lower_set)
+                # generate mlm cands dynamically
+                if name == 'mlm' and self.dynamic_mlm_cand:
+                    mlm_cands = self.get_mlm_cands(tokens.copy(), tag, idx, sent_id=sent_id)
+                    self.update_cand_set(token, candidate_set, mlm_cands, lower_set)
+                else:
+                    self.update_cand_set(token, candidate_set, cands[name_map[name]], lower_set)
         return candidate_set
 
     def _get_candidate_set(self, tokens, tag, idx, sent_id=None, cache=False):
@@ -1174,6 +1185,7 @@ class BlackBoxAttacker(object):
         neigbhours_list = []
         cand_cache = []
         #stop_words = nltk.corpus.stopwords.words('english')
+        """
         for i in range(x_len):
             #print (adv_tokens[i], self._word2id(adv_tokens[i]))
             cands, cache_data = self.get_candidate_set(adv_tokens, tags[i], i, sent_id=sent_id, cache=cache)
@@ -1186,6 +1198,8 @@ class BlackBoxAttacker(object):
         #print (neigbhours_list)
         if np.sum(neighbours_len) == 0:
             return None, cand_cache
+        """
+
         change_edit_ratio = -1
         total_change_score = 0
         total_head_change = 0
@@ -1197,19 +1211,30 @@ class BlackBoxAttacker(object):
         # at least allow one modification
         max_mod_token = max(1, int(x_len * self.max_mod_percent))
 
+        cand_cache = []
+        if cache and self.cached_path is None:
+            cand_cache = [[] for _ in range(len(tokens))]
+
         if debug == 3:
             #print ("tokens:\n", adv_tokens)
             print ("importance rank:\n", word_rank)
 
         for idx in word_rank:
-            if neighbours_len[idx] == 0:
+            idx = int(idx)
+            cands, cache_data = self.get_candidate_set(adv_tokens, tags[idx], idx, sent_id=sent_id, cache=cache)
+            if cache and self.cached_path is None:
+                cache_data['id'] = idx
+                cache_data['token'] = tokens[idx]
+                cand_cache[idx] = cache_data
+
+            if len(cands) == 0:
                 if debug == 3:
                     print ("--------------------------")
                     print ("Idx={}({}), no cands, continue".format(idx, tokens[idx]))
                 continue
             # skip the edit for ROOT
             if self.symbolic_root and idx == 0: continue
-            cands = neigbhours_list[idx]
+            #cands = neigbhours_list[idx]
 
             cands, perp_diff = self.filter_cands(adv_tokens.copy(), cands, idx, debug=debug)
             if len(cands) == 0:

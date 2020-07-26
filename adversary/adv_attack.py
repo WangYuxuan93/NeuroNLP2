@@ -635,7 +635,8 @@ def parse(args):
                         cached_path=args.cached_path, knn_path=args.knn_path, 
                         max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
                         min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim, 
-                        cand_mlm=args.cand_mlm, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, 
+                        cand_mlm=args.cand_mlm, dynamic_mlm_cand=args.dynamic_mlm_cand, temperature=args.temp, 
+                        top_k=args.top_k, top_p=args.top_p, 
                         n_mlm_cands=args.n_mlm_cands, mlm_cand_file=args.mlm_cand_file,
                         adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, fluency_ratio=args.adv_fluency_ratio,
                         ppl_inc_thres=args.ppl_inc_thres,
@@ -647,39 +648,14 @@ def parse(args):
                         cached_path=args.cached_path, knn_path=args.knn_path, 
                         max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
                         min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim,
-                        cand_mlm=args.cand_mlm, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, 
+                        cand_mlm=args.cand_mlm, dynamic_mlm_cand=args.dynamic_mlm_cand, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, 
                         n_mlm_cands=args.n_mlm_cands, mlm_cand_file=args.mlm_cand_file,
                         adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, 
                         fluency_ratio=args.adv_fluency_ratio,
                         ppl_inc_thres=args.ppl_inc_thres,
                         alphabets=alphabets, tokenizer=tokenizer, device=device, lm_device=lm_device,
                         batch_size=args.adv_batch_size, random_sub_if_no_change=args.random_sub_if_no_change)
-    elif args.mode == 'gray':
-        attacker = GrayBoxAttacker(network, candidates, vocab, synonyms, filters=filters, generators=generators,
-                        max_mod_percent=args.max_mod_percent, tagger=args.tagger, use_pad=args.use_pad, 
-                        cached_path=args.cached_path, knn_path=args.knn_path, 
-                        max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
-                        min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim, 
-                        cand_mlm=args.cand_mlm, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, 
-                        n_mlm_cands=args.n_mlm_cands, mlm_cand_file=args.mlm_cand_file,
-                        adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, 
-                        fluency_ratio=args.adv_fluency_ratio, 
-                        ppl_inc_thres=args.ppl_inc_thres,
-                        alphabets=alphabets, tokenizer=tokenizer, device=device, lm_device=lm_device,
-                        batch_size=args.adv_batch_size, random_sub_if_no_change=args.random_sub_if_no_change)
-    elif args.mode == 'gray_single':
-        attacker = GrayBoxSingleAttacker(network, candidates, vocab, synonyms, filters=filters, generators=generators,
-                        max_mod_percent=args.max_mod_percent, tagger=args.tagger, use_pad=args.use_pad, 
-                        cached_path=args.cached_path, knn_path=args.knn_path, 
-                        max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
-                        min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim, 
-                        cand_mlm=args.cand_mlm, temperature=args.temp, top_k=args.top_k, top_p=args.top_p, 
-                        n_mlm_cands=args.n_mlm_cands, mlm_cand_file=args.mlm_cand_file,
-                        adv_lms=adv_lms, rel_ratio=args.adv_rel_ratio, 
-                        fluency_ratio=args.adv_fluency_ratio, 
-                        ppl_inc_thres=args.ppl_inc_thres,
-                        alphabets=alphabets, tokenizer=tokenizer, device=device, lm_device=lm_device,
-                        batch_size=args.adv_batch_size, random_sub_if_no_change=args.random_sub_if_no_change)
+
     #tokens = ["_ROOT", "The", "Dow", "fell", "22.6", "%", "on", "black", "Monday"]#, "."]
     #tags = ["_ROOT_POS", "DT", "NNP", "VBD", "CD", ".", "IN", "NNP", "NNP"]#, "."]
     #heads = [0, 2, 3, 0, 5, 3, 3, 8, 6]#, 3]
@@ -795,6 +771,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--adv_lm_path', help='path for pretrained language model (gpt2) for adv filtering')
     args_parser.add_argument('--cand_mlm', help='path for mlm candidate generating')
     args_parser.add_argument('--mlm_cand_file', help='path for mlm candidate preprocessed json file')
+    args_parser.add_argument('--dynamic_mlm_cand', action='store_true', default=False, help='Whether generate MLM candidates dynamically')
     args_parser.add_argument('--temp', type=float, default=1.0, help='Temperature for mlm candidate generating')
     args_parser.add_argument('--n_mlm_cands', type=int, default=50, help='Select candidate number for mlm candidate generating')
     args_parser.add_argument('--top_k', type=int, default=100, help='Top candidate number for filtering mlm candidate generating')
