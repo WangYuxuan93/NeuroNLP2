@@ -149,6 +149,8 @@ parser.add_argument("--log_every", type=int, default=1000, help="print log every
 args = parser.parse_args()
 
 embed, dim, word2id = load_embedding_dict(args.embedding)
+print ("Vocab size = ", len(embed))
+
 id2word = OrderedDict()
 for word, id in word2id.items():
 	id2word[id] = word

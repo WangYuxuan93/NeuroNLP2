@@ -403,6 +403,7 @@ class BlackBoxAttacker(object):
             self.cached_cands = None
         self.id2word = {i:w for (w,i) in vocab.items()}
         if 'train' in self.filters and train_vocab is not None:
+            logger.info("Loading train vocab for filter from: %s" % train_vocab)
             self.train_vocab = json.load(open(train_vocab, 'r'))
         else:
             self.train_vocab = None
@@ -428,7 +429,7 @@ class BlackBoxAttacker(object):
         else:
             self.grammar_checker = None
 
-        if self.cached_cands is None and 'mlm' in self.generators:
+        if 'mlm' in self.generators and (self.dynamic_mlm_cand or self.cached_cands is None):
             self.n_mlm_cands = n_mlm_cands
             if mlm_cand_file is not None and not self.dynamic_mlm_cand:
                 self.mlm_cand_dict = json.load(open(mlm_cand_file, 'r'))
@@ -436,6 +437,7 @@ class BlackBoxAttacker(object):
                 self.mlm_cand_model = None
             elif cand_mlm is not None:
                 logger.info("Loading MLM generator from: {}".format(cand_mlm))
+                logger.info("Generate MLM dynamically: {}".format(self.dynamic_mlm_cand))
                 self.mlm_cand_model = Bert(cand_mlm, device=device, temperature=temperature, top_k=top_k, top_p=top_p)
                 self.mlm_cand_model.model.eval() 
                 self.mlm_cand_dict = None
@@ -469,7 +471,7 @@ class BlackBoxAttacker(object):
         logger.info("Relation ratio:{}, Fluency ratio:{}".format(rel_ratio, fluency_ratio))
         #logger.info("Max ppl difference per token:{}, ppl diff threshold:{}".format(max_perp_diff_per_token, ppl_inc_thres))
         logger.info("Max ppl inc threshold:{}".format(ppl_inc_thres))
-        logger.info("Randomly substitute if no change:{}".format(self.random_backoff))
+        logger.info("Random backoff:{}, Wordpice backoff:{}".format(self.random_backoff, self.wordpiece_backoff))
         self.max_knn_candidates = max_knn_candidates
         self.min_word_cos_sim = min_word_cos_sim
         self.min_sent_cos_sim = min_sent_cos_sim
