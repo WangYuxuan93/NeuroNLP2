@@ -49,8 +49,9 @@ def load_embedding_dict(path, skip_first=True, normalize_digits=False):
 	return embedding, embedd_dim, word2id
 
 class NN(object):
-	def __init__(self, embed, k=101, pre_compute=True, n_thread=4):
+	def __init__(self, embed, k=101, pre_compute=True, n_thread=4, log_every=1000):
 		self.n_thread = n_thread
+		self.log_every = log_every
 		self.embed = embed
 		self.num = len(self.embed)
 		if k > len(embed):
@@ -91,7 +92,7 @@ class NN(object):
 			#self.cos_sim_mat[a][b] = cos_sim
 		return cos_sim
 
-	def compute_nn_single(self, id):
+	def compute_nn_single(self, id, lock):
 		top_nn = []
 		top_sim = []
 		#print ("runing ", id)
@@ -111,6 +112,11 @@ class NN(object):
 		order = (-sims).argsort()
 		nn_single = np.array(top_nn)[order]
 		#print (id, nn_single)
+		lock.acquire()
+		if id % self.log_every == 0:
+			print (id,"... ", end="")
+			sys.stdout.flush()
+		lock.release()
 
 		return id, nn_single, sims, top_nn
 
@@ -123,15 +129,22 @@ class NN(object):
 			a, b = min(i,j), max(i,j)
 			self.cos_sim_mat[a][b] = sim
 
-	def compute_nn(self, log_every=1000):
+	def log(self, i):
+		if i % self.log_every == 0:
+			print (i,"...", end="")
+			sys.stdout.flush()
+
+	def compute_nn(self):
 		pool = multiprocessing.Pool(processes=self.n_thread)
 		self.nn_list = []
+		manager = multiprocessing.Manager()
+		lock = manager.Lock()
 		results = []
 		for i in range(self.num):
-			if i % log_every == 0:
-				print (i,"...", end="")
-				sys.stdout.flush()
-			res = pool.apply_async(self.compute_nn_single, args=(i,))
+			#if i % log_every == 0:
+			#	print (i,"...", end="")
+			#	sys.stdout.flush()
+			res = pool.apply_async(self.compute_nn_single, args=(i,lock,))
 			results.append(res)
 			"""
 			nn_single, sims, top_nn = self.compute_nn_single(i)
@@ -202,8 +215,8 @@ np.save(emb_path, embed)
 #print (embed)
 
 if args.nn:
-	nn_computer = NN(embed, k=args.k, pre_compute=args.pre, n_thread=args.n_thread)
-	nn = nn_computer.compute_nn(log_every=args.log_every)
+	nn_computer = NN(embed, k=args.k, pre_compute=args.pre, n_thread=args.n_thread, log_every=args.log_every)
+	nn = nn_computer.compute_nn()
 	nn_path = os.path.join(args.out_dir, 'nn')
 	np.save(nn_path, nn)
 	#print (nn)
