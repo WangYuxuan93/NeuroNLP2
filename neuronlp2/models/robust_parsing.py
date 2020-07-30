@@ -142,7 +142,8 @@ class RobustParser(nn.Module):
                 config = AutoConfig.from_pretrained(lm_path, output_hidden_states=True)
                 self.lm_encoder = AutoModelForTokenClassification.from_pretrained(lm_path, config=config) 
             else:
-                self.lm_encoder = AutoModel.from_pretrained(lm_path)
+                config = AutoConfig.from_pretrained(lm_path, output_hidden_states=True)
+                self.lm_encoder = AutoModel.from_pretrained(lm_path, config=config)
             
             logger.info("Pretrained Language Model Type: %s" % (self.lm_encoder.config.model_type))
             logger.info("Pretrained Language Model Path: %s" % (lm_path))
@@ -447,14 +448,14 @@ class RobustParser(nn.Module):
                 if self.mask_random_input:
                     input_ids = self._mask_random_input(input_ids)
                 # (batch, max_bpe_len, hidden_size)
-                lm_output, all_hidden_states = self.lm_encoder(input_ids)
+                lm_output, _, all_hidden_states = self.lm_encoder(input_ids)
             size = list(first_index.size()) + [lm_output.size()[-1]]
             # (batch, seq_len, hidden_size)
             output = lm_output.gather(1, first_index.unsqueeze(-1).expand(size))
             if debug:
                 print (lm_output.size())
                 print (output.size())
-            print (all_hidden_states.size())
+                print ('all:', len(all_hidden_states), all_hidden_states[0].size())
         return output
 
     def _embed(self, input_word, input_pretrained, input_char, input_pos, bpes=None, 
