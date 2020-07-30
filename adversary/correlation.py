@@ -19,6 +19,7 @@ import math
 import numpy as np
 import torch
 import random
+from scipy.stats import pearsonr
 #from torch.optim.adamw import AdamW
 from torch.optim import SGD, Adam, AdamW
 from torch.nn.utils import clip_grad_norm_
@@ -106,6 +107,28 @@ def convert_tokens_to_ids(tokenizer, tokens):
 
     return input_ids, first_indices
 
+def diff_idx(orig_src, adv_src):
+    idxs = []
+    for i, (o_src, a_src) in enumerate(zip(orig_src, adv_src)):
+        if o_src != a_src:
+            idxs.append(i)
+    return idxs
+
+def similarity(orig_all_hiddens, adv_all_hiddens, orig_srcs, adv_srcs):
+    cos_sims = []
+    for i in range(len(orig_srcs)):
+        idxs = diff_idx(orig_srcs[i], adv_srcs[i])
+        sims = []
+        if len(idxs) == 0:
+            cos_sims.append(None)
+            continue
+        for idx in idxs:
+            e1 = orig_all_hiddens[idx]
+            e2 = adv_all_hiddens[idx]
+            cos_sim = torch.nn.CosineSimilarity(dim=0)(e1, e2).numpy()
+            sims.append(cos_sim)
+        cos_sims.append(sims.mean())
+    return cos_sims
 
 def correlate(alg, orig_data, adv_data, network, punct_set, word_alphabet, pos_alphabet, 
         device, beam=1, batch_size=256, write_to_tmp=True, prev_best_lcorr=0, prev_best_ucorr=0,
@@ -155,6 +178,10 @@ def correlate(alg, orig_data, adv_data, network, punct_set, word_alphabet, pos_a
     else:
         iterate = iterate_data
         lan_id = None
+
+    uas_drops = []
+    las_drops = []
+    all_sims = []
 
     for o_data, a_data in zip(iterate(orig_data, batch_size), iterate(adv_data, batch_size)):
         if multi_lan_iter:
@@ -212,10 +239,11 @@ def correlate(alg, orig_data, adv_data, network, punct_set, word_alphabet, pos_a
         assert len(lengths) == len(adv_lengths)
 
         if alg == 'graph':
-            orig_heads_pred, orig_rels_pred = network.decode(orig_words, orig_pres, orig_chars, orig_postags, mask=orig_masks, 
+            orig_heads_pred, orig_rels_pred, orig_all_hiddens = network.decode(orig_words, orig_pres, orig_chars, orig_postags, mask=orig_masks, 
                 bpes=orig_bpes, first_idx=orig_first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
-            adv_heads_pred, adv_rels_pred = network.decode(adv_words, adv_pres, adv_chars, adv_postags, mask=adv_masks, 
+            adv_heads_pred, adv_rels_pred, adv_all_hiddens = network.decode(adv_words, adv_pres, adv_chars, adv_postags, mask=adv_masks, 
                 bpes=adv_bpes, first_idx=adv_first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
+            cos_sims = similarity(orig_all_hiddens, adv_all_hiddens, orig_srcs, adv_srcs)
         else:
             orig_heads_pred, orig_rels_pred = network.decode(orig_words, orig_pres, orig_chars, orig_postags, mask=orig_masks, 
                 bpes=orig_bpes, first_idx=orig_first_idx, lan_id=lan_id, beam=beam, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
@@ -225,6 +253,7 @@ def correlate(alg, orig_data, adv_data, network, punct_set, word_alphabet, pos_a
         for i in range(len(lengths)):
             accum_total_sent += 1
             assert lengths[i] == adv_lengths[i]
+            if cos_sims[i] is None: continue
             gold_head = heads[i:i+1]
             gold_rel = rels[i:i+1]
             length = lengths[i:i+1]
@@ -253,11 +282,30 @@ def correlate(alg, orig_data, adv_data, network, punct_set, word_alphabet, pos_a
                                     symbolic_root=True)
             adv_ucorr, adv_lcorr, adv_total, adv_ucm, adv_lcm = stats
             adv_ucorr_nopunc, adv_lcorr_nopunc, adv_total_nopunc, adv_ucm_nopunc, adv_lcm_nopunc = stats_nopunc
+            
+            if debug:
+                print ("orig sent:{}\nadv sent:{}".format(' '.join(orig_srcs[i]), ' '.join(adv_srcs[i])))
+            #print ("orig uas:{}, las:{}, adv uas:{}, las:{}".format(orig_ucorr/orig_total, orig_lcorr/orig_total, adv_ucorr/adv_total, adv_lcorr/adv_total))
+            orig_uas = orig_ucorr_nopunc/orig_total_nopunc
+            orig_las = orig_lcorr_nopunc/orig_total_nopunc
+            adv_uas = adv_ucorr_nopunc/adv_total_nopunc
+            adv_las = adv_lcorr_nopunc/adv_total_nopunc
+            uas_drop = orig_uas - adv_uas
+            las_drop = orig_las - adv_las
 
-            print ("orig sent:{}\nadv sent:{}".format(' '.join(orig_srcs[i]), ' '.join(adv_srcs[i])))
-            print ("orig uas:{}, las:{}, adv uas:{}, las:{}".format(orig_ucorr/orig_total, orig_lcorr/orig_total, adv_ucorr/adv_total, adv_lcorr/adv_total))
+            if debug:
+                print ("orig uas:{}, las:{}, adv uas:{}, las:{}, cos_sim:{}".format(orig_uas, orig_las, adv_uas, adv_las, cos_sims[i]))
+            uas_drops.append(uas_drop)
+            las_drops.append(las_drop)
+            all_sims.append(cos_sims[i])
 
-        return 0
+    uas_drop_vec = np.array(uas_drops)
+    las_drop_vec = np.array(las_drops)
+    cos_sim_vec = np.array(all_sims)
+    uas_r, uas_p = pearsonr(cos_sim_vec, uas_drop_vec)
+    las_r, lar_p = pearsonr(cos_sim_vec, las_drop_vec)
+
+    return 0
 
         if write_to_tmp:
             pred_writer.write(words, postags, heads_pred, rels_pred, lengths, symbolic_root=True, src_words=data['SRC'] ,adv_words=adv_src)
@@ -493,7 +541,7 @@ def parse(args):
         # debug = 1: show orig/adv tokens / debug = 2: show log inside attacker
         correlate(alg, orig_data, adv_data, network, punct_set, word_alphabet, 
             pos_alphabet, device, beam, batch_size=args.batch_size, tokenizer=tokenizer, 
-            multi_lan_iter=multi_lan_iter, debug=3, pretrained_alphabet=pretrained_alphabet)
+            multi_lan_iter=multi_lan_iter, debug=1, pretrained_alphabet=pretrained_alphabet)
         print('Time: %.2fs' % (time.time() - start_time))
 
 if __name__ == '__main__':

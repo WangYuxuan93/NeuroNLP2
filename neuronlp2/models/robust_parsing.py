@@ -418,7 +418,7 @@ class RobustParser(nn.Module):
         """
         if self.pretrained_lm == 'elmo':
             output = self.lm_encoder(input_ids)['elmo_representations'][0]
-            all_hidden_states = None
+            all_hiddens = []
         else:
             if self.pretrained_lm.startswith('tc_'):
                 if self.mask_error_input:
@@ -456,13 +456,18 @@ class RobustParser(nn.Module):
                 print (lm_output.size())
                 print (output.size())
                 print ('all:', len(all_hidden_states), all_hidden_states[0].size())
-        return output
+            all_hiddens = []
+            for i in range(len(all_hidden_states)):
+                hidden = all_hidden_states[i].gather(1, first_index.unsqueeze(-1).expand(size))
+                all_hiddens.append(hidden)
+        return output, all_hiddens
 
     def _embed(self, input_word, input_pretrained, input_char, input_pos, bpes=None, 
                 first_idx=None, lan_id=None):
         batch_size, seq_len = input_word.size()
+        all_hiddens = []
         if not self.pretrained_lm == 'none':
-            enc_word = self._lm_embed(bpes, first_idx)
+            enc_word, all_hiddens = self._lm_embed(bpes, first_idx)
         elif self.basic_word_embedding:
             # [batch, length, word_dim]
             pre_word = self.word_embed(input_pretrained)
@@ -505,7 +510,7 @@ class RobustParser(nn.Module):
         else:
             enc = enc_word
 
-        return enc
+        return enc, all_hiddens
 
     def _input_encoder(self, embeddings, mask=None, lan_id=None):
         
@@ -645,7 +650,7 @@ class RobustParser(nn.Module):
         rels_3D.scatter_(-1, heads.unsqueeze(-1), rels.unsqueeze(-1))
 
         # (batch, seq_len, embed_size)
-        embeddings = self._embed(input_word, input_pretrained, input_char, input_pos, 
+        embeddings, _ = self._embed(input_word, input_pretrained, input_char, input_pos, 
                                 bpes=bpes, first_idx=first_idx, lan_id=lan_id)
         # (batch, seq_len, hidden_size)
         encoder_output, _ = self._input_encoder(embeddings, mask=mask, lan_id=lan_id)
@@ -714,7 +719,7 @@ class RobustParser(nn.Module):
         root_mask = torch.arange(seq_len, device=input_word.device).gt(0).float().unsqueeze(0) * mask
 
         # (batch, seq_len, embed_size)
-        embeddings = self._embed(input_word, input_pretrained, input_char, input_pos, 
+        embeddings, _ = self._embed(input_word, input_pretrained, input_char, input_pos, 
                                 bpes=bpes, first_idx=first_idx, lan_id=lan_id)
         # (batch, seq_len, hidden_size)
         encoder_output, _ = self._input_encoder(embeddings, mask=mask, lan_id=lan_id) 
@@ -775,7 +780,7 @@ class RobustParser(nn.Module):
         root_mask = torch.arange(seq_len, device=input_word.device).gt(0).float().unsqueeze(0) * mask
 
         # (batch, seq_len, embed_size)
-        embeddings = self._embed(input_word, input_pretrained, input_char, input_pos, 
+        embeddings, _ = self._embed(input_word, input_pretrained, input_char, input_pos, 
                                 bpes=bpes, first_idx=first_idx, lan_id=lan_id)
         # (batch, seq_len, hidden_size)
         encoder_output, _ = self._input_encoder(embeddings, mask=mask, lan_id=lan_id) 
@@ -802,3 +807,64 @@ class RobustParser(nn.Module):
         rel_probs = F.softmax(rel_logits, dim=3).permute(0, 3, 1, 2)
 
         return arc_probs, rel_probs
+
+    def decode_hidden(self, input_word, input_pretrained, input_char, input_pos, mask=None, 
+                bpes=None, first_idx=None, lan_id=None, leading_symbolic=0):
+        """
+        Args:
+            input_word: Tensor
+                the word input tensor with shape = [batch, length]
+            input_char: Tensor
+                the character input tensor with shape = [batch, length, char_length]
+            input_pos: Tensor
+                the pos input tensor with shape = [batch, length]
+            mask: Tensor or None
+                the mask tensor with shape = [batch, length]
+            length: Tensor or None
+                the length tensor with shape = [batch]
+            hx: Tensor or None
+                the initial states of RNN
+            leading_symbolic: int
+                number of symbolic labels leading in type alphabets (set it to 0 if you are not sure)
+
+        Returns: (Tensor, Tensor)
+                predicted heads and rels.
+
+        """
+        # Pre-process
+        batch_size, seq_len = input_word.size()
+        # (batch, seq_len), seq mask, where at position 0 is 0
+        root_mask = torch.arange(seq_len, device=input_word.device).gt(0).float().unsqueeze(0) * mask
+
+        # (batch, seq_len, embed_size)
+        embeddings, all_hiddens = self._embed(input_word, input_pretrained, input_char, input_pos, 
+                                bpes=bpes, first_idx=first_idx, lan_id=lan_id)
+        # (batch, seq_len, hidden_size)
+        encoder_output, _ = self._input_encoder(embeddings, mask=mask, lan_id=lan_id) 
+        
+        # (batch, seq_len, arc_mlp_dim)
+        arc_h, arc_c = self._arc_mlp(encoder_output)
+        # (batch, seq_len, seq_len)
+        arc_logits = self.arc_attention(arc_c, arc_h)
+
+        # (batch, length, rel_mlp_dim)
+        rel_h, rel_c = self._rel_mlp(encoder_output)
+        # (batch, n_rels, seq_len, seq_len)
+        rel_logits = self.rel_attention(rel_c, rel_h)
+        # (batch, n_rels, seq_len_c, seq_len_h)
+        # => (batch, length_h, length_c, num_labels)
+        rel_logits = rel_logits.permute(0,3,2,1)
+
+        if mask is not None:
+            minus_mask = mask.eq(0).unsqueeze(2)
+            arc_logits.masked_fill_(minus_mask, float('-inf'))
+        # arc_loss shape [batch, length_h, length_c]
+        arc_loss = F.log_softmax(arc_logits, dim=1)
+        # rel_loss shape [batch, length_h, length_c, num_labels]
+        rel_loss = F.log_softmax(rel_logits, dim=3).permute(0, 3, 1, 2)
+        # [batch, num_labels, length_h, length_c]
+        energy = arc_loss.unsqueeze(1) + rel_loss
+
+        # compute lengths
+        length = mask.sum(dim=1).long().cpu().numpy()
+        return parser.decode_MST(energy.cpu().numpy(), length, leading_symbolic=leading_symbolic, labeled=True), all_hiddens
