@@ -122,16 +122,14 @@ def similarity(orig_all_hiddens, adv_all_hiddens, orig_srcs, adv_srcs):
         adv_hiddens = adv_all_hiddens[l]
         cos_sims = []
         for i in range(len(orig_srcs)):
-            print (len(orig_srcs[i]), orig_hiddens[i].size())
             idxs = diff_idx(orig_srcs[i], adv_srcs[i])
-            print (idxs)
             sims = []
             if len(idxs) == 0:
                 cos_sims.append(None)
                 continue
             for idx in idxs:
-                e1 = orig_hiddens[idx]
-                e2 = adv_hiddens[idx]
+                e1 = orig_hiddens[i][idx]
+                e2 = adv_hiddens[i][idx]
                 cos_sim = torch.nn.CosineSimilarity(dim=0)(e1, e2).detach().cpu().numpy()
                 sims.append(cos_sim)
             cos_sims.append(sum(sims)/len(sims))
@@ -302,7 +300,7 @@ def correlate(alg, orig_data, adv_data, network, punct_set, word_alphabet, pos_a
             las_drop = orig_las - adv_las
 
             if debug:
-                print ("orig uas:{}, las:{}, adv uas:{}, las:{}, cos_sim:{}".format(orig_uas, orig_las, adv_uas, adv_las, cos_sims[i]))
+                print ("orig uas:{}, las:{}, adv uas:{}, las:{}, cos_sim:{}".format(orig_uas, orig_las, adv_uas, adv_las, sim_layers[0][i]))
             uas_drops.append(uas_drop)
             las_drops.append(las_drop)
 
@@ -318,7 +316,7 @@ def correlate(alg, orig_data, adv_data, network, punct_set, word_alphabet, pos_a
     for l, sims in enumerate(all_sim_layers):
         cos_sim_vec = np.array(sims)
         uas_r, uas_p = pearsonr(cos_sim_vec, uas_drop_vec)
-        las_r, lar_p = pearsonr(cos_sim_vec, las_drop_vec)
+        las_r, las_p = pearsonr(cos_sim_vec, las_drop_vec)
         print ("bert layer-{}".format(l))
         print ("uas R: {}, P-value:{}".format(uas_r, uas_p))
         print ("las R: {}, P-value:{}".format(las_r, las_p))
@@ -469,7 +467,7 @@ def parse(args):
         # debug = 1: show orig/adv tokens / debug = 2: show log inside attacker
         correlate(alg, orig_data, adv_data, network, punct_set, word_alphabet, 
             pos_alphabet, device, beam, batch_size=args.batch_size, tokenizer=tokenizer, 
-            multi_lan_iter=multi_lan_iter, debug=1, pretrained_alphabet=pretrained_alphabet)
+            multi_lan_iter=multi_lan_iter, debug=0, pretrained_alphabet=pretrained_alphabet)
         print('Time: %.2fs' % (time.time() - start_time))
 
 if __name__ == '__main__':
