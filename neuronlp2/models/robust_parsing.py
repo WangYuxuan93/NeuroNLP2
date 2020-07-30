@@ -417,6 +417,7 @@ class RobustParser(nn.Module):
         """
         if self.pretrained_lm == 'elmo':
             output = self.lm_encoder(input_ids)['elmo_representations'][0]
+            all_hidden_states = None
         else:
             if self.pretrained_lm.startswith('tc_'):
                 if self.mask_error_input:
@@ -446,13 +447,14 @@ class RobustParser(nn.Module):
                 if self.mask_random_input:
                     input_ids = self._mask_random_input(input_ids)
                 # (batch, max_bpe_len, hidden_size)
-                lm_output = self.lm_encoder(input_ids)[0]
+                lm_output, all_hidden_states = self.lm_encoder(input_ids)
             size = list(first_index.size()) + [lm_output.size()[-1]]
             # (batch, seq_len, hidden_size)
             output = lm_output.gather(1, first_index.unsqueeze(-1).expand(size))
             if debug:
                 print (lm_output.size())
                 print (output.size())
+            print (all_hidden_states.size())
         return output
 
     def _embed(self, input_word, input_pretrained, input_char, input_pos, bpes=None, 
