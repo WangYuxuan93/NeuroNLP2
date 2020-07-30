@@ -80,19 +80,19 @@ class NN(object):
 		return cos
 
 	def cos_sim(self, a, b):
-		try:
-			cos_sim = self.cos_sim_mat[a][b]
-		except KeyError:
-			e1 = self.embed[a]
-			e2 = self.embed[b]
-			e1 = torch.tensor(e1)
-			e2 = torch.tensor(e2)
-			cos_sim = torch.nn.CosineSimilarity(dim=0)(e1, e2).numpy()
-			#cos_sim = self.one_cos_sim(e1, e2)
+		#try:
+		#	cos_sim = self.cos_sim_mat[a][b]
+		#except KeyError:
+		e1 = self.embed[a]
+		e2 = self.embed[b]
+		#e1 = torch.tensor(e1)
+		#e2 = torch.tensor(e2)
+		#cos_sim = torch.nn.CosineSimilarity(dim=0)(e1, e2).numpy()
+		cos_sim = self.one_cos_sim(e1, e2)
 			#self.cos_sim_mat[a][b] = cos_sim
 		return cos_sim
 
-	def compute_nn_single(self, id, lock):
+	def compute_nn_single(self, id):
 		top_nn = []
 		top_sim = []
 		#print ("runing ", id)
@@ -111,12 +111,12 @@ class NN(object):
 
 		order = (-sims).argsort()
 		nn_single = np.array(top_nn)[order]
-		#print (id, nn_single)
-		lock.acquire()
+		#print (id, nn_single	
 		if id % self.log_every == 0:
+			#lock.acquire()
 			print (id,"... ", end="")
 			sys.stdout.flush()
-		lock.release()
+			#lock.release()
 
 		return id, nn_single, sims, top_nn
 
@@ -137,14 +137,14 @@ class NN(object):
 	def compute_nn(self):
 		pool = multiprocessing.Pool(processes=self.n_thread)
 		self.nn_list = []
-		manager = multiprocessing.Manager()
-		lock = manager.Lock()
+		#manager = multiprocessing.Manager()
+		#lock = manager.Lock()
 		results = []
 		for i in range(self.num):
 			#if i % log_every == 0:
 			#	print (i,"...", end="")
 			#	sys.stdout.flush()
-			res = pool.apply_async(self.compute_nn_single, args=(i,lock,))
+			res = pool.apply_async(self.compute_nn_single, args=(i,))
 			results.append(res)
 			"""
 			nn_single, sims, top_nn = self.compute_nn_single(i)

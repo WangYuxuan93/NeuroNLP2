@@ -161,7 +161,7 @@ def correlate(alg, orig_data, adv_data, network, punct_set, word_alphabet, pos_a
             lan_id, o_data = o_data
             _, a_data = a_data
             lan_id = torch.LongTensor([lan_id]).to(device)
-        orig_words = o_data['WORD']
+        orig_words = o_data['WORD'].to(device)
         orig_pres = o_data['PRETRAINED'].to(device)
         orig_chars = o_data['CHAR'].to(device)
         orig_postags = o_data['POS'].to(device)
@@ -182,7 +182,7 @@ def correlate(alg, orig_data, adv_data, network, punct_set, word_alphabet, pos_a
         else:
             orig_bpes = orig_first_idx = None
 
-        adv_words = a_data['WORD']
+        adv_words = a_data['WORD'].to(device)
         adv_pres = a_data['PRETRAINED'].to(device)
         adv_chars = a_data['CHAR'].to(device)
         adv_postags = a_data['POS'].to(device)
