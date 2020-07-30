@@ -117,7 +117,9 @@ def diff_idx(orig_src, adv_src):
 def similarity(orig_all_hiddens, adv_all_hiddens, orig_srcs, adv_srcs):
     cos_sims = []
     for i in range(len(orig_srcs)):
+        print (len(orig_srcs[i]), orig_all_hiddens[i].size())
         idxs = diff_idx(orig_srcs[i], adv_srcs[i])
+        print (idxs)
         sims = []
         if len(idxs) == 0:
             cos_sims.append(None)
@@ -125,9 +127,9 @@ def similarity(orig_all_hiddens, adv_all_hiddens, orig_srcs, adv_srcs):
         for idx in idxs:
             e1 = orig_all_hiddens[idx]
             e2 = adv_all_hiddens[idx]
-            cos_sim = torch.nn.CosineSimilarity(dim=0)(e1, e2).numpy()
+            cos_sim = torch.nn.CosineSimilarity(dim=0)(e1, e2).detach().cpu().numpy()
             sims.append(cos_sim)
-        cos_sims.append(sims.mean())
+        cos_sims.append(sum(sims)/len(sims))
     return cos_sims
 
 def correlate(alg, orig_data, adv_data, network, punct_set, word_alphabet, pos_alphabet, 
@@ -239,9 +241,9 @@ def correlate(alg, orig_data, adv_data, network, punct_set, word_alphabet, pos_a
         assert len(lengths) == len(adv_lengths)
 
         if alg == 'graph':
-            orig_heads_pred, orig_rels_pred, orig_all_hiddens = network.decode(orig_words, orig_pres, orig_chars, orig_postags, mask=orig_masks, 
+            (orig_heads_pred, orig_rels_pred), orig_all_hiddens = network.decode_hidden(orig_words, orig_pres, orig_chars, orig_postags, mask=orig_masks, 
                 bpes=orig_bpes, first_idx=orig_first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
-            adv_heads_pred, adv_rels_pred, adv_all_hiddens = network.decode(adv_words, adv_pres, adv_chars, adv_postags, mask=adv_masks, 
+            (adv_heads_pred, adv_rels_pred), adv_all_hiddens = network.decode_hidden(adv_words, adv_pres, adv_chars, adv_postags, mask=adv_masks, 
                 bpes=adv_bpes, first_idx=adv_first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
             cos_sims = similarity(orig_all_hiddens, adv_all_hiddens, orig_srcs, adv_srcs)
         else:
@@ -305,97 +307,10 @@ def correlate(alg, orig_data, adv_data, network, punct_set, word_alphabet, pos_a
     uas_r, uas_p = pearsonr(cos_sim_vec, uas_drop_vec)
     las_r, lar_p = pearsonr(cos_sim_vec, las_drop_vec)
 
+    print ("uas R: {}, P-value:{}".format(uas_r, uas_p))
+    print ("las R: {}, P-value:{}".format(las_r, las_p))
+
     return 0
-
-        if write_to_tmp:
-            pred_writer.write(words, postags, heads_pred, rels_pred, lengths, symbolic_root=True, src_words=data['SRC'] ,adv_words=adv_src)
-        else:
-            all_words.append(adv_words)
-            all_postags.append(postags)
-            all_heads_pred.append(heads_pred)
-            all_rels_pred.append(rels_pred)
-            all_lengths.append(lengths)
-            all_src_words.append(adv_src)
-
-        adv_gold_writer.write(words, postags, heads, rels, lengths, symbolic_root=True, src_words=data['SRC'] ,adv_words=adv_src)
-        #print ("heads_pred:\n", heads_pred)
-        #print ("rels_pred:\n", rels_pred)
-        #print ("heads:\n", heads)
-        #print ("err_types:\n", err_types)
-        stats, stats_nopunc, err_stats, err_nopunc_stats, stats_root, num_inst = parser.eval(
-                                    words, postags, heads_pred, rels_pred, heads, rels,
-                                    word_alphabet, pos_alphabet, lengths, punct_set=punct_set, 
-                                    symbolic_root=True, err_types=err_types)
-        ucorr, lcorr, total, ucm, lcm = stats
-        ucorr_nopunc, lcorr_nopunc, total_nopunc, ucm_nopunc, lcm_nopunc = stats_nopunc
-        ucorr_err, lcorr_err, total_err = err_stats
-        ucorr_err_nopunc, lcorr_err_nopunc, total_err_nopunc = err_nopunc_stats
-        corr_root, total_root = stats_root
-
-        accum_ucorr += ucorr
-        accum_lcorr += lcorr
-        accum_total += total
-        accum_ucomlpete += ucm
-        accum_lcomplete += lcm
-
-        accum_ucorr_nopunc += ucorr_nopunc
-        accum_lcorr_nopunc += lcorr_nopunc
-        accum_total_nopunc += total_nopunc
-        accum_ucomlpete_nopunc += ucm_nopunc
-        accum_lcomplete_nopunc += lcm_nopunc
-
-        accum_ucorr_err += ucorr_err
-        accum_lcorr_err += lcorr_err
-        accum_total_err += total_err
-        accum_ucorr_err_nopunc += ucorr_err_nopunc
-        accum_lcorr_err_nopunc += lcorr_err_nopunc
-        accum_total_err_nopunc += total_err_nopunc
-
-        accum_root_corr += corr_root
-        accum_total_root += total_root
-
-        accum_total_inst += num_inst
-
-    print('W. Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%%' % (
-        accum_ucorr, accum_lcorr, accum_total, accum_ucorr * 100 / accum_total, accum_lcorr * 100 / accum_total,
-        accum_ucomlpete * 100 / accum_total_inst, accum_lcomplete * 100 / accum_total_inst))
-    print('Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%%' % (
-        accum_ucorr_nopunc, accum_lcorr_nopunc, accum_total_nopunc, accum_ucorr_nopunc * 100 / accum_total_nopunc,
-        accum_lcorr_nopunc * 100 / accum_total_nopunc,
-        accum_ucomlpete_nopunc * 100 / accum_total_inst, accum_lcomplete_nopunc * 100 / accum_total_inst))
-    print('Root: corr: %d, total: %d, acc: %.2f%%' %(accum_root_corr, accum_total_root, accum_root_corr * 100 / accum_total_root))
-    if accum_total_err == 0:
-        accum_total_err = 1
-    if accum_total_err_nopunc == 0:
-        accum_total_err_nopunc = 1
-    #print('Error Token: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%' % (
-    #    accum_ucorr_err, accum_lcorr_err, accum_total_err, accum_ucorr_err * 100 / accum_total_err, accum_lcorr_err * 100 / accum_total_err))
-    #print('Error Token Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%' % (
-    #    accum_ucorr_err_nopunc, accum_lcorr_err_nopunc, accum_total_err_nopunc, 
-    #    accum_ucorr_err_nopunc * 100 / accum_total_err_nopunc, accum_lcorr_err_nopunc * 100 / accum_total_err_nopunc))
-    if accum_total_edit == 0:
-        accum_total_edit = 1
-    print('Attack: success/total examples = %d/%d\nTotal head change: %d, rel change: %d, change score: %.2f\nAverage score: %.2f, change score: %.2f, perp diff: %.2f, edit dist: %.2f, change-edit ratio: %.2f' % (
-        accum_success_attack, accum_total_sent, 
-        accum_total_head_change, accum_total_rel_change, accum_total_change_score,
-        accum_total_score/accum_total_sent, 
-        accum_total_change_score/accum_total_sent, accum_total_perp_diff/accum_total_sent, 
-        accum_total_edit/accum_total_sent, accum_total_change_score/accum_total_edit))
-
-    if not write_to_tmp:
-        if prev_best_lcorr < accum_lcorr_nopunc or (prev_best_lcorr == accum_lcorr_nopunc and prev_best_ucorr < accum_ucorr_nopunc):
-            print ('### Writing New Best Dev Prediction File ... ###')
-            pred_writer.start(pred_filename)
-            for i in range(len(all_words)):
-                pred_writer.write(all_words[i], all_postags[i], all_heads_pred[i], all_rels_pred[i], 
-                                all_lengths[i], symbolic_root=True, src_words=all_src_words[i])
-            pred_writer.close()
-
-
-    return (accum_ucorr, accum_lcorr, accum_ucomlpete, accum_lcomplete, accum_total), \
-           (accum_ucorr_nopunc, accum_lcorr_nopunc, accum_ucomlpete_nopunc, accum_lcomplete_nopunc, accum_total_nopunc), \
-           (accum_root_corr, accum_total_root, accum_total_inst)
-
 
 def parse(args):
 
