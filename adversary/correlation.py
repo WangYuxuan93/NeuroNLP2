@@ -107,14 +107,15 @@ def convert_tokens_to_ids(tokenizer, tokens):
 
     return input_ids, first_indices
 
-def diff_idx(orig_src, adv_src):
+def diff_idx(orig_src, adv_src, word_alphabet):
     idxs = []
     for i, (o_src, a_src) in enumerate(zip(orig_src, adv_src)):
         if o_src != a_src:
-            idxs.append(i)
+            if word_alphabet.get_index(o_src) != 0 and word_alphabet.get_index(a_src) == 0:
+                idxs.append(i)
     return idxs
 
-def similarity(orig_all_hiddens, adv_all_hiddens, orig_srcs, adv_srcs):
+def similarity(orig_all_hiddens, adv_all_hiddens, orig_srcs, adv_srcs, word_alphabet):
     layers = []
     n_layers = len(orig_all_hiddens)
     for l in range(n_layers):
@@ -122,7 +123,7 @@ def similarity(orig_all_hiddens, adv_all_hiddens, orig_srcs, adv_srcs):
         adv_hiddens = adv_all_hiddens[l]
         cos_sims = []
         for i in range(len(orig_srcs)):
-            idxs = diff_idx(orig_srcs[i], adv_srcs[i])
+            idxs = diff_idx(orig_srcs[i], adv_srcs[i], word_alphabet)
             sims = []
             if len(idxs) == 0:
                 cos_sims.append(None)
@@ -249,7 +250,7 @@ def correlate(alg, orig_data, adv_data, network, punct_set, word_alphabet, pos_a
                 bpes=orig_bpes, first_idx=orig_first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
             (adv_heads_pred, adv_rels_pred), adv_all_hiddens = network.decode_hidden(adv_words, adv_pres, adv_chars, adv_postags, mask=adv_masks, 
                 bpes=adv_bpes, first_idx=adv_first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
-            sim_layers = similarity(orig_all_hiddens, adv_all_hiddens, orig_srcs, adv_srcs)
+            sim_layers = similarity(orig_all_hiddens, adv_all_hiddens, orig_srcs, adv_srcs, word_alphabet)
         else:
             orig_heads_pred, orig_rels_pred = network.decode(orig_words, orig_pres, orig_chars, orig_postags, mask=orig_masks, 
                 bpes=orig_bpes, first_idx=orig_first_idx, lan_id=lan_id, beam=beam, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
