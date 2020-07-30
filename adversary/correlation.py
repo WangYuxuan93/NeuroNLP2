@@ -115,22 +115,28 @@ def diff_idx(orig_src, adv_src):
     return idxs
 
 def similarity(orig_all_hiddens, adv_all_hiddens, orig_srcs, adv_srcs):
-    cos_sims = []
-    for i in range(len(orig_srcs)):
-        print (len(orig_srcs[i]), orig_all_hiddens[i].size())
-        idxs = diff_idx(orig_srcs[i], adv_srcs[i])
-        print (idxs)
-        sims = []
-        if len(idxs) == 0:
-            cos_sims.append(None)
-            continue
-        for idx in idxs:
-            e1 = orig_all_hiddens[idx]
-            e2 = adv_all_hiddens[idx]
-            cos_sim = torch.nn.CosineSimilarity(dim=0)(e1, e2).detach().cpu().numpy()
-            sims.append(cos_sim)
-        cos_sims.append(sum(sims)/len(sims))
-    return cos_sims
+    layers = []
+    n_layers = len(orig_all_hiddens)
+    for l in range(n_layers):
+        orig_hiddens = orig_all_hiddens[l]
+        adv_hiddens = adv_all_hiddens[l]
+        cos_sims = []
+        for i in range(len(orig_srcs)):
+            print (len(orig_srcs[i]), orig_hiddens[i].size())
+            idxs = diff_idx(orig_srcs[i], adv_srcs[i])
+            print (idxs)
+            sims = []
+            if len(idxs) == 0:
+                cos_sims.append(None)
+                continue
+            for idx in idxs:
+                e1 = orig_hiddens[idx]
+                e2 = adv_hiddens[idx]
+                cos_sim = torch.nn.CosineSimilarity(dim=0)(e1, e2).detach().cpu().numpy()
+                sims.append(cos_sim)
+            cos_sims.append(sum(sims)/len(sims))
+        layers.append(cos_sims)
+    return layers
 
 def correlate(alg, orig_data, adv_data, network, punct_set, word_alphabet, pos_alphabet, 
         device, beam=1, batch_size=256, write_to_tmp=True, prev_best_lcorr=0, prev_best_ucorr=0,
@@ -183,7 +189,7 @@ def correlate(alg, orig_data, adv_data, network, punct_set, word_alphabet, pos_a
 
     uas_drops = []
     las_drops = []
-    all_sims = []
+    all_sim_layers = []
 
     for o_data, a_data in zip(iterate(orig_data, batch_size), iterate(adv_data, batch_size)):
         if multi_lan_iter:
@@ -245,7 +251,7 @@ def correlate(alg, orig_data, adv_data, network, punct_set, word_alphabet, pos_a
                 bpes=orig_bpes, first_idx=orig_first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
             (adv_heads_pred, adv_rels_pred), adv_all_hiddens = network.decode_hidden(adv_words, adv_pres, adv_chars, adv_postags, mask=adv_masks, 
                 bpes=adv_bpes, first_idx=adv_first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
-            cos_sims = similarity(orig_all_hiddens, adv_all_hiddens, orig_srcs, adv_srcs)
+            sim_layers = similarity(orig_all_hiddens, adv_all_hiddens, orig_srcs, adv_srcs)
         else:
             orig_heads_pred, orig_rels_pred = network.decode(orig_words, orig_pres, orig_chars, orig_postags, mask=orig_masks, 
                 bpes=orig_bpes, first_idx=orig_first_idx, lan_id=lan_id, beam=beam, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
@@ -255,7 +261,7 @@ def correlate(alg, orig_data, adv_data, network, punct_set, word_alphabet, pos_a
         for i in range(len(lengths)):
             accum_total_sent += 1
             assert lengths[i] == adv_lengths[i]
-            if cos_sims[i] is None: continue
+            if sim_layers[0][i] is None: continue
             gold_head = heads[i:i+1]
             gold_rel = rels[i:i+1]
             length = lengths[i:i+1]
@@ -299,16 +305,23 @@ def correlate(alg, orig_data, adv_data, network, punct_set, word_alphabet, pos_a
                 print ("orig uas:{}, las:{}, adv uas:{}, las:{}, cos_sim:{}".format(orig_uas, orig_las, adv_uas, adv_las, cos_sims[i]))
             uas_drops.append(uas_drop)
             las_drops.append(las_drop)
-            all_sims.append(cos_sims[i])
+
+            if not all_sim_layers:
+                for _ in range(len(sim_layers)):
+                    all_sim_layers.append([])
+            for l, sims in enumerate(sim_layers):
+                all_sim_layers[l].append(sims[i])
 
     uas_drop_vec = np.array(uas_drops)
     las_drop_vec = np.array(las_drops)
-    cos_sim_vec = np.array(all_sims)
-    uas_r, uas_p = pearsonr(cos_sim_vec, uas_drop_vec)
-    las_r, lar_p = pearsonr(cos_sim_vec, las_drop_vec)
 
-    print ("uas R: {}, P-value:{}".format(uas_r, uas_p))
-    print ("las R: {}, P-value:{}".format(las_r, las_p))
+    for l, sims in enumerate(all_sim_layers):
+        cos_sim_vec = np.array(sims)
+        uas_r, uas_p = pearsonr(cos_sim_vec, uas_drop_vec)
+        las_r, lar_p = pearsonr(cos_sim_vec, las_drop_vec)
+        print ("bert layer-{}".format(l))
+        print ("uas R: {}, P-value:{}".format(uas_r, uas_p))
+        print ("las R: {}, P-value:{}".format(las_r, las_p))
 
     return 0
 
