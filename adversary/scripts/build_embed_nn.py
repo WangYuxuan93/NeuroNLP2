@@ -117,6 +117,7 @@ class NN(object):
 
 		order = (-sims).argsort()
 		nn_single = np.array(top_nn)[order]
+		sims = sims[order]
 		#print (id, nn_single	
 		if id % self.log_every == 0:
 			#lock.acquire()
@@ -124,29 +125,41 @@ class NN(object):
 			sys.stdout.flush()
 			#lock.release()
 
-		return id, nn_single, sims, top_nn
+		return id, nn_single, sims#, top_nn
 
 	def update(self, result):
 		#print ("result", result)
-		i, nn_single, sims, top_nn = result
+		i, nn_single, sims = result
 		self.nn_list.append(nn_single)
 
-		for sim, j in zip(sims, top_nn):
+		for sim, j in zip(sims, nn_single):
 			a, b = min(i,j), max(i,j)
 			self.cos_sim_mat[a][b] = sim
+
+	def tmp_save(self, result):
+		i, nn_single, sims = result
+		self.tmp_data[i] = {"nn_order":nn_single.tolist(), "sims":sims.tolist()}
 
 	def log(self, i):
 		if i % self.log_every == 0:
 			print (i,"...", end="")
 			sys.stdout.flush()
 
-	def compute_nn(self):
+	def compute_nn(self, interval=None):
+		if interval is None:
+			begin = 0
+			end = self.num
+		else:
+			begin, end = interval
+		assert begin >= 0 and begin <= self.num
+		assert end >= 0 and end <= self.num
+		print ("Computing NN, begin={}, end={}".format(begin, end))
 		pool = multiprocessing.Pool(processes=self.n_thread)
 		self.nn_list = []
 		#manager = multiprocessing.Manager()
 		#lock = manager.Lock()
 		results = []
-		for i in range(self.num):
+		for i in range(begin, end):
 			#if i % log_every == 0:
 			#	print (i,"...", end="")
 			#	sys.stdout.flush()
@@ -161,13 +174,20 @@ class NN(object):
 			"""
 		pool.close()
 		pool.join()
-		for r in results:
-			self.update(r.get())
-
-		self.nn = np.stack(self.nn_list, axis=0)
 		print ()
-		#print (self.cos_sim_mat)
-		return self.nn
+		self.tmp_data = {}
+
+		for r in results:
+			if interval is None:
+				self.update(r.get())
+			else:
+				self.tmp_save(r.get())
+
+		if interval is None:
+			self.nn = np.stack(self.nn_list, axis=0)
+			return self.nn
+		else:
+			return self.tmp_data
 
 	def get_cos_sim(self, k):
 		trim_cos_sim_mat = defaultdict(dict)
@@ -194,6 +214,8 @@ parser.add_argument("out_dir", type=str, help="output path")
 #parser.add_argument("--out_vocab", type=str, default="vocab.json", help="output path for vocab")
 parser.add_argument("--k", type=int, default=101, help="save top k NN")
 parser.add_argument("--n_thread", type=int, default=10, help="number of threads")
+parser.add_argument("--interval", type=str, default=None, help="tmp interval (e.g. 100:200)")
+parser.add_argument("--save_emb", action="store_true", help="whether to save embedding")
 parser.add_argument("--nn", action="store_true", help="whether to compute NN")
 parser.add_argument("--pre", action="store_true", help="whether to pre-compute NN matrix")
 parser.add_argument("--log_every", type=int, default=1000, help="print log every")
@@ -202,35 +224,52 @@ args = parser.parse_args()
 embed, dim, word2id = load_embedding_dict(args.embedding)
 print ("Vocab size = ", len(embed))
 
+if args.interval is None:
+	intv = None
+else:
+	intv = [int(x) for x in args.interval.split(':')]
+	a, b = intv
+	assert a < b
+
 id2word = OrderedDict()
 for word, id in word2id.items():
 	id2word[id] = word
 if os.path.exists(args.out_dir):
 	print ("{} already exists", args.out_dir)
-	exit()
+	if intv is None:
+		exit()
 else:
 	os.mkdir(args.out_dir)
 
-list_path = os.path.join(args.out_dir, 'wordlist.pickle')
-with open(list_path, 'wb') as f:
-	pickle.dump(word2id, f)
-emb_path = os.path.join(args.out_dir, 'paragram')
-np.save(emb_path, embed)
+if args.save_emb:
+	list_path = os.path.join(args.out_dir, 'wordlist.pickle')
+	with open(list_path, 'wb') as f:
+		pickle.dump(word2id, f)
+	emb_path = os.path.join(args.out_dir, 'paragram')
+	np.save(emb_path, embed)
 
 #print (word2id)
 #print (embed)
 
 if args.nn:
 	nn_computer = NN(embed, k=args.k, pre_compute=args.pre, n_thread=args.n_thread, log_every=args.log_every)
-	nn = nn_computer.compute_nn()
-	nn_path = os.path.join(args.out_dir, 'nn')
-	np.save(nn_path, nn)
-	#print (nn)
-
-	trim_cos_sim_mat = nn_computer.cos_sim_mat
-	trim_cos_path = os.path.join(args.out_dir, 'cos_sim.p')
-	with open(trim_cos_path, 'wb') as f:
-		pickle.dump(trim_cos_sim_mat, f)
+	nn = nn_computer.compute_nn(intv)
+	if intv is None:
+		nn_path = os.path.join(args.out_dir, 'nn')
+		np.save(nn_path, nn)
+		#print (nn)
+		trim_cos_sim_mat = nn_computer.cos_sim_mat
+		trim_cos_path = os.path.join(args.out_dir, 'cos_sim.p')
+		with open(trim_cos_path, 'wb') as f:
+			pickle.dump(trim_cos_sim_mat, f)
+	else:
+		tmp_dir = os.path.join(args.out_dir, 'tmp')
+		if not os.path.exists(tmp_dir):
+			os.mkdir(tmp_dir)
+		tmp_data = nn
+		tmp_path = os.path.join(tmp_dir, 'tmp_data.'+str(intv[0])+'-'+str(intv[1]))
+		with open(tmp_path, 'w') as f:
+			json.dump(tmp_data, f, indent=2)
 
 	exit()
 	trim_cos_sim_mat, all_cos_sim_mat = nn_computer.get_cos_sim(k=args.k)
