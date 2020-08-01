@@ -95,19 +95,25 @@ class NN(object):
 	def compute_nn_single(self, id):
 		top_nn = []
 		top_sim = []
+		sims = np.zeros(self.k)
 		#print ("runing ", id)
 		for j in range(self.num):
 			sim = self.cos_sim(id, j)
 			if len(top_nn) < self.k:
 				top_nn.append(j)
-				top_sim.append(sim)
+				sims[j] = sim
+				#top_sim.append(sim)
+				#print (top_nn, sims)
 			else:
+				#print (sim, sims.min())
 				if sim > sims.min():
 					min_id = sims.argmin()
 					sims[min_id] = sim
 					top_nn[min_id] = j
-			if len(top_nn) == self.k:
-				sims = np.array(top_sim)
+				#print (top_nn)
+				#print (sims)
+			#if len(top_nn) == self.k:
+			#	sims = np.array(top_sim)
 
 		order = (-sims).argsort()
 		nn_single = np.array(top_nn)[order]
