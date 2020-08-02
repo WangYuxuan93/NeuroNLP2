@@ -32,6 +32,8 @@ from adversary.lm.bert import Bert
 stopwords = set(
         [
             "'s",
+            "'re",
+            "'ve",
             "a",
             "about",
             "above",
