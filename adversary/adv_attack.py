@@ -488,8 +488,8 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
     #    accum_ucorr_err_nopunc * 100 / accum_total_err_nopunc, accum_lcorr_err_nopunc * 100 / accum_total_err_nopunc))
     if accum_total_edit == 0:
         accum_total_edit = 1
-    print('Attack: success/total examples = %d/%d\nTotal head change: %d, rel change: %d, change score: %.2f\nAverage score: %.2f, change score: %.2f, perp diff: %.2f, edit dist: %.2f, change-edit ratio: %.2f' % (
-        accum_success_attack, accum_total_sent, 
+    print('Attack: success/total examples = %d/%d (%.2f%%)\nTotal head change: %d, rel change: %d, change score: %.2f\nAverage score: %.2f, change score: %.2f, perp diff: %.2f, edit dist: %.2f, change-edit ratio: %.2f' % (
+        accum_success_attack, accum_total_sent, accum_success_attack * 100 / float(accum_total_sent),
         accum_total_head_change, accum_total_rel_change, accum_total_change_score,
         accum_total_score/accum_total_sent, 
         accum_total_change_score/accum_total_sent, accum_total_perp_diff/accum_total_sent, 
