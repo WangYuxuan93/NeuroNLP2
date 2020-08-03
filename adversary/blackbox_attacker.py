@@ -1078,7 +1078,7 @@ class BlackBoxAttacker(object):
                 #cand_tag = nlp(cand.lower())[0].tag_
                 cand_tag = nlp(' '.join(tmps))[idx].tag_
             elif self.tagger == 'stanford':
-                self.stanford_tagger.tag(tmps)[idx][1]
+                cand_tag = self.stanford_tagger.tag(tmps)[idx][1]
             if cand_tag == tag:
                 cands.append(cand)
         return cands
@@ -1098,7 +1098,7 @@ class BlackBoxAttacker(object):
                 #cand_tag = nlp(cand.lower())[0].tag_
                 cand_tag = nlp(' '.join(tmps))[idx].tag_
             elif self.tagger == 'stanford':
-                self.stanford_tagger.tag(tmps)[idx][1]
+                cand_tag = self.stanford_tagger.tag(tmps)[idx][1]
             if cand_tag == tag:
                 cands.append(cand)
         return cands
