@@ -1228,20 +1228,20 @@ class BlackBoxAttacker(object):
         neigbhours_list = []
         cand_cache = []
         #stop_words = nltk.corpus.stopwords.words('english')
-        """
-        for i in range(x_len):
-            #print (adv_tokens[i], self._word2id(adv_tokens[i]))
-            cands, cache_data = self.get_candidate_set(adv_tokens, tags[i], i, sent_id=sent_id, cache=cache)
-            neigbhours_list.append(cands)
-            if cache and self.cached_path is None:
-                cache_data['id'] = i
-                cache_data['token'] = tokens[i]
-                cand_cache.append(cache_data)
-        neighbours_len = [len(x) for x in neigbhours_list]
-        #print (neigbhours_list)
-        if np.sum(neighbours_len) == 0:
-            return None, cand_cache
-        """
+        if not ("mlm" in self.generators and self.dynamic_mlm_cand):
+            for i in range(x_len):
+                #print (adv_tokens[i], self._word2id(adv_tokens[i]))
+                cands, cache_data = self.get_candidate_set(adv_tokens, tags[i], i, sent_id=sent_id, cache=cache)
+                neigbhours_list.append(cands)
+                if cache and self.cached_path is None:
+                    cache_data['id'] = i
+                    cache_data['token'] = tokens[i]
+                    cand_cache.append(cache_data)
+            neighbours_len = [len(x) for x in neigbhours_list]
+            #print (neigbhours_list)
+            if np.sum(neighbours_len) == 0:
+                return None, cand_cache
+        
 
         change_edit_ratio = -1
         total_change_score = 0
@@ -1264,20 +1264,22 @@ class BlackBoxAttacker(object):
 
         for idx in word_rank:
             idx = int(idx)
-            cands, cache_data = self.get_candidate_set(adv_tokens, tags[idx], idx, sent_id=sent_id, cache=cache)
-            if cache and self.cached_path is None:
-                cache_data['id'] = idx
-                cache_data['token'] = tokens[idx]
-                cand_cache[idx] = cache_data
+            if "mlm" in self.generators and self.dynamic_mlm_cand:
+                cands, cache_data = self.get_candidate_set(adv_tokens, tags[idx], idx, sent_id=sent_id, cache=cache)
+                if cache and self.cached_path is None:
+                    cache_data['id'] = idx
+                    cache_data['token'] = tokens[idx]
+                    cand_cache[idx] = cache_data
 
-            if len(cands) == 0:
-                if debug == 3:
-                    print ("--------------------------")
-                    print ("Idx={}({}), no cands, continue".format(idx, tokens[idx]))
-                continue
+                if len(cands) == 0:
+                    if debug == 3:
+                        print ("--------------------------")
+                        print ("Idx={}({}), no cands, continue".format(idx, tokens[idx]))
+                    continue
+            else:
+                cands = neigbhours_list[idx]
             # skip the edit for ROOT
             if self.symbolic_root and idx == 0: continue
-            #cands = neigbhours_list[idx]
 
             cands, perp_diff = self.filter_cands(adv_tokens.copy(), cands, idx, debug=debug)
             if len(cands) == 0:
