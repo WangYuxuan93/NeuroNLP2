@@ -403,6 +403,11 @@ class BlackBoxAttacker(object):
             self.cached_cands = json.load(open(cached_path, 'r'))
         else:
             self.cached_cands = None
+        if self.tagger == 'stanford':
+            jar = 'stanford-postagger-2018-10-16/stanford-postagger.jar'
+            model = 'stanford-postagger-2018-10-16/models/english-left3words-distsim.tagger'
+            logger.info("Loading stanford tagger from: %s" % model)
+            self.stanford_tagger = nltk.tag.StanfordPOSTagger(model, jar, encoding='utf8')
         self.id2word = {i:w for (w,i) in vocab.items()}
         if 'train' in self.filters and train_vocab is not None:
             logger.info("Loading train vocab for filter from: %s" % train_vocab)
@@ -1072,6 +1077,8 @@ class BlackBoxAttacker(object):
             elif self.tagger == 'spacy':
                 #cand_tag = nlp(cand.lower())[0].tag_
                 cand_tag = nlp(' '.join(tmps))[idx].tag_
+            elif self.tagger == 'stanford':
+                self.stanford_tagger.tag(tmps)[idx][1]
             if cand_tag == tag:
                 cands.append(cand)
         return cands
@@ -1090,6 +1097,8 @@ class BlackBoxAttacker(object):
             elif self.tagger == 'spacy':
                 #cand_tag = nlp(cand.lower())[0].tag_
                 cand_tag = nlp(' '.join(tmps))[idx].tag_
+            elif self.tagger == 'stanford':
+                self.stanford_tagger.tag(tmps)[idx][1]
             if cand_tag == tag:
                 cands.append(cand)
         return cands

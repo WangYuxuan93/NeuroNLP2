@@ -795,7 +795,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--train_vocab', type=str, help='Training set vocab file (json) for train filter')
     args_parser.add_argument('--filters', type=str, default='word_sim:sent_sim:lm', help='filters for word substitution')
     args_parser.add_argument('--generators', type=str, default='synonym:sememe:embedding', help='generators for word substitution')
-    args_parser.add_argument('--tagger', choices=['nltk', 'spacy'], default='nltk', help='POS tagger for POS checking in KNN embedding candidates')
+    args_parser.add_argument('--tagger', choices=['nltk', 'spacy', 'stanford'], default='nltk', help='POS tagger for POS checking in KNN embedding candidates')
     args_parser.add_argument('--use_pad', action='store_true', default=False, help='use PAD in input to attacker')
     args_parser.add_argument('--cached_path', type=str, default=None, help='input cached file for preprocessed candidate cache file')
     args_parser.add_argument('--cand_cache_path', type=str, default=None, help='output filename for candidate cache file')
