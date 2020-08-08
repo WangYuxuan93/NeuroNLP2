@@ -1254,8 +1254,8 @@ class BlackBoxAttacker(object):
         # at least allow one modification
         max_mod_token = max(1, int(x_len * self.max_mod_percent))
 
-        cand_cache = []
-        if cache and self.cached_path is None:
+        #cand_cache = []
+        if "mlm" in self.generators and self.dynamic_mlm_cand and cache and self.cached_path is None:
             cand_cache = [[] for _ in range(len(tokens))]
 
         if debug == 3:
