@@ -488,12 +488,12 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
     #    accum_ucorr_err_nopunc * 100 / accum_total_err_nopunc, accum_lcorr_err_nopunc * 100 / accum_total_err_nopunc))
     if accum_total_edit == 0:
         accum_total_edit = 1
-    print('Attack: success/total examples = %d/%d (%.2f%%)\nTotal head change: %d, rel change: %d, change score: %.2f\nAverage score: %.2f, change score: %.2f, perp diff: %.2f, edit dist: %.2f, change-edit ratio: %.2f' % (
-        accum_success_attack, accum_total_sent, accum_success_attack * 100 / float(accum_total_sent),
+    print('Attack: success/total examples = %d/%d (%.2f%%), AVG perts.: %.2f\nTotal head change: %d, rel change: %d, change score: %.2f\nAverage score: %.2f, change score: %.2f, perp diff: %.2f, change-edit ratio: %.2f' % (
+        accum_success_attack, accum_total_sent, accum_success_attack * 100 / float(accum_total_sent), accum_total_edit/accum_total_sent,
         accum_total_head_change, accum_total_rel_change, accum_total_change_score,
         accum_total_score/accum_total_sent, 
         accum_total_change_score/accum_total_sent, accum_total_perp_diff/accum_total_sent, 
-        accum_total_edit/accum_total_sent, accum_total_change_score/accum_total_edit))
+        accum_total_change_score/accum_total_edit))
 
     if not write_to_tmp:
         if prev_best_lcorr < accum_lcorr_nopunc or (prev_best_lcorr == accum_lcorr_nopunc and prev_best_ucorr < accum_ucorr_nopunc):
@@ -632,6 +632,7 @@ def parse(args):
     if args.mode == 'black':
         attacker = BlackBoxAttacker(network, candidates, vocab, synonyms, filters=filters, generators=generators,
                         max_mod_percent=args.max_mod_percent, tagger=args.tagger, use_pad=args.use_pad, 
+                        punct_set=punct_set,
                         cached_path=args.cached_path, train_vocab=args.train_vocab, knn_path=args.knn_path, 
                         max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
                         min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim, 
@@ -645,6 +646,7 @@ def parse(args):
     elif args.mode == 'random':
         attacker = RandomAttacker(network, candidates, vocab, synonyms, filters=filters, generators=generators,
                         max_mod_percent=args.max_mod_percent, tagger=args.tagger, use_pad=args.use_pad, 
+                        punct_set=punct_set,
                         cached_path=args.cached_path, train_vocab=args.train_vocab, knn_path=args.knn_path, 
                         max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
                         min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim,

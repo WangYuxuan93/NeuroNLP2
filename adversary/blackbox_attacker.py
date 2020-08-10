@@ -370,7 +370,7 @@ def recover_word_case(word, reference_word):
 class BlackBoxAttacker(object):
     def __init__(self, model, candidates, vocab, synonyms, filters=['word_sim', 'sent_sim', 'lm', 'train'],
                 generators=['synonym', 'sememe', 'embedding'], max_mod_percent=0.05, 
-                tagger="nltk", use_pad=False, cached_path=None, train_vocab=None,
+                tagger="nltk", use_pad=False, punct_set=[], cached_path=None, train_vocab=None,
                 knn_path=None, max_knn_candidates=50, sent_encoder_path=None,
                 min_word_cos_sim=0.8, min_sent_cos_sim=0.8, 
                 cand_mlm=None, dynamic_mlm_cand=False, temperature=1.0, top_k=100, top_p=None, 
@@ -390,6 +390,7 @@ class BlackBoxAttacker(object):
         self.generators = generators
         self.tagger = tagger
         self.use_pad = use_pad
+        self.punct_set = punct_set
         self.max_mod_percent = max_mod_percent
         self.cached_path = cached_path
         self.dynamic_mlm_cand = dynamic_mlm_cand
@@ -710,25 +711,37 @@ class BlackBoxAttacker(object):
             unk_id += 1
         return batch_tokens, batch_tags
 
-    def calc_importance(self, batch_tokens, batch_tags, heads, rel_ids, debug=False):
+    def get_punct_mask(self, tokens, tags):
+        assert len(tokens) == len(tags)
+        punct_mask = np.ones(len(tokens))
+        for i, tag in enumerate(tags):
+            if tag in self.punct_set:
+                punct_mask[i] = 0
+        return punct_mask
+
+    def calc_importance(self, batch_tokens, batch_tags, heads, rel_ids, punct_mask, debug=False):
         """
         Input:
             batch_tokens: List[List[str]], (batch, seq_len), the first line should be the original seq
             batch_tags: List[List[str]], (batch, seq_len), the first line should be the original seq
             heads: List[int], (seq_len)
             rel_ids: List[int], (seq_len)
+            punct_mask: np.array(seq_len)
         Output:
             importance: List[int], (seq_len), importance of each seq
             word_rank: List[int], (seq_len), word id ranked by importance
         """
         heads_pred, rels_pred = self.get_prediction(batch_tokens, batch_tags)
+        punct_mask_ = np.tile(punct_mask, (len(heads_pred),1))
         heads_gold = np.tile(np.array(heads), (len(heads_pred),1))
         heads_change_mask = np.where(heads_pred != heads_gold, 1, 0)
         # this should minus the diff between original prediction (line 0) and gold
-        heads_change = heads_change_mask.sum(axis=1)
+        # mask out punctuations
+        heads_change = (heads_change_mask * punct_mask_).sum(axis=1)
         heads_change = heads_change - heads_change[0]
         if debug:
             print (batch_tokens)
+            print ("punct_mask:\n", punct_mask_)
             print ("gold heads:\n", heads_gold)
             print ("pred heads:\n", heads_pred)
             print ("mask:\n", heads_change_mask)
@@ -739,7 +752,8 @@ class BlackBoxAttacker(object):
         # if the arc is wrong, the rel must be wrong
         rels_change_mask = np.where(rels_change_mask+heads_change_mask>0, 1, 0)
         # this should minus the diff between original prediction (line 0) and gold
-        rels_change = rels_change_mask.sum(axis=1)
+        # mask out punctuations
+        rels_change = (rels_change_mask * punct_mask_).sum(axis=1)
         rels_change = rels_change - rels_change[0]
         if debug:
             print ("gold rels:\n", rel_ids)
@@ -750,9 +764,9 @@ class BlackBoxAttacker(object):
         importance = (1-self.rel_ratio) * heads_change + self.rel_ratio * rels_change
         return importance, heads_change, rels_change
 
-    def calc_word_rank(self, tokens, tags, heads, rel_ids, debug=False):
+    def calc_word_rank(self, tokens, tags, heads, rel_ids, punct_mask, debug=False):
         batch_tokens, batch_tags = self.gen_importance_batch(tokens, tags)
-        importance, _, _ = self.calc_importance(batch_tokens, batch_tags, heads, rel_ids, debug)
+        importance, _, _ = self.calc_importance(batch_tokens, batch_tags, heads, rel_ids, punct_mask, debug)
         word_rank = (-importance).argsort()
         if debug:
             print ("importance:\n", importance)
@@ -775,10 +789,10 @@ class BlackBoxAttacker(object):
             batch_tokens[i][idx] = cands[i-1]
         return batch_tokens, batch_tags
 
-    def get_change_score(self, tokens, cands, idx, tags, heads, rel_ids, debug=False):
+    def get_change_score(self, tokens, cands, idx, tags, heads, rel_ids, punct_mask, debug=False):
         batch_tokens, batch_tags = self.gen_cand_batch(tokens, cands, idx, tags)
         # (cand_size+1), the 1st is the original sentence
-        change_score, head_change, rel_change = self.calc_importance(batch_tokens, batch_tags, heads, rel_ids, debug)
+        change_score, head_change, rel_change = self.calc_importance(batch_tokens, batch_tags, heads, rel_ids, punct_mask, debug)
         # ignore the original sent
         change_score = change_score[1:]
         if debug:
@@ -1222,7 +1236,8 @@ class BlackBoxAttacker(object):
         Output:
         """
         adv_tokens = tokens.copy()
-        word_rank = self.calc_word_rank(tokens, tags, heads, rel_ids, debug==2)
+        punct_mask = self.get_punct_mask(tokens, tags)
+        word_rank = self.calc_word_rank(tokens, tags, heads, rel_ids, punct_mask, debug==2)
         x_len = len(tokens)
         tag_list = ['JJ', 'NN', 'RB', 'VB']
         neigbhours_list = []
@@ -1291,7 +1306,7 @@ class BlackBoxAttacker(object):
             if "lm" in self.filters:
                 blocked_perp_diff = np.where(perp_diff>0, perp_diff, 0)
             # (cand_size)
-            change_score, head_change, rel_change = self.get_change_score(adv_tokens, cands, idx, tags, heads, rel_ids, debug==2)
+            change_score, head_change, rel_change = self.get_change_score(adv_tokens, cands, idx, tags, heads, rel_ids, punct_mask, debug==2)
             change_rank = (-change_score).argsort()
             # this means the biggest change is 0
             if change_score[change_rank[0]] <= 0:
