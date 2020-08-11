@@ -461,6 +461,8 @@ class DPAttacker(object):
         self.symbolic_root = symbolic_root
         self.symbolic_end = symbolic_end
         self.mask_out_root = mask_out_root
+        rel_ratio = 0
+        fluency_ratio = 0
         assert rel_ratio >= 0 and rel_ratio <= 1
         self.rel_ratio = rel_ratio
         self.fluency_ratio = fluency_ratio
@@ -1150,8 +1152,8 @@ class DPAttacker(object):
 
     def _get_candidate_set_from_cache(self, tokens, tag, idx, sent_id=None):
         token = tokens[idx]
-        if token.lower() in self.stop_words:
-            return []
+        #if token.lower() in self.stop_words:
+        #    return []
         if tag in self.stop_tags:
             return []
         if token == PAD or token == ROOT:
@@ -1180,8 +1182,8 @@ class DPAttacker(object):
                           'mlm_cands':[]}
         else:
             cache_data = None
-        if token.lower() in self.stop_words:
-            return [], cache_data
+        #if token.lower() in self.stop_words:
+        #    return [], cache_data
         if tag in self.stop_tags:
             return [], cache_data
         if token == PAD or token == ROOT:
@@ -1303,15 +1305,14 @@ class DPAttacker(object):
             # skip the edit for ROOT
             if self.symbolic_root and idx == 0: continue
 
-            cands, perp_diff = self.filter_cands(adv_tokens.copy(), cands, idx, debug=debug)
+            #cands, perp_diff = self.filter_cands(adv_tokens.copy(), cands, idx, debug=debug)
             if len(cands) == 0:
                 if debug == 3:
                     print ("--------------------------")
                     print ("Idx={}({}), all cands filtered out, continue".format(idx, tokens[idx]))
                 continue
-            all_cands = cands.copy()
-            if "lm" in self.filters:
-                blocked_perp_diff = np.where(perp_diff>0, perp_diff, 0)
+            #if "lm" in self.filters:
+            #    blocked_perp_diff = np.where(perp_diff>0, perp_diff, 0)
             # (cand_size)
             change_score, head_change, rel_change = self.get_change_score(adv_tokens, cands, idx, tags, heads, rel_ids, punct_mask, debug==2)
             change_rank = (-change_score).argsort()
@@ -1349,16 +1350,13 @@ class DPAttacker(object):
             total_head_change += head_change[best_cand_idx]
             total_rel_change += rel_change[best_cand_idx]
             adv_tokens[idx] = best_cand
-            if "lm" in self.filters:
-                total_perp_diff += blocked_perp_diff[best_cand_idx]
+            #if "lm" in self.filters:
+            #    total_perp_diff += blocked_perp_diff[best_cand_idx]
             if debug == 3:
                 print ("--------------------------")
                 print ("Idx={}({}), chosen cand:{}, total_change_score:{}".format(
                         idx, tokens[idx], best_cand, total_change_score))
                 print ("change_scores:", *zip(cands, change_score))
-                if "lm" in self.filters:
-                    print ("perp diff: {}\nscores: {}".format(perp_diff, score))
-
         if adv_tokens == tokens:
             return None, cand_cache
         sent_str = ""
