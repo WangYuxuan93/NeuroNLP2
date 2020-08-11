@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=4 python -u zheng/dpattack.py --mode black \
- --min_word_cos_sim 0.9 --min_sent_cos_sim 0.9 --filters 'embedding' --generators 'synonym:sememe:embedding' \
+ --min_word_cos_sim 0.9 --min_sent_cos_sim 0.9 --generators 'synonym:sememe:embedding' \
  --batch_size 32 \
  --noscreen \
  --punctuation '.' '``' "''" ':' ',' \

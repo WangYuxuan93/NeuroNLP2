@@ -622,7 +622,8 @@ def parse(args):
         adv_lms = (adv_tokenizer,adv_lm)
     else:
         adv_lms = None
-    filters = args.filters.split(':')
+    #filters = args.filters.split(':')
+    filters = []
     generators = args.generators.split(':')
     alphabets = word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, pretrained_alphabet
 
@@ -777,7 +778,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--min_sent_cos_sim', type=float, default=0.9, help='Min sent cos similarity')
     args_parser.add_argument('--sent_encoder_path', type=str, help='universal sentence encoder path for sent cos sim')
     args_parser.add_argument('--train_vocab', type=str, help='Training set vocab file (json) for train filter')
-    args_parser.add_argument('--filters', type=str, default='word_sim:sent_sim:lm', help='filters for word substitution')
+    #args_parser.add_argument('--filters', type=str, default='word_sim:sent_sim:lm', help='filters for word substitution')
     args_parser.add_argument('--generators', type=str, default='synonym:sememe:embedding', help='generators for word substitution')
     args_parser.add_argument('--tagger', choices=['nltk', 'spacy', 'stanford'], default='nltk', help='POS tagger for POS checking in KNN embedding candidates')
     args_parser.add_argument('--use_pad', action='store_true', default=False, help='use PAD in input to attacker')
