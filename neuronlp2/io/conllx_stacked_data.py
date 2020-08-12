@@ -102,6 +102,7 @@ def read_data(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alph
     counter = 0
     reader = CoNLLXReader(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet)
     inst = reader.getNext(normalize_digits=normalize_digits, symbolic_root=True, symbolic_end=False)
+    src_words = []
     while inst is not None and (not max_size or counter < max_size):
         counter += 1
         if counter % 10000 == 0:
@@ -110,6 +111,7 @@ def read_data(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alph
         sent = inst.sentence
         stacked_heads, children, siblings, stacked_types, skip_connect = _generate_stack_inputs(inst.heads, inst.type_ids, prior_order)
         data.append([sent.word_ids, sent.char_id_seqs, inst.pos_ids, inst.heads, inst.type_ids, stacked_heads, children, siblings, stacked_types, skip_connect])
+        src_words.append(sent.words)
         max_len = max([len(char_seq) for char_seq in sent.char_seqs])
         if max_char_length < max_len:
             max_char_length = max_len
@@ -202,7 +204,8 @@ def read_data(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alph
 
     data_tensor = {'WORD': words, 'CHAR': chars, 'POS': pos, 'HEAD': heads, 'TYPE': types, 'MASK_ENC': masks_e,
                    'SINGLE': single, 'LENGTH': lengths, 'STACK_HEAD': stacked_heads, 'CHILD': children,
-                   'SIBLING': siblings, 'STACK_TYPE': stacked_types, 'SKIP_CONNECT': skip_connect, 'MASK_DEC': masks_d}
+                   'SIBLING': siblings, 'STACK_TYPE': stacked_types, 'SKIP_CONNECT': skip_connect, 'MASK_DEC': masks_d,
+                   'SRC': src_words}
     return data_tensor, data_size
 
 
@@ -210,6 +213,7 @@ def read_bucketed_data(source_path, word_alphabet, char_alphabet, pos_alphabet, 
                        max_size=None, normalize_digits=True, prior_order='inside_out'):
     data = [[] for _ in _buckets]
     max_char_length = [0 for _ in _buckets]
+    src_words = [[] for _ in _buckets]
     print('Reading data from %s' % source_path)
     counter = 0
     reader = CoNLLXReader(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet)
@@ -225,6 +229,7 @@ def read_bucketed_data(source_path, word_alphabet, char_alphabet, pos_alphabet, 
             if inst_size < bucket_size:
                 stacked_heads, children, siblings, stacked_types, skip_connect = _generate_stack_inputs(inst.heads, inst.type_ids, prior_order)
                 data[bucket_id].append([sent.word_ids, sent.char_id_seqs, inst.pos_ids, inst.heads, inst.type_ids, stacked_heads, children, siblings, stacked_types, skip_connect])
+                src_words[bucket_id].append(sent.words)
                 max_len = max([len(char_seq) for char_seq in sent.char_seqs])
                 if max_char_length[bucket_id] < max_len:
                     max_char_length[bucket_id] = max_len
@@ -325,7 +330,8 @@ def read_bucketed_data(source_path, word_alphabet, char_alphabet, pos_alphabet, 
 
         data_tensor = {'WORD': words, 'CHAR': chars, 'POS': pos, 'HEAD': heads, 'TYPE': types, 'MASK_ENC': masks_e,
                        'SINGLE': single, 'LENGTH': lengths, 'STACK_HEAD': stacked_heads, 'CHILD': children,
-                       'SIBLING': siblings, 'STACK_TYPE': stacked_types, 'SKIP_CONNECT': skip_connect, 'MASK_DEC': masks_d}
+                       'SIBLING': siblings, 'STACK_TYPE': stacked_types, 'SKIP_CONNECT': skip_connect, 'MASK_DEC': masks_d,
+                       'SRC': np.array(src_words[bucket_id])}
         data_tensors.append(data_tensor)
 
     return data_tensors, bucket_sizes

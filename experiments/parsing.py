@@ -78,13 +78,13 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
 
     for data in iterate_data(data, batch_size):
         words = data['WORD'].to(device)
-        pres = data['PRETRAINED'].to(device)
         chars = data['CHAR'].to(device)
         postags = data['POS'].to(device)
         heads = data['HEAD'].numpy()
         types = data['TYPE'].numpy()
         lengths = data['LENGTH'].numpy()
         if alg == 'graph':
+            pres = data['PRETRAINED'].to(device)
             masks = data['MASK'].to(device)
             heads_pred, types_pred = network.decode(words, pres, chars, postags, mask=masks, leading_symbolic=conllx_data.NUM_SYMBOLIC_TAGS)
         else:
@@ -108,7 +108,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         #print ("heads_pred:\n", heads_pred)
         #print ("types_pred:\n", types_pred)
         #print ("heads:\n", heads)
-        stats, stats_nopunc, stats_root, num_inst = parser.eval(words, postags, heads_pred, types_pred, heads, types,
+        stats, stats_nopunc, _, _, stats_root, num_inst = parser.eval(words, postags, heads_pred, types_pred, heads, types,
                                                                 word_alphabet, pos_alphabet, lengths, punct_set=punct_set, 
                                                                 symbolic_root=True)
         ucorr, lcorr, total, ucm, lcm = stats
@@ -379,6 +379,8 @@ def train(args):
     model = "{}-{}".format(model_type, mode)
     logger.info("Network: %s, num_layer=%s, hidden=%d, act=%s" % (model, num_layers, hidden_size, activation))
     logger.info("dropout(in, out, rnn): %s(%.2f, %.2f, %s)" % ('variational', p_in, p_out, p_rnn))
+    if model_type == 'StackPtr':
+        logger.info("grandPar={}, sibling={}, prior_order={}".format(grandPar, sibling, prior_order))
     if model_type == 'DeepBiAffine':
         logger.info("##### Input Encoder (Type: %s, Layer: %d) ###" % (mode, num_layers))
         if mode == 'Transformer':
@@ -483,12 +485,12 @@ def train(args):
         for step, data in enumerate(iterate_data(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True)):
             optimizer.zero_grad()
             words = data['WORD'].to(device)
-            pres = data['PRETRAINED'].to(device)
             chars = data['CHAR'].to(device)
             postags = data['POS'].to(device)
             heads = data['HEAD'].to(device)
             nbatch = words.size(0)
             if alg == 'graph':
+                pres = data['PRETRAINED'].to(device)
                 types = data['TYPE'].to(device)
                 masks = data['MASK'].to(device)
                 nwords = masks.sum() - nbatch
@@ -506,9 +508,10 @@ def train(args):
             loss_arc = loss_arc.sum()
             loss_type = loss_type.sum()
             loss_total = loss_arc + loss_type
-            overall_arc_correct += arc_correct
-            overall_type_correct += type_correct
-            overall_total_arcs += total_arcs
+            if alg == 'graph':
+                overall_arc_correct += arc_correct
+                overall_type_correct += type_correct
+                overall_total_arcs += total_arcs
             
             if loss_ty_token:
                 loss = loss_total.div(nwords)
@@ -554,8 +557,11 @@ def train(args):
             sys.stdout.write("\b" * num_back)
             sys.stdout.write(" " * num_back)
             sys.stdout.write("\b" * num_back)
-        train_uas = float(overall_arc_correct) * 100.0 / overall_total_arcs
-        train_lacc = float(overall_type_correct) * 100.0 / overall_total_arcs
+        if alg == 'graph':
+            train_uas = float(overall_arc_correct) * 100.0 / overall_total_arcs
+            train_lacc = float(overall_type_correct) * 100.0 / overall_total_arcs
+        else:
+            train_uas, train_lacc = 0, 0
         print('total: %d (%d), epochs w/o improve:%d, nans:%d, uas: %.2f%%, lacc: %.2f%%,  loss: %.4f (%.4f), arc: %.4f (%.4f), type: %.4f (%.4f), time: %.2fs' % (num_insts, num_words,
                                                                                                        num_epochs_without_improvement, num_nans, train_uas, train_lacc,
                                                                                                        train_loss / num_insts, train_loss / num_words,
@@ -753,7 +759,8 @@ def parse(args):
     network.load_state_dict(torch.load(model_name, map_location=device))
     model = "{}-{}".format(model_type, mode)
     logger.info("Network: %s, num_layer=%s, hidden=%d, act=%s" % (model, num_layers, hidden_size, activation))
-
+    if model_type == 'StackPtr':
+        logger.info("grandPar={}, sibling={}, prior_order={}".format(grandPar, sibling, prior_order))
     logger.info("Reading Data")
     if alg == 'graph':
         data_test = conllx_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, 
