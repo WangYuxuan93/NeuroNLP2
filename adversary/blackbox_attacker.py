@@ -370,7 +370,7 @@ def recover_word_case(word, reference_word):
 class BlackBoxAttacker(object):
     def __init__(self, model, candidates, vocab, synonyms, filters=['word_sim', 'sent_sim', 'lm', 'train'],
                 generators=['synonym', 'sememe', 'embedding'], max_mod_percent=0.05, 
-                tagger="nltk", use_pad=False, punct_set=[], cached_path=None, train_vocab=None,
+                tagger="nltk", use_pad=False, punct_set=[], beam=1, cached_path=None, train_vocab=None,
                 knn_path=None, max_knn_candidates=50, sent_encoder_path=None,
                 min_word_cos_sim=0.8, min_sent_cos_sim=0.8, 
                 cand_mlm=None, dynamic_mlm_cand=False, temperature=1.0, top_k=100, top_p=None, 
@@ -394,6 +394,7 @@ class BlackBoxAttacker(object):
         self.max_mod_percent = max_mod_percent
         self.cached_path = cached_path
         self.dynamic_mlm_cand = dynamic_mlm_cand
+        self.beam = beam
         logger.info("Filters: {}".format(filters))
         logger.info("Generators: {}".format(generators))
         logger.info("Max modification percentage: {}".format(max_mod_percent))
@@ -680,11 +681,18 @@ class BlackBoxAttacker(object):
         self.model.eval()
         heads_pred_list, rels_pred_list = [], []
         with torch.no_grad():
-            for words, pres, chars, pos, masks, bpes, first_idx, lan_id in self.str2id(tokens, tags):
-                heads_pred, rels_pred = self.model.decode(words, pres, chars, pos, mask=masks, 
-                    bpes=bpes, first_idx=first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
-                heads_pred_list.append(heads_pred)
-                rels_pred_list.append(rels_pred)
+            if self.model.hyps['model'] == 'Robust':
+                for words, pres, chars, pos, masks, bpes, first_idx, lan_id in self.str2id(tokens, tags):
+                    heads_pred, rels_pred = self.model.decode(words, pres, chars, pos, mask=masks, 
+                        bpes=bpes, first_idx=first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
+                    heads_pred_list.append(heads_pred)
+                    rels_pred_list.append(rels_pred)
+            elif self.model.hyps['model'] == 'StackPtr':
+                for words, pres, chars, pos, masks, bpes, first_idx, lan_id in self.str2id(tokens, tags):
+                    heads_pred, rels_pred = self.model.decode(words, pres, chars, pos, mask=masks, beam=self.beam,
+                        bpes=bpes, first_idx=first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
+                    heads_pred_list.append(heads_pred)
+                    rels_pred_list.append(rels_pred)
         heads_pred = np.concatenate(heads_pred_list, axis=0)
         rels_pred = np.concatenate(rels_pred_list, axis=0)
         return heads_pred, rels_pred

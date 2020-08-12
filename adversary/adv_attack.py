@@ -538,6 +538,7 @@ def parse(args):
     punctuation = args.punctuation
     pretrained_lm = args.pretrained_lm
     lm_path = args.lm_path
+    beam = args.beam
     print(args)
 
     logger.info("Creating Alphabets")
@@ -632,7 +633,7 @@ def parse(args):
     if args.mode == 'black':
         attacker = BlackBoxAttacker(network, candidates, vocab, synonyms, filters=filters, generators=generators,
                         max_mod_percent=args.max_mod_percent, tagger=args.tagger, use_pad=args.use_pad, 
-                        punct_set=punct_set,
+                        punct_set=punct_set, beam=beam,
                         cached_path=args.cached_path, train_vocab=args.train_vocab, knn_path=args.knn_path, 
                         max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
                         min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim, 
@@ -646,7 +647,7 @@ def parse(args):
     elif args.mode == 'random':
         attacker = RandomAttacker(network, candidates, vocab, synonyms, filters=filters, generators=generators,
                         max_mod_percent=args.max_mod_percent, tagger=args.tagger, use_pad=args.use_pad, 
-                        punct_set=punct_set,
+                        punct_set=punct_set, beam=beam,
                         cached_path=args.cached_path, train_vocab=args.train_vocab, knn_path=args.knn_path, 
                         max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
                         min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim,
@@ -685,7 +686,6 @@ def parse(args):
                                             pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx, 
                                             prior_order=prior_order)
 
-    beam = args.beam
     pred_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
     gold_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
     adv_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
