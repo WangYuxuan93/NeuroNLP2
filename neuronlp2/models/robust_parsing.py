@@ -534,7 +534,8 @@ class RobustParser(nn.Module):
         elif self.input_encoder_name == 'FastLSTM': 
             # for 'FastLSTM'
             # sequence shared mask dropout
-            enc = self.dropout_in(embeddings.transpose(1, 2)).transpose(1, 2)
+            #enc = self.dropout_in(embeddings.transpose(1, 2)).transpose(1, 2)
+            enc = embeddings
             output, ht = self.input_encoder(enc, mask)
         elif self.input_encoder_name == 'None':
             output = embeddings
