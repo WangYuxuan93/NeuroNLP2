@@ -20,8 +20,8 @@ import torch
 from torch.optim import SGD, Adam, AdamW
 from torch.nn.utils import clip_grad_norm_
 from neuronlp2.nn.utils import total_grad_norm
-from neuronlp2.io import get_logger, conllx_data, ud_data#, conllx_stacked_data #, iterate_data
-from neuronlp2.io import ud_stacked_data
+from neuronlp2.io import get_logger, conllx_data, ud_data #, iterate_data
+from neuronlp2.io import ud_stacked_data, conllx_stacked_data
 from neuronlp2.models.robust_parsing import RobustParser
 from neuronlp2.models.stack_pointer import StackPtrParser
 from neuronlp2.optim import ExponentialScheduler, StepScheduler, AttentionScheduler
@@ -405,6 +405,7 @@ def train(args):
     else:
         logger.info("Random Seed (set): %d" % random_seed)
     torch.manual_seed(random_seed)
+    np.random.seed(random_seed)
 
     hyps = json.load(open(args.config, 'r'))
     json.dump(hyps, open(os.path.join(model_path, 'config.json'), 'w'), indent=2)

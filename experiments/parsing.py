@@ -295,6 +295,7 @@ def train(args):
     else:
         logger.info("Random Seed (set): %d" % random_seed)
     torch.manual_seed(random_seed)
+    np.random.seed(random_seed)
 
     hyps = json.load(open(args.config, 'r'))
     json.dump(hyps, open(os.path.join(model_path, 'config.json'), 'w'), indent=2)

@@ -19,7 +19,7 @@
     "rel_mlp_dim": 100,
     "p_in": 0.33,
     "p_out": 0.33,
-    "loss_interpolation": 0.2,
+    "loss_interpolation": 0.5,
     "activation": "elu",
     "minimize_logp": false
   },
