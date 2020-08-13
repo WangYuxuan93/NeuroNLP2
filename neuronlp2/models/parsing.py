@@ -267,6 +267,8 @@ class DeepBiAffine(nn.Module):
                 enc_word, enc_pos = drop_input_independent(enc_word, enc_pos, self.p_in)
                 #print ("enc_word (a):\n", enc_word)
             enc = torch.cat([enc_word, enc_pos], dim=2)
+        else:
+            enc = enc_word
         # output from rnn [batch, length, hidden_size]
         if self.input_encoder_type == 'Linear':
             # sequence shared mask dropout
