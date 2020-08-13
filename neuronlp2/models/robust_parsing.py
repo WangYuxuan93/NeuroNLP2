@@ -500,7 +500,7 @@ class RobustParser(nn.Module):
                 #print ("enc_word (a):\n", enc_word)
             enc = torch.cat([enc_word, enc_pos], dim=2)
         else:
-            enc = enc_word
+            enc = self.dropout_in(enc_word)
 
         return enc
 
