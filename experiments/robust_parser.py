@@ -16,6 +16,7 @@ import argparse
 import math
 import numpy as np
 import torch
+import random
 #from torch.optim.adamw import AdamW
 from torch.optim import SGD, Adam, AdamW
 from torch.nn.utils import clip_grad_norm_
@@ -40,7 +41,7 @@ def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgra
     if optim == 'sgd':
         optimizer = SGD(parameters, lr=learning_rate, momentum=0.9, weight_decay=weight_decay, nesterov=True)
     elif optim == 'adamw':
-        optimizer = AdamW(parameters, lr=learning_rate, betas=betas, eps=eps, weight_decay=weight_decay)
+        optimizer = torch.optim.AdamW(parameters, lr=learning_rate, betas=betas, eps=eps, amsgrad=amsgrad, weight_decay=weight_decay)
     elif optim == 'adam':
         optimizer = Adam(parameters, lr=learning_rate, betas=betas, eps=eps, weight_decay=weight_decay)
     
@@ -143,13 +144,11 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
             lan_id, data = data
             lan_id = torch.LongTensor([lan_id]).to(device) 
         words = data['WORD'].to(device)
-        pres = data['PRETRAINED'].to(device)
         chars = data['CHAR'].to(device)
         postags = data['POS'].to(device)
         heads = data['HEAD'].numpy()
         rels = data['TYPE'].numpy()
         lengths = data['LENGTH'].numpy()
-        err_types = data['ERR_TYPE']
         srcs = data['SRC']
         if words.size()[0] == 1 and len(srcs) > 1:
             srcs = [srcs]
@@ -164,10 +163,14 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         else:
             bpes = first_idx = None
         if alg == 'graph':
+            pres = data['PRETRAINED'].to(device)
             masks = data['MASK'].to(device)
+            err_types = data['ERR_TYPE']
             heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, 
                 bpes=bpes, first_idx=first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
         else:
+            pres = None
+            err_types = None
             masks = data['MASK_ENC'].to(device)
             heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, 
                 bpes=bpes, first_idx=first_idx, lan_id=lan_id, beam=beam, leading_symbolic=conllx_data.NUM_SYMBOLIC_TAGS)
@@ -257,6 +260,19 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
 
 def train(args):
     logger = get_logger("Parsing")
+    torch.set_num_threads(1)
+    random_seed = args.seed
+    if random_seed == -1:
+        random_seed = np.random.randint(1e8)
+        logger.info("Random Seed (rand): %d" % random_seed)
+    else:
+        logger.info("Random Seed (set): %d" % random_seed)
+    torch.manual_seed(random_seed)
+    torch.cuda.manual_seed(random_seed)
+    np.random.seed(random_seed)
+    random.seed(random_seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
     args.cuda = torch.cuda.is_available()
     device = torch.device('cuda', 0) if args.cuda else torch.device('cpu')
@@ -398,14 +414,6 @@ def train(args):
     char_table = construct_char_embedding_table()
 
     logger.info("constructing network...")
-    random_seed = args.seed
-    if random_seed == -1:
-        random_seed = np.random.randint(1e8)
-        logger.info("Random Seed (rand): %d" % random_seed)
-    else:
-        logger.info("Random Seed (set): %d" % random_seed)
-    torch.manual_seed(random_seed)
-    np.random.seed(random_seed)
 
     hyps = json.load(open(args.config, 'r'))
     json.dump(hyps, open(os.path.join(model_path, 'config.json'), 'w'), indent=2)
@@ -488,12 +496,16 @@ def train(args):
                             {'params':single_network.lm_encoder.parameters(), 'lr':args.lm_lr}]
         logger.info("Language model lr: %.6f" % args.lm_lr)
     else:
-        optim_parameters = single_network._basic_parameters() #single_network.parameters()
+        #optim_parameters = single_network._basic_parameters() #single_network.parameters()
+        optim_parameters = single_network.parameters()
     optimizer, scheduler = get_optimizer(optim_parameters, optim, learning_rate, lr_decay, 
                                 betas, eps, amsgrad, weight_decay, warmup_steps,
                                 schedule, hidden_size, decay_steps)
-
-
+    #print ("parameters: {} \n".format(len(network.parameters())))
+    n = 0
+    for para in network.parameters():
+        n += 1
+    print ("num params = ", n)
     logger.info("Reading Data")
     if alg == 'graph':
         if not args.mix_datasets:
@@ -521,18 +533,33 @@ def train(args):
                                                         pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
     elif alg == 'transition':
         prior_order = hyps['input']['prior_order']
-        data_train = ud_stacked_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
-                                                        normalize_digits=args.normalize_digits, symbolic_root=True,
-                                                        pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx, 
-                                                        prior_order=prior_order)
-        data_dev = ud_stacked_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
-                                                        normalize_digits=args.normalize_digits, symbolic_root=True,
-                                                        pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx, 
-                                                        prior_order=prior_order)
-        data_test = ud_stacked_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
-                                                        normalize_digits=args.normalize_digits, symbolic_root=True,
-                                                        pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx, 
-                                                        prior_order=prior_order)
+        if data_format == "conllx":
+            data_train = conllx_stacked_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                            normalize_digits=args.normalize_digits,
+                                                            pos_idx=args.pos_idx, 
+                                                            prior_order=prior_order)
+            data_dev = conllx_stacked_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                            normalize_digits=args.normalize_digits,
+                                                            pos_idx=args.pos_idx, 
+                                                            prior_order=prior_order)
+            data_test = conllx_stacked_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                            normalize_digits=args.normalize_digits,
+                                                            pos_idx=args.pos_idx, 
+                                                            prior_order=prior_order)
+        else:
+            data_train = ud_stacked_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                            normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                            pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx, 
+                                                            prior_order=prior_order)
+            data_dev = ud_stacked_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                            normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                            pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx, 
+                                                            prior_order=prior_order)
+            data_test = ud_stacked_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                            normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                            pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx, 
+                                                            prior_order=prior_order)
+
     
     if alg == 'graph' and not args.mix_datasets:
         num_data = sum([sum(d) for d in data_train[1]])
@@ -621,7 +648,6 @@ def train(args):
                 #print ("lan_id:",lan_id)
             optimizer.zero_grad()
             words = data['WORD'].to(device)
-            pres = data['PRETRAINED'].to(device)
             chars = data['CHAR'].to(device)
             postags = data['POS'].to(device)
             heads = data['HEAD'].to(device)
@@ -654,12 +680,14 @@ def train(args):
             else:
                 bpes = first_idx = None
             if alg == 'graph':
+                pres = data['PRETRAINED'].to(device)
                 rels = data['TYPE'].to(device)
                 masks = data['MASK'].to(device)
                 nwords = masks.sum() - nbatch
                 losses, statistics = network(words, pres, chars, postags, heads, rels, 
                             mask=masks, bpes=bpes, first_idx=first_idx, lan_id=lan_id)
             else:
+                pres = None
                 masks_enc = data['MASK_ENC'].to(device)
                 masks_dec = data['MASK_DEC'].to(device)
                 stacked_heads = data['STACK_HEAD'].to(device)
@@ -672,6 +700,7 @@ def train(args):
                 #print ("children:\n", children)
                 #print ("siblings:\n", siblings)
                 #print ("stacked_rels:\n", stacked_rels)
+                #print ("words:\n", words)
                 nwords = masks_enc.sum() - nbatch
                 losses = network(words, pres, chars, postags, heads, stacked_heads, children, siblings, stacked_rels,
                                         mask_e=masks_enc, mask_d=masks_dec, bpes=bpes, first_idx=first_idx, lan_id=lan_id)
@@ -680,7 +709,6 @@ def train(args):
             arc_loss = arc_loss.sum()
             rel_loss = rel_loss.sum()
             loss_total = arc_loss + rel_loss
-
             if statistics is not None:
                 arc_correct, rel_correct, total_arcs = statistics
                 overall_arc_correct += arc_correct.sum().cpu().numpy()
@@ -696,7 +724,18 @@ def train(args):
                 grad_norm = clip_grad_norm_(network.parameters(), grad_clip)
             else:
                 grad_norm = total_grad_norm(network.parameters())
-
+            """
+            print ("grad_norm:\n", grad_norm)
+            np.set_printoptions(threshold = np.inf)
+            print ("lr: ", scheduler.get_lr()[0])
+            print ("src_dense:\n", network.src_dense.weight.detach().numpy()[:3,:10])
+            print ("src_dense grad:\n", network.src_dense.weight.grad.detach().numpy()[:3,:10])
+            print ("arc_h:\n", network.arc_h.weight.detach().numpy()[:3,:10])
+            print ("arc_h grad:\n", network.arc_h.weight.grad.detach().numpy()[:3,:10])
+            print ("rel_h:\n", network.rel_h.weight.detach().numpy()[:3,:10])
+            print ("rel_h grad:\n", network.rel_h.weight.grad.detach().numpy()[:3,:10])
+            #print ("emb grad:\n", network.word_embed.weight.grad.detach().numpy())
+            """
             if math.isnan(grad_norm):
                 num_nans += 1
             else:

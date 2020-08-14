@@ -16,8 +16,9 @@ import argparse
 import math
 import numpy as np
 import torch
-from torch.optim.adamw import AdamW
-from torch.optim import SGD, Adam
+import random
+#from torch.optim.adamw import AdamW
+from torch.optim import SGD, Adam, AdamW
 from torch.nn.utils import clip_grad_norm_
 from neuronlp2.nn.utils import total_grad_norm
 from neuronlp2.io import get_logger, conllx_data, conllx_stacked_data, iterate_data
@@ -167,7 +168,20 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
 
 def train(args):
     logger = get_logger("Parsing")
-
+    torch.set_num_threads(1)
+    random_seed = args.seed
+    if random_seed == -1:
+        random_seed = np.random.randint(1e8)
+        logger.info("Random Seed (rand): %d" % random_seed)
+    else:
+        logger.info("Random Seed (set): %d" % random_seed)
+    torch.manual_seed(random_seed)
+    torch.cuda.manual_seed(random_seed)
+    np.random.seed(random_seed)
+    random.seed(random_seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+   
     args.cuda = torch.cuda.is_available()
     device = torch.device('cuda', 0) if args.cuda else torch.device('cpu')
     train_path = args.train
@@ -288,14 +302,6 @@ def train(args):
     char_table = construct_char_embedding_table()
 
     logger.info("constructing network...")
-    random_seed = args.seed
-    if random_seed == -1:
-        random_seed = np.random.randint(1e8)
-        logger.info("Random Seed (rand): %d" % random_seed)
-    else:
-        logger.info("Random Seed (set): %d" % random_seed)
-    torch.manual_seed(random_seed)
-    np.random.seed(random_seed)
 
     hyps = json.load(open(args.config, 'r'))
     json.dump(hyps, open(os.path.join(model_path, 'config.json'), 'w'), indent=2)
@@ -421,7 +427,11 @@ def train(args):
     optimizer, scheduler = get_optimizer(network.parameters(), optim, learning_rate, lr_decay, 
                                 betas, eps, amsgrad, weight_decay, warmup_steps,
                                 schedule, hidden_size, decay_steps)
-
+    #print ("parameters: {} \n".format(len(network.parameters())))
+    n = 0
+    for para in network.parameters():
+        n += 1
+    print ("num params = ", n)
     best_ucorrect = 0.0
     best_lcorrect = 0.0
     best_ucomlpete = 0.0
@@ -504,6 +514,7 @@ def train(args):
                 siblings = data['SIBLING'].to(device)
                 stacked_types = data['STACK_TYPE'].to(device)
                 nwords = masks_enc.sum() - nbatch
+                #print ("words:\n", words)
                 loss_arc, loss_type = network.loss(words, chars, postags, heads, stacked_heads, children, siblings, stacked_types,
                                                    mask_e=masks_enc, mask_d=masks_dec)
             loss_arc = loss_arc.sum()
@@ -523,7 +534,18 @@ def train(args):
                 grad_norm = clip_grad_norm_(network.parameters(), grad_clip)
             else:
                 grad_norm = total_grad_norm(network.parameters())
-
+            """
+            print ("grad_norm:\n", grad_norm)
+            np.set_printoptions(threshold = np.inf)
+            print ("lr: ", scheduler.get_lr()[0])
+            print ("src_dense:\n", network.src_dense.weight.detach().numpy()[:3,:10])
+            print ("src_dense grad:\n", network.src_dense.weight.grad.detach().numpy()[:3,:10])
+            print ("arc_h:\n", network.arc_h.weight.detach().numpy()[:3,:10])
+            print ("arc_h grad:\n", network.arc_h.weight.grad.detach().numpy()[:3,:10])
+            print ("rel_h:\n", network.type_h.weight.detach().numpy()[:3,:10])
+            print ("rel_h grad:\n", network.type_h.weight.grad.detach().numpy()[:3,:10])
+            #print ("emb grad:\n", network.word_embed.weight.grad.detach().numpy())
+            """
             if math.isnan(grad_norm):
                 num_nans += 1
             else:

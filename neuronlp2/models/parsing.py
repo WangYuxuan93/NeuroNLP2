@@ -2,6 +2,7 @@ __author__ = 'max'
 
 from overrides import overrides
 import numpy as np
+import random
 from enum import Enum
 import torch
 import torch.nn as nn
@@ -607,9 +608,8 @@ class StackPtrNet(nn.Module):
                  encoder_layers, decoder_layers, num_labels, arc_space, type_space,
                  embedd_word=None, embedd_char=None, embedd_pos=None, p_in=0.33, p_out=0.33, p_rnn=(0.33, 0.33),
                  pos=True, use_char=False, prior_order='inside_out', grandPar=False, sibling=False, activation='elu'):
-
         super(StackPtrNet, self).__init__()
-        self.word_embed = nn.Embedding(num_words, word_dim, _weight=embedd_word, padding_idx=1)
+        self.word_embed = torch.nn.Embedding(num_words, word_dim, _weight=embedd_word, padding_idx=1)
         self.pos_embed = nn.Embedding(num_pos, pos_dim, _weight=embedd_pos, padding_idx=1) if pos else None
         if use_char:
             self.char_embed = nn.Embedding(num_chars, char_dim, _weight=embedd_char, padding_idx=1)
@@ -658,13 +658,6 @@ class StackPtrNet(nn.Module):
         self.encoder_layers = encoder_layers
         self.encoder = RNN_ENCODER(dim_enc, hidden_size, num_layers=encoder_layers, batch_first=True, bidirectional=True, dropout=p_rnn)
 
-        dim_dec = hidden_size // 2
-        self.src_dense = nn.Linear(2 * hidden_size, dim_dec)
-        self.decoder_layers = decoder_layers
-        self.decoder = RNN_DECODER(dim_dec, hidden_size, num_layers=decoder_layers, batch_first=True, bidirectional=False, dropout=p_rnn)
-
-        self.hx_dense = nn.Linear(2 * hidden_size, hidden_size)
-
         self.arc_h = nn.Linear(hidden_size, arc_space) # arc dense for decoder
         self.arc_c = nn.Linear(hidden_size * 2, arc_space)  # arc dense for encoder
         self.biaffine = BiAffine(arc_space, arc_space)
@@ -673,6 +666,15 @@ class StackPtrNet(nn.Module):
         self.type_c = nn.Linear(hidden_size * 2, type_space)  # type dense for encoder
         self.bilinear = BiLinear(type_space, type_space, self.num_labels)
 
+        self.reset_parameters(embedd_word, embedd_char, embedd_pos)
+
+        dim_dec = hidden_size // 2
+        self.src_dense = nn.Linear(2 * hidden_size, dim_dec)
+        self.decoder_layers = decoder_layers
+        self.decoder = RNN_DECODER(dim_dec, hidden_size, num_layers=decoder_layers, batch_first=True, bidirectional=False, dropout=p_rnn)
+
+        self.hx_dense = nn.Linear(2 * hidden_size, hidden_size)
+
         assert activation in ['elu', 'tanh']
         if activation == 'elu':
             self.activation = nn.ELU(inplace=True)
@@ -680,7 +682,7 @@ class StackPtrNet(nn.Module):
             self.activation = nn.Tanh()
 
         self.criterion = nn.CrossEntropyLoss(reduction='none')
-        self.reset_parameters(embedd_word, embedd_char, embedd_pos)
+        
 
     def reset_parameters(self, embedd_word, embedd_char, embedd_pos):
         if embedd_word is None:
@@ -713,7 +715,6 @@ class StackPtrNet(nn.Module):
         # apply dropout word on input
         word = self.dropout_in(word)
         enc = word
-
         if self.char_embed is not None:
             # [batch, length, char_length, char_dim]
             char = self.char_cnn(self.char_embed(input_char))
@@ -741,7 +742,6 @@ class StackPtrNet(nn.Module):
         enc_dim = output_enc.size(2)
         batch, length_dec = heads_stack.size()
         src_encoding = output_enc.gather(dim=1, index=heads_stack.unsqueeze(2).expand(batch, length_dec, enc_dim))
-
         if self.sibling:
             # [batch, length_decoder, hidden_size * 2]
             mask_sib = siblings.gt(0).float().unsqueeze(2)
@@ -755,10 +755,10 @@ class StackPtrNet(nn.Module):
             # [batch, length_decoder, hidden_size * 2]
             output_enc_gpar = output_enc.gather(dim=1, index=gpars.expand(batch, length_dec, enc_dim)) #* mask_gpar
             src_encoding = src_encoding + output_enc_gpar
-
         # transform to decoder input
         # [batch, length_decoder, dec_dim]
         src_encoding = self.activation(self.src_dense(src_encoding))
+        #print ("src_encoding:\n", src_encoding)
         # output from rnn [batch, length, hidden_size]
         output, hn = self.decoder(src_encoding, mask, hx=hx)
         # apply dropout
@@ -805,7 +805,7 @@ class StackPtrNet(nn.Module):
     def loss(self, input_word, input_char, input_pos, heads, stacked_heads, children, siblings, stacked_types, mask_e=None, mask_d=None):
         # output from encoder [batch, length_encoder, hidden_size]
         output_enc, hn = self._get_encoder_output(input_word, input_char, input_pos, mask=mask_e)
-
+        #print ("output_enc:\n", output_enc)
         # output size [batch, length_encoder, arc_space]
         arc_c = self.activation(self.arc_c(output_enc))
         # output size [batch, length_encoder, type_space]
@@ -816,7 +816,7 @@ class StackPtrNet(nn.Module):
 
         # output from decoder [batch, length_decoder, tag_space]
         output_dec, _ = self._get_decoder_output(output_enc, heads, stacked_heads, siblings, hn, mask=mask_d)
-
+        #print ("output_dec:\n", output_dec)
         # output size [batch, length_decoder, arc_space]
         arc_h = self.activation(self.arc_h(output_dec))
         type_h = self.activation(self.type_h(output_dec))
@@ -834,12 +834,10 @@ class StackPtrNet(nn.Module):
 
         # [batch, length_decoder, length_encoder]
         out_arc = self.biaffine(arc_h, arc_c, mask_query=mask_d, mask_key=mask_e)
-
         # get vector for heads [batch, length_decoder, type_space],
         type_c = type_c.gather(dim=1, index=children.unsqueeze(2).expand(batch, max_len_d, type_space))
         # compute output for type [batch, length_decoder, num_labels]
         out_type = self.bilinear(type_h, type_c)
-
         # mask invalid position to -inf for log_softmax
         if mask_e is not None:
             minus_mask_e = mask_e.eq(0).unsqueeze(1)
@@ -849,7 +847,6 @@ class StackPtrNet(nn.Module):
         # loss_arc shape [batch, length_decoder]
         loss_arc = self.criterion(out_arc.transpose(1, 2), children)
         loss_type = self.criterion(out_type.transpose(1, 2), stacked_types)
-
         if mask_d is not None:
             loss_arc = loss_arc * mask_d
             loss_type = loss_type * mask_d

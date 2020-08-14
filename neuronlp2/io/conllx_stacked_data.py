@@ -94,13 +94,13 @@ def _generate_stack_inputs(heads, types, prior_order):
 
 
 def read_data(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet,
-              max_size=None, normalize_digits=True, prior_order='inside_out'):
+              max_size=None, normalize_digits=True, prior_order='inside_out', pos_idx=3):
     data = []
     max_length = 0
     max_char_length = 0
     print('Reading data from %s' % source_path)
     counter = 0
-    reader = CoNLLXReader(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet)
+    reader = CoNLLXReader(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, pos_idx=pos_idx)
     inst = reader.getNext(normalize_digits=normalize_digits, symbolic_root=True, symbolic_end=False)
     src_words = []
     while inst is not None and (not max_size or counter < max_size):
@@ -210,13 +210,13 @@ def read_data(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alph
 
 
 def read_bucketed_data(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet,
-                       max_size=None, normalize_digits=True, prior_order='inside_out'):
+                       max_size=None, normalize_digits=True, prior_order='inside_out', pos_idx=3):
     data = [[] for _ in _buckets]
     max_char_length = [0 for _ in _buckets]
     src_words = [[] for _ in _buckets]
     print('Reading data from %s' % source_path)
     counter = 0
-    reader = CoNLLXReader(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet)
+    reader = CoNLLXReader(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, pos_idx=pos_idx)
     inst = reader.getNext(normalize_digits=normalize_digits, symbolic_root=True, symbolic_end=False)
     while inst is not None and (not max_size or counter < max_size):
         counter += 1

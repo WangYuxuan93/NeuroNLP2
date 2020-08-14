@@ -14,6 +14,7 @@ from neuronlp2.nn.dropout import drop_input_independent
 from torch.autograd import Variable
 from transformers import *
 from neuronlp2.models.robust_parsing import RobustParser
+import random
 
 class PriorOrder(Enum):
     DEPTH = 0
@@ -122,7 +123,6 @@ class StackPtrParser(RobustParser):
         enc_dim = output_enc.size(2)
         batch, length_dec = heads_stack.size()
         src_encoding = output_enc.gather(dim=1, index=heads_stack.unsqueeze(2).expand(batch, length_dec, enc_dim))
-
         if self.sibling:
             # [batch, length_decoder, hidden_size * 2]
             mask_sib = siblings.gt(0).float().unsqueeze(2)
@@ -136,10 +136,10 @@ class StackPtrParser(RobustParser):
             # [batch, length_decoder, hidden_size * 2]
             output_enc_gpar = output_enc.gather(dim=1, index=gpars.expand(batch, length_dec, enc_dim)) #* mask_gpar
             src_encoding = src_encoding + output_enc_gpar
-
         # transform to decoder input
         # [batch, length_decoder, dec_dim]
         src_encoding = self.activation(self.src_dense(src_encoding))
+        #print ("src_encoding:\n", src_encoding)
         # output from rnn [batch, length, hidden_size]
         output, hn = self.decoder(src_encoding, mask, hx=hx)
         # apply dropout
@@ -191,7 +191,7 @@ class StackPtrParser(RobustParser):
                                 bpes=bpes, first_idx=first_idx, lan_id=lan_id)
         # (batch, seq_len, hidden_size)
         output_enc, hn = self._input_encoder(embeddings, mask=mask_e, lan_id=lan_id)
-
+        #print ("output_enc:\n", output_enc)
         # output size [batch, length_encoder, arc_space]
         arc_c = self.activation(self.arc_c(output_enc))
         # output size [batch, length_encoder, type_space]
@@ -202,7 +202,7 @@ class StackPtrParser(RobustParser):
 
         # output from decoder [batch, length_decoder, tag_space]
         output_dec, _ = self._get_decoder_output(output_enc, heads, stacked_heads, siblings, hn, mask=mask_d)
-
+        #print ("output_dec:\n", output_dec)
         # output size [batch, length_decoder, arc_space]
         arc_h = self.activation(self.arc_h(output_dec))
         rel_h = self.activation(self.rel_h(output_dec))
@@ -221,12 +221,10 @@ class StackPtrParser(RobustParser):
 
         # [batch, length_decoder, length_encoder]
         arc_logits = self.arc_attention(arc_h, arc_c, mask_query=mask_d, mask_key=mask_e)
-
         # get vector for heads [batch, length_decoder, rel_space],
         rel_c = rel_c.gather(dim=1, index=children.unsqueeze(2).expand(batch, max_len_d, rel_space))
         # compute output for type [batch, length_decoder, num_labels]
         rel_logits = self.rel_attention(rel_h, rel_c)
-
         # mask invalid position to -inf for log_softmax
         if mask_e is not None:
             minus_mask_e = mask_e.eq(0).unsqueeze(1)
@@ -257,7 +255,6 @@ class StackPtrParser(RobustParser):
                                 bpes=bpes, first_idx=first_idx, lan_id=lan_id)
         # (batch, seq_len, hidden_size)
         output_enc, hn = self._input_encoder(embeddings, mask=mask, lan_id=lan_id)
-
         enc_dim = output_enc.size(2)
         device = output_enc.device
         # output size [batch, length_encoder, arc_space]

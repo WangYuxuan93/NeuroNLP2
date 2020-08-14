@@ -64,7 +64,6 @@ class RobustParser(nn.Module):
                  embedd_word=None, embedd_char=None, embedd_pos=None,
                  pretrained_lm='none', lm_path=None, num_lans=1):
         super(RobustParser, self).__init__()
-        
         self.hyps = hyps
         self.device = device
         # for refinement
@@ -501,7 +500,6 @@ class RobustParser(nn.Module):
             enc = torch.cat([enc_word, enc_pos], dim=2)
         else:
             enc = self.dropout_in(enc_word)
-
         return enc
 
     def _input_encoder(self, embeddings, mask=None, lan_id=None):
