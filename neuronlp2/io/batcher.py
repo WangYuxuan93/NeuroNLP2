@@ -180,7 +180,9 @@ def iterate_bucketed_batch(data, batch_size, unk_replace=0., shuffle=False):
 
             lengths = data['LENGTH'][excerpt]
             batch_length = lengths.max().item()
-            batch = {'WORD': words[excerpt, :batch_length], 'LENGTH': lengths, 'SRC': data['SRC'][excerpt]}
+            batch = {'WORD': words[excerpt, :batch_length], 'LENGTH': lengths}
+            if 'SRC' in data:
+                batch['SRC'] = data['SRC'][excerpt]
             batch.update({key: field[excerpt, :batch_length] for key, field in data.items() if key not in exclude_keys})
             batch.update({key: field[excerpt, :2 * batch_length - 1] for key, field in data.items() if key in stack_keys})
             yield batch

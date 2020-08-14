@@ -165,7 +165,8 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         if alg == 'graph':
             pres = data['PRETRAINED'].to(device)
             masks = data['MASK'].to(device)
-            err_types = data['ERR_TYPE']
+            #err_types = data['ERR_TYPE']
+            err_types = None
             heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, 
                 bpes=bpes, first_idx=first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
         else:
@@ -238,11 +239,11 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         accum_total_err = 1
     if accum_total_err_nopunc == 0:
         accum_total_err_nopunc = 1
-    print('Error Token: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%' % (
-        accum_ucorr_err, accum_lcorr_err, accum_total_err, accum_ucorr_err * 100 / accum_total_err, accum_lcorr_err * 100 / accum_total_err))
-    print('Error Token Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%' % (
-        accum_ucorr_err_nopunc, accum_lcorr_err_nopunc, accum_total_err_nopunc, 
-        accum_ucorr_err_nopunc * 100 / accum_total_err_nopunc, accum_lcorr_err_nopunc * 100 / accum_total_err_nopunc))
+    #print('Error Token: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%' % (
+    #    accum_ucorr_err, accum_lcorr_err, accum_total_err, accum_ucorr_err * 100 / accum_total_err, accum_lcorr_err * 100 / accum_total_err))
+    #print('Error Token Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%' % (
+    #    accum_ucorr_err_nopunc, accum_lcorr_err_nopunc, accum_total_err_nopunc, 
+    #    accum_ucorr_err_nopunc * 100 / accum_total_err_nopunc, accum_lcorr_err_nopunc * 100 / accum_total_err_nopunc))
 
     if not write_to_tmp:
         if prev_best_lcorr < accum_lcorr_nopunc or (prev_best_lcorr == accum_lcorr_nopunc and prev_best_ucorr < accum_ucorr_nopunc):
@@ -427,7 +428,7 @@ def train(args):
     loss_interpolation = hyps['biaffine']['loss_interpolation']
     hidden_size = hyps['input_encoder']['hidden_size']
     num_lans = 1
-    if not args.mix_datasets:
+    if data_format == 'ud' and not args.mix_datasets:
         lans_train = args.lan_train.split(':')
         lans_dev = args.lan_dev.split(':')
         lans_test = args.lan_test.split(':')
@@ -508,7 +509,7 @@ def train(args):
     print ("num params = ", n)
     logger.info("Reading Data")
     if alg == 'graph':
-        if not args.mix_datasets:
+        if data_format == 'ud' and not args.mix_datasets:
             data_train = data_reader.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, 
                                                         normalize_digits=args.normalize_digits, symbolic_root=True,
                                                         pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx,
@@ -561,7 +562,7 @@ def train(args):
                                                             prior_order=prior_order)
 
     
-    if alg == 'graph' and not args.mix_datasets:
+    if alg == 'graph' and data_format == 'ud' and not args.mix_datasets:
         num_data = sum([sum(d) for d in data_train[1]])
     else:
         num_data = sum(data_train[1])
@@ -613,7 +614,7 @@ def train(args):
         opt_info = 'adam, betas=(%.1f, %.3f), eps=%.1e' % (betas[0], betas[1], eps)
     elif optim == 'sgd':
         opt_info = 'sgd, momentum=0.9, nesterov=True'
-    if alg == 'graph' and not args.mix_datasets:
+    if alg == 'graph' and data_format == 'ud' and not args.mix_datasets:
         iterate = multi_language_iterate_data
         multi_lan_iter = True
     else:
@@ -642,7 +643,7 @@ def train(args):
         gc.collect()
         #for step, data in enumerate(iterate_data(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True)):
         for step, data in enumerate(iterate(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True, switch_lan=True)):
-            if alg == 'graph' and not args.mix_datasets:
+            if alg == 'graph' and data_format == 'ud' and not args.mix_datasets:
                 lan_id, data = data
                 lan_id = torch.LongTensor([lan_id]).to(device)
                 #print ("lan_id:",lan_id)
@@ -945,7 +946,7 @@ def parse(args):
     assert model_type in ['Robust', 'StackPtr']
 
     num_lans = 1
-    if not args.mix_datasets:
+    if data_format == 'ud' and not args.mix_datasets:
         lans_train = args.lan_train.split(':')
         lans_dev = args.lan_dev.split(':')
         lans_test = args.lan_test.split(':')
@@ -989,7 +990,7 @@ def parse(args):
 
     logger.info("Reading Data")
     if alg == 'graph':
-        if not args.mix_datasets:
+        if data_format == 'ud' and not args.mix_datasets:
             data_test = data_reader.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, 
                                             rel_alphabet, normalize_digits=args.normalize_digits, 
                                             symbolic_root=True, pre_alphabet=pretrained_alphabet, 
@@ -1018,7 +1019,7 @@ def parse(args):
     #gold_filename = os.path.join(result_path, 'gold.txt')
     #gold_writer.start(gold_filename)
 
-    if alg == 'graph' and not args.mix_datasets:
+    if alg == 'graph' and data_format == 'ud' and not args.mix_datasets:
         multi_lan_iter = True
     else:
         multi_lan_iter = False
