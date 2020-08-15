@@ -5,7 +5,7 @@ CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=4 python -u adv_attack.py --mode black \
  --noscreen \
  --punctuation '.' '``' "''" ':' ',' \
  --pretrained_lm none \
- --format ud \
+ --format conllx \
  --test "../experiments/data/ptb_two_auto_orig.conll" \
  --lan_test en \
  --model_path "../experiments/models/parsing/robust" \
@@ -15,7 +15,8 @@ CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=4 python -u adv_attack.py --mode black \
  --syn "data/two_synonyms.json" \
  --adv_rel_ratio 0.5 --adv_fluency_ratio 0.2 --max_mod_percent 0.15 \
  --max_knn_candidates 20 --knn_path "output/embed" --train_vocab "data/vocab.json" \
- --basic_word_embedding #--cand_cache_path "output/cache.json"
+ --normalize_digits
+ #--basic_word_embedding #--cand_cache_path "output/cache.json"
  #--use_pad
  #--random_sub_if_no_change 
  # --mix_datasets

@@ -86,13 +86,14 @@ class CoNLLXReader(object):
                 char_ids = char_ids[:MAX_CHAR_LENGTH]
             char_seqs.append(chars)
             char_id_seqs.append(char_ids)
-
-            word = DIGIT_RE.sub("0", tokens[1]) if normalize_digits else tokens[1]
+            word = tokens[1]
             pos = tokens[self.pos_idx]
             head = int(tokens[6])
             type = tokens[7]
-
+            
+            # save original word in words (data['SRC']), to recover this for normalize_digits=True
             words.append(word)
+            word = DIGIT_RE.sub("0", word) if normalize_digits else word
             word_ids.append(self.__word_alphabet.get_index(word))
 
             postags.append(pos)

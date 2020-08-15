@@ -12,6 +12,7 @@ CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=4 python -u robust_parser.py --mode trai
  --dev "data/ptb_two_auto.conll" \
  --test "data/ptb_two_auto.conll" \
  --model_path "models/parsing/robust" \
+ --normalize_digits
  #--mix_datasets \
  #--punctuation 'PUNCT' --pos_idx 3 \
  #--freeze --basic_word_embedding 

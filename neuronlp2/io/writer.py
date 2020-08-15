@@ -1,4 +1,5 @@
 __author__ = 'max'
+import re
 
 
 class CoNLL03Writer(object):
@@ -52,6 +53,9 @@ class CoNLLXWriter(object):
                 adv_flag = '_'
                 w = self.__word_alphabet.get_instance(word[i, j])
                 if w == '<_UNK>' and src_words is not None:
+                    w = src_words[i][j]
+                # this is to deal with normalize_digits = True
+                if re.match(r"\d", w):
                     w = src_words[i][j]
                 if adv_words is not None and adv_words[i][j] != w:
                     adv_flag = '['+w+']'

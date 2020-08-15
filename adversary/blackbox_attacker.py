@@ -28,6 +28,7 @@ from neuronlp2.io.common import PAD_CHAR, PAD, PAD_POS, PAD_TYPE, PAD_ID_CHAR, P
 from neuronlp2.io import common
 from adversary.lm.bert import Bert
 #from adversary.adv_attack import convert_tokens_to_ids
+from neuronlp2.io.common import DIGIT_RE
 
 stopwords = set(
         [
@@ -370,7 +371,8 @@ def recover_word_case(word, reference_word):
 class BlackBoxAttacker(object):
     def __init__(self, model, candidates, vocab, synonyms, filters=['word_sim', 'sent_sim', 'lm', 'train'],
                 generators=['synonym', 'sememe', 'embedding'], max_mod_percent=0.05, 
-                tagger="nltk", use_pad=False, punct_set=[], beam=1, cached_path=None, train_vocab=None,
+                tagger="nltk", punct_set=[], beam=1, normalize_digits=False,
+                cached_path=None, train_vocab=None,
                 knn_path=None, max_knn_candidates=50, sent_encoder_path=None,
                 min_word_cos_sim=0.8, min_sent_cos_sim=0.8, 
                 cand_mlm=None, dynamic_mlm_cand=False, temperature=1.0, top_k=100, top_p=None, 
@@ -389,17 +391,17 @@ class BlackBoxAttacker(object):
         self.filters = filters
         self.generators = generators
         self.tagger = tagger
-        self.use_pad = use_pad
         self.punct_set = punct_set
         self.max_mod_percent = max_mod_percent
         self.cached_path = cached_path
         self.dynamic_mlm_cand = dynamic_mlm_cand
         self.beam = beam
+        self.normalize_digits = normalize_digits
         logger.info("Filters: {}".format(filters))
         logger.info("Generators: {}".format(generators))
         logger.info("Max modification percentage: {}".format(max_mod_percent))
         logger.info("POS tagger: {}".format(tagger))
-        logger.info("Use PAD input: {}".format(use_pad))
+        logger.info("Normalize digits: {}".format(normalize_digits))
         if cached_path is not None:
             logger.info("Loading cached candidates from: %s" % cached_path)
             self.cached_cands = json.load(open(cached_path, 'r'))
@@ -578,7 +580,14 @@ class BlackBoxAttacker(object):
             return None
 
     def str2id(self, tokens, tags):
-        word_ids = [[self.word_alphabet.get_index(x) for x in s] for s in tokens]
+        #word_ids = [[self.word_alphabet.get_index(x) for x in s] for s in tokens]
+        word_ids = []
+        for s in tokens:
+            word_list = []
+            for x in s:
+                x = DIGIT_RE.sub("0", x) if self.normalize_digits else x
+                word_list.append(self.word_alphabet.get_index(x))
+            word_ids.append(word_list)
         #pre_ids = [[self.pretrained_alphabet.get_index(x) for x in s] for s in tokens]
         pre_ids = []
         for s in tokens:
@@ -856,15 +865,7 @@ class BlackBoxAttacker(object):
 
     def filter_cands_with_lm(self, tokens, cands, idx, debug=False):
         new_cands, new_perp_diff = [], []
-        if self.use_pad:
-            clean_toks = []
-            for tok in tokens:
-                if tok != PAD:
-                    clean_toks.append(tok)
-                else:
-                    break
-        else:
-            clean_toks = tokens
+        clean_toks = tokens
         # (cand_size)
         #perp_diff = self.get_perp_diff(tokens, cands, idx)
         perp_diff = self.get_perp_diff(clean_toks, cands, idx)
@@ -1019,15 +1020,7 @@ class BlackBoxAttacker(object):
         return cos_sim.numpy()
 
     def filter_cands_with_sent_sim(self, tokens, cands, idx, debug=False):
-        if self.use_pad:
-            clean_toks = []
-            for tok in tokens:
-                if tok != PAD:
-                    clean_toks.append(tok)
-                else:
-                    break
-        else:
-            clean_toks = tokens
+        clean_toks = tokens
         batch_tokens, _ = self.gen_cand_batch(clean_toks, cands, idx, tokens)
         #batch_tokens, _ = self.gen_cand_batch(tokens, cands, idx, tokens)
         sents = [' '.join(toks) for toks in batch_tokens]

@@ -158,7 +158,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         heads = data['HEAD'].numpy()
         rels = data['TYPE'].numpy()
         lengths = data['LENGTH'].numpy()
-        err_types = data['ERR_TYPE']
+        #err_types = data['ERR_TYPE']
         srcs = data['SRC']
         if words.size()[0] == 1 and len(srcs) > 1:
             srcs = [srcs]
@@ -201,7 +201,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         stats, stats_nopunc, err_stats, err_nopunc_stats, stats_root, num_inst = parser.eval(
                                     words, postags, heads_pred, rels_pred, heads, rels,
                                     word_alphabet, pos_alphabet, lengths, punct_set=punct_set, 
-                                    symbolic_root=True, err_types=err_types)
+                                    symbolic_root=True, err_types=None)
         ucorr, lcorr, total, ucm, lcm = stats
         ucorr_nopunc, lcorr_nopunc, total_nopunc, ucm_nopunc, lcm_nopunc = stats_nopunc
         ucorr_err, lcorr_err, total_err = err_stats
@@ -267,7 +267,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
 def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set, word_alphabet, pos_alphabet, 
         device, beam=1, batch_size=256, write_to_tmp=True, prev_best_lcorr=0, prev_best_ucorr=0,
         pred_filename=None, tokenizer=None, multi_lan_iter=False, debug=1, pretrained_alphabet=None,
-        use_pad=False, cand_cache_path=None):
+        use_pad=False, cand_cache_path=None, normalize_digits=False):
     network.eval()
     accum_ucorr = 0.0
     accum_lcorr = 0.0
@@ -334,7 +334,7 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
         heads = data['HEAD'].numpy()
         rels = data['TYPE'].numpy()
         lengths = data['LENGTH'].numpy()
-        err_types = data['ERR_TYPE']
+        #err_types = data['ERR_TYPE']
 
         adv_words = words.clone()
         adv_pres = pres.clone()
@@ -342,17 +342,10 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
         for i in range(len(lengths)):
             accum_total_sent += 1
             length = lengths[i]
-            if use_pad:
-                adv_tokens = [word_alphabet.get_instance(w) for w in words[i]]
-                adv_tokens[:length] = data['SRC'][i].copy()
-                adv_postags = [pos_alphabet.get_instance(w) for w in postags[i]]
-                adv_heads = heads[i]
-                adv_rels = rels[i]
-            else:
-                adv_tokens = data['SRC'][i].copy() 
-                adv_postags = [pos_alphabet.get_instance(w) for w in postags[i][:length]]
-                adv_heads = heads[i][:length]
-                adv_rels = rels[i][:length]
+            adv_tokens = data['SRC'][i].copy() 
+            adv_postags = [pos_alphabet.get_instance(w) for w in postags[i][:length]]
+            adv_heads = heads[i][:length]
+            adv_rels = rels[i][:length]
             adv_rels[0] = 0
             if debug == 3: 
                 print ("\n###############################")
@@ -381,18 +374,16 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
             if debug == 1: print ("adv sent:", adv_tokens)
             adv_src.append(adv_tokens[:length])
             pre_list = []
+            word_list = []
             for w in adv_tokens:
+                w_ = DIGIT_RE.sub("0", w) if normalize_digits else w
+                word_list.append(word_alphabet.get_index(w_))
                 pid = pretrained_alphabet.get_index(w)
                 if pid == 0:
                     pid = pretrained_alphabet.get_index(w.lower())
                 pre_list.append(pid)
-            pre_list = np.array(pre_list)
-            if use_pad:
-                adv_words[i] = torch.from_numpy(np.array([word_alphabet.get_index(w) for w in adv_tokens]))
-                adv_pres[i] = torch.from_numpy(pre_list)
-            else:
-                adv_words[i][:length] = torch.from_numpy(np.array([word_alphabet.get_index(w) for w in adv_tokens]))
-                adv_pres[i][:length] = torch.from_numpy(pre_list)
+            adv_words[i][:length] = torch.from_numpy(np.array(word_list))
+            adv_pres[i][:length] = torch.from_numpy(np.array(pre_list))
         adv_words = adv_words.to(device)
         adv_pres = adv_pres.to(device)
         #print ("orig_words:\n{}\nadv_words:\n{}".format(words, adv_words))
@@ -438,7 +429,7 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
         stats, stats_nopunc, err_stats, err_nopunc_stats, stats_root, num_inst = parser.eval(
                                     words, postags, heads_pred, rels_pred, heads, rels,
                                     word_alphabet, pos_alphabet, lengths, punct_set=punct_set, 
-                                    symbolic_root=True, err_types=err_types)
+                                    symbolic_root=True, err_types=None)
         ucorr, lcorr, total, ucm, lcm = stats
         ucorr_nopunc, lcorr_nopunc, total_nopunc, ucm_nopunc, lcm_nopunc = stats_nopunc
         ucorr_err, lcorr_err, total_err = err_stats
@@ -575,7 +566,7 @@ def parse(args):
     assert model_type in ['Robust', 'StackPtr']
 
     num_lans = 1
-    if not args.mix_datasets:
+    if data_format == 'ud' and not args.mix_datasets:
         lans_train = args.lan_train.split(':')
         lans_dev = args.lan_dev.split(':')
         lans_test = args.lan_test.split(':')
@@ -632,8 +623,8 @@ def parse(args):
     alphabets = word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, pretrained_alphabet
     if args.mode == 'black':
         attacker = BlackBoxAttacker(network, candidates, vocab, synonyms, filters=filters, generators=generators,
-                        max_mod_percent=args.max_mod_percent, tagger=args.tagger, use_pad=args.use_pad, 
-                        punct_set=punct_set, beam=beam,
+                        max_mod_percent=args.max_mod_percent, tagger=args.tagger,
+                        punct_set=punct_set, beam=beam, normalize_digits=args.normalize_digits,
                         cached_path=args.cached_path, train_vocab=args.train_vocab, knn_path=args.knn_path, 
                         max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
                         min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim, 
@@ -646,8 +637,8 @@ def parse(args):
                         batch_size=args.adv_batch_size, random_backoff=args.random_backoff, wordpiece_backoff=args.wordpiece_backoff)
     elif args.mode == 'random':
         attacker = RandomAttacker(network, candidates, vocab, synonyms, filters=filters, generators=generators,
-                        max_mod_percent=args.max_mod_percent, tagger=args.tagger, use_pad=args.use_pad, 
-                        punct_set=punct_set, beam=beam,
+                        max_mod_percent=args.max_mod_percent, tagger=args.tagger,
+                        punct_set=punct_set, beam=beam, normalize_digits=args.normalize_digits,
                         cached_path=args.cached_path, train_vocab=args.train_vocab, knn_path=args.knn_path, 
                         max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
                         min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim,
@@ -668,7 +659,7 @@ def parse(args):
 
     logger.info("Reading Data")
     if alg == 'graph':
-        if not args.mix_datasets:
+        if data_format == 'ud' and not args.mix_datasets:
             data_test = data_reader.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, 
                                             rel_alphabet, normalize_digits=args.normalize_digits, 
                                             symbolic_root=True, pre_alphabet=pretrained_alphabet, 
@@ -708,7 +699,7 @@ def parse(args):
     #gold_filename = os.path.join(result_path, 'gold.txt')
     #gold_writer.start(gold_filename)
 
-    if alg == 'graph' and not args.mix_datasets:
+    if alg == 'graph' and data_format == 'ud' and not args.mix_datasets:
         multi_lan_iter = True
     else:
         multi_lan_iter = False
