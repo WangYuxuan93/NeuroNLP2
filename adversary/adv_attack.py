@@ -152,7 +152,6 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
             lan_id, data = data
             lan_id = torch.LongTensor([lan_id]).to(device)
         words = data['WORD'].to(device)
-        pres = data['PRETRAINED'].to(device)
         chars = data['CHAR'].to(device)
         postags = data['POS'].to(device)
         heads = data['HEAD'].numpy()
@@ -173,10 +172,12 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         else:
             bpes = first_idx = None
         if alg == 'graph':
+            pres = data['PRETRAINED'].to(device)
             masks = data['MASK'].to(device)
             heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, 
                 bpes=bpes, first_idx=first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
         else:
+            pres = None
             masks = data['MASK_ENC'].to(device)
             heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, 
                 bpes=bpes, first_idx=first_idx, lan_id=lan_id, beam=beam, leading_symbolic=conllx_data.NUM_SYMBOLIC_TAGS)
@@ -328,7 +329,7 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
             lan_id, data = data
             lan_id = torch.LongTensor([lan_id]).to(device)
         words = data['WORD']
-        pres = data['PRETRAINED'].to(device)
+        pres = data['PRETRAINED'].to(device) if alg == 'graph' else None
         chars = data['CHAR'].to(device)
         postags = data['POS'].to(device)
         heads = data['HEAD'].numpy()
@@ -337,7 +338,7 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
         #err_types = data['ERR_TYPE']
 
         adv_words = words.clone()
-        adv_pres = pres.clone()
+        adv_pres = pres.clone() if alg == 'graph' else None
         adv_src = []
         for i in range(len(lengths)):
             accum_total_sent += 1
@@ -383,9 +384,11 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
                     pid = pretrained_alphabet.get_index(w.lower())
                 pre_list.append(pid)
             adv_words[i][:length] = torch.from_numpy(np.array(word_list))
-            adv_pres[i][:length] = torch.from_numpy(np.array(pre_list))
+            if alg == 'graph':
+                adv_pres[i][:length] = torch.from_numpy(np.array(pre_list))
         adv_words = adv_words.to(device)
-        adv_pres = adv_pres.to(device)
+        if alg == 'graph':
+            adv_pres = adv_pres.to(device)
         #print ("orig_words:\n{}\nadv_words:\n{}".format(words, adv_words))
 
         if network.pretrained_lm == 'elmo':
