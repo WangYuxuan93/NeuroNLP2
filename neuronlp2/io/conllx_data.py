@@ -253,6 +253,7 @@ def read_bucketed_data(source_path: str, word_alphabet: Alphabet, char_alphabet:
     max_char_length = [0 for _ in _buckets]
     print('Reading data from %s' % source_path)
     counter = 0
+    src_words = [[] for _ in _buckets]
     reader = CoNLLXReader(source_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, 
                           pre_alphabet=pre_alphabet, pos_idx=pos_idx)
     inst = reader.getNext(normalize_digits=normalize_digits, symbolic_root=symbolic_root, symbolic_end=symbolic_end)
@@ -266,6 +267,7 @@ def read_bucketed_data(source_path: str, word_alphabet: Alphabet, char_alphabet:
         for bucket_id, bucket_size in enumerate(_buckets):
             if inst_size < bucket_size:
                 data[bucket_id].append([sent.word_ids, sent.char_id_seqs, inst.pos_ids, inst.heads, inst.type_ids, sent.pre_ids])
+                src_words[bucket_id].append(sent.words)
                 max_len = max([len(char_seq) for char_seq in sent.char_seqs])
                 if max_char_length[bucket_id] < max_len:
                     max_char_length[bucket_id] = max_len
@@ -342,6 +344,7 @@ def read_bucketed_data(source_path: str, word_alphabet: Alphabet, char_alphabet:
         pres = torch.from_numpy(preid_inputs)
 
         data_tensor = {'WORD': words, 'CHAR': chars, 'POS': pos, 'HEAD': heads, 'TYPE': types,
-                       'MASK': masks, 'SINGLE': single, 'LENGTH': lengths, 'PRETRAINED': pres}
+                       'MASK': masks, 'SINGLE': single, 'LENGTH': lengths, 'PRETRAINED': pres,
+                       'SRC': np.array(src_words[bucket_id])}
         data_tensors.append(data_tensor)
     return data_tensors, bucket_sizes
