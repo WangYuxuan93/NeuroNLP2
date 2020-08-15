@@ -672,10 +672,16 @@ def parse(args):
                                           pos_idx=args.pos_idx)
     elif alg == 'transition':
         prior_order = hyps['input']['prior_order']
-        data_test = ud_stacked_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
-                                            normalize_digits=args.normalize_digits, symbolic_root=True,
-                                            pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx, 
-                                            prior_order=prior_order)
+        if data_format == "conllx":
+            data_test = conllx_stacked_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                normalize_digits=args.normalize_digits,
+                                                pos_idx=args.pos_idx, 
+                                                prior_order=prior_order)
+        else:
+            data_test = ud_stacked_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx, 
+                                                prior_order=prior_order)
 
     pred_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
     gold_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
