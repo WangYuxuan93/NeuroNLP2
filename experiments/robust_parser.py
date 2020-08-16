@@ -25,6 +25,7 @@ from neuronlp2.io import get_logger, conllx_data, ud_data #, iterate_data
 from neuronlp2.io import ud_stacked_data, conllx_stacked_data
 from neuronlp2.models.robust_parsing import RobustParser
 from neuronlp2.models.stack_pointer import StackPtrParser
+from neuronlp2.models.ensemble import EnsembleParser
 from neuronlp2.optim import ExponentialScheduler, StepScheduler, AttentionScheduler
 from neuronlp2 import utils
 from neuronlp2.io import CoNLLXWriter
@@ -905,8 +906,13 @@ def parse(args):
         print ("### Unrecognized data formate: %s ###" % data_format)
         exit()
 
-    model_path = args.model_path
-    model_name = os.path.join(model_path, 'model.pt')
+    if args.ensemble:
+        model_paths = args.model_path.split(':')
+        # here the model must have same alphabets
+        model_path = model_paths[0]
+    else:
+        model_path = args.model_path
+        model_name = os.path.join(model_path, 'model.pt')
     punctuation = args.punctuation
     pretrained_lm = args.pretrained_lm
     lm_path = args.lm_path
@@ -972,21 +978,27 @@ def parse(args):
         tokenizer = AutoTokenizer.from_pretrained(lm_path)
 
     alg = 'transition' if model_type == 'StackPtr' else 'graph'
-    if model_type == 'Robust':
-        network = RobustParser(hyps, num_pretrained, num_words, num_chars, num_pos,
-                               num_rels, device=device, basic_word_embedding=args.basic_word_embedding, 
-                               pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
-                               num_lans=num_lans)
-    elif model_type == 'StackPtr':
-        network = StackPtrParser(hyps, num_pretrained, num_words, num_chars, num_pos,
-                               num_rels, device=device, basic_word_embedding=args.basic_word_embedding,
-                               pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
-                               num_lans=num_lans)
+    if args.ensemble:
+        network = EnsembleParser(hyps, num_pretrained, num_words, num_chars, num_pos,
+                                   num_rels, device=device, basic_word_embedding=args.basic_word_embedding, 
+                                   pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
+                                   num_lans=num_lans, model_paths=model_paths, merge_by=args.merge_by)
     else:
-        raise RuntimeError('Unknown model type: %s' % model_type)
+        if model_type == 'Robust':
+            network = RobustParser(hyps, num_pretrained, num_words, num_chars, num_pos,
+                                   num_rels, device=device, basic_word_embedding=args.basic_word_embedding, 
+                                   pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
+                                   num_lans=num_lans)
+        elif model_type == 'StackPtr':
+            network = StackPtrParser(hyps, num_pretrained, num_words, num_chars, num_pos,
+                                   num_rels, device=device, basic_word_embedding=args.basic_word_embedding,
+                                   pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
+                                   num_lans=num_lans)
+        else:
+            raise RuntimeError('Unknown model type: %s' % model_type)
 
-    network = network.to(device)
-    network.load_state_dict(torch.load(model_name, map_location=device))
+        network = network.to(device)
+        network.load_state_dict(torch.load(model_name, map_location=device))
 
     logger.info("Reading Data")
     if alg == 'graph':
@@ -1091,6 +1103,8 @@ if __name__ == '__main__':
     args_parser.add_argument('--test', help='path for test file.', required=True)
     args_parser.add_argument('--model_path', help='path for saving model file.', required=True)
     args_parser.add_argument('--output_filename', type=str, help='output filename for parse')
+    args_parser.add_argument('--ensemble', action='store_true', default=False, help='ensemble multiple parsers for predicting')
+    args_parser.add_argument('--merge_by', type=str, choices=['logits', 'probs'], default='logits', help='ensemble policy')
 
     args = args_parser.parse_args()
     if args.mode == 'train':

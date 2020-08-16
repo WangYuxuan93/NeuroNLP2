@@ -8,7 +8,7 @@ CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=4 python -u adv_attack.py --mode black \
  --format conllx \
  --test "../experiments/data/ptb_two_auto_orig.conll" \
  --lan_test en \
- --model_path "../experiments/models/parsing/robust" \
+ --model_path "../experiments/models/parsing/robust_ptr" \
  --output_filename "ptb_two_auto.pred.conll" \
  --adv_filename "ptb_two_auto.adv.conll" \
  --vocab "data/vocab.json" --cand "data/word_candidates_sense.json" \
