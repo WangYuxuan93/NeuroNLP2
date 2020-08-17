@@ -659,7 +659,7 @@ def train(args):
                 if words.size()[0] == 1 and len(srcs) > 1:
                     srcs = [srcs]
                 if pretrained_lm == 'elmo':
-                    bpes = elmo_batch_to_ids(srcs)
+                    bpes = batch_to_ids(srcs)
                     bpes = bpes.to(device)
                     first_idx = None
                     try:
