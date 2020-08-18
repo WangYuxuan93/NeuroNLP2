@@ -27,6 +27,7 @@ from neuronlp2.io import get_logger, conllx_data, ud_data, conllx_stacked_data #
 from neuronlp2.io import ud_stacked_data
 from neuronlp2.models.robust_parsing import RobustParser
 from neuronlp2.models.stack_pointer import StackPtrParser
+from neuronlp2.models.ensemble import EnsembleParser
 from neuronlp2.optim import ExponentialScheduler, StepScheduler, AttentionScheduler
 from neuronlp2 import utils
 from neuronlp2.io import CoNLLXWriter
@@ -39,9 +40,9 @@ from neuronlp2.io.batcher import multi_language_iterate_data, iterate_data
 from neuronlp2.io import multi_ud_data
 from neuronlp2.io.common import PAD_CHAR, PAD, PAD_POS, PAD_TYPE, PAD_ID_CHAR, PAD_ID_TAG, PAD_ID_WORD
 from adversary.blackbox_attacker import BlackBoxAttacker
-from adversary.random_attacker import RandomAttacker
-from adversary.graybox_attacker import GrayBoxAttacker
-from adversary.graybox_single_attacker import GrayBoxSingleAttacker
+#from adversary.random_attacker import RandomAttacker
+#from adversary.graybox_attacker import GrayBoxAttacker
+#from adversary.graybox_single_attacker import GrayBoxSingleAttacker
 
 def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgrad, weight_decay, 
                   warmup_steps, schedule='step', hidden_size=200, decay_steps=5000):
@@ -527,8 +528,13 @@ def parse(args):
         print ("### Unrecognized data formate: %s ###" % data_format)
         exit()
 
-    model_path = args.model_path
-    model_name = os.path.join(model_path, 'model.pt')
+    if args.ensemble:
+        model_paths = args.model_path.split(':')
+        # here the model must have same alphabets
+        model_path = model_paths[0]
+    else:
+        model_path = args.model_path
+        model_name = os.path.join(model_path, 'model.pt')
     punctuation = args.punctuation
     pretrained_lm = args.pretrained_lm
     lm_path = args.lm_path
@@ -585,21 +591,27 @@ def parse(args):
 
     logger.info("##### Parser Type: {} #####".format(model_type))
     alg = 'transition' if model_type == 'StackPtr' else 'graph'
-    if model_type == 'Robust':
-        network = RobustParser(hyps, num_pretrained, num_words, num_chars, num_pos,
-                               num_rels, device=device, basic_word_embedding=args.basic_word_embedding, 
-                               pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
-                               num_lans=num_lans)
-    elif model_type == 'StackPtr':
-        network = StackPtrParser(hyps, num_pretrained, num_words, num_chars, num_pos,
-                               num_rels, device=device, basic_word_embedding=args.basic_word_embedding,
-                               pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
-                               num_lans=num_lans)
+    if args.ensemble:
+        network = EnsembleParser(hyps, num_pretrained, num_words, num_chars, num_pos,
+                                   num_rels, device=device, basic_word_embedding=args.basic_word_embedding, 
+                                   pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
+                                   num_lans=num_lans, model_paths=model_paths, merge_by=args.merge_by)
     else:
-        raise RuntimeError('Unknown model type: %s' % model_type)
+        if model_type == 'Robust':
+            network = RobustParser(hyps, num_pretrained, num_words, num_chars, num_pos,
+                                   num_rels, device=device, basic_word_embedding=args.basic_word_embedding, 
+                                   pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
+                                   num_lans=num_lans)
+        elif model_type == 'StackPtr':
+            network = StackPtrParser(hyps, num_pretrained, num_words, num_chars, num_pos,
+                                   num_rels, device=device, basic_word_embedding=args.basic_word_embedding,
+                                   pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
+                                   num_lans=num_lans)
+        else:
+            raise RuntimeError('Unknown model type: %s' % model_type)
 
-    network = network.to(device)
-    network.load_state_dict(torch.load(model_name, map_location=device))
+        network = network.to(device)
+        network.load_state_dict(torch.load(model_name, map_location=device))
 
     if args.cand.endswith('.json'):
         cands = json.load(open(args.cand, 'r'))
@@ -801,6 +813,8 @@ if __name__ == '__main__':
     args_parser.add_argument('--use_pad', action='store_true', default=False, help='use PAD in input to attacker')
     args_parser.add_argument('--cached_path', type=str, default=None, help='input cached file for preprocessed candidate cache file')
     args_parser.add_argument('--cand_cache_path', type=str, default=None, help='output filename for candidate cache file')
+    args_parser.add_argument('--ensemble', action='store_true', default=False, help='ensemble multiple parsers for predicting')
+    args_parser.add_argument('--merge_by', type=str, choices=['logits', 'probs'], default='logits', help='ensemble policy')
 
     args = args_parser.parse_args()
     parse(args)

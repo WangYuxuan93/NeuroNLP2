@@ -34,6 +34,8 @@ class EnsembleParser(nn.Module):
             network = network.to(device)
             network.load_state_dict(torch.load(model_name, map_location=device))
             self.networks.append(network)
+        self.hyps = self.networks[0].hyps
+        self.lan_emb_as_input = False
 
     def eval(self):
         for i in range(len(self.networks)):
