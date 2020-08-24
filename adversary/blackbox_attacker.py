@@ -471,7 +471,12 @@ class BlackBoxAttacker(object):
         self.ppl_inc_thres = ppl_inc_thres
         self.batch_size = batch_size
         #self.stop_words = nltk.corpus.stopwords.words('english')
-        self.stop_words = stopwords
+        if 'stop_words' in self.filters:
+            logger.info("Init stop word list.")
+            self.stop_words = stopwords
+        else:
+            logger.info("Empty stop word list.")
+            self.stop_words = []
         self.stop_tags = ['PRP','PRP$','DT','CC','CD','UH','WDT','WP','WP$','-LRB-','-RRB-','.','``',"\'\'",':',',','?',';']
         self.random_backoff = random_backoff
         self.wordpiece_backoff = wordpiece_backoff
