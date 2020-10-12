@@ -78,13 +78,14 @@ class DeepBiAffine(nn.Module):
                  use_input_layer=True, use_sin_position_embedding=False, 
                  freeze_position_embedding=True, hidden_act="gelu", dropout_type="seq",
                  initializer="default", embedding_dropout_prob=0.33, hidden_dropout_prob=0.2,
-                 inter_dropout_prob=0.1, attention_probs_dropout_prob=0.1):
+                 inter_dropout_prob=0.1, attention_probs_dropout_prob=0.1, task_type='dp'):
         super(DeepBiAffine, self).__init__()
 
         self.basic_word_embedding = basic_word_embedding
         self.minimize_logp = minimize_logp
         self.act_func = activation
         self.p_in = p_in
+        self.task_type = task_type # Jeffrey:
         if self.basic_word_embedding:
             self.basic_word_embed = nn.Embedding(num_words, word_dim, padding_idx=1)
             self.word_embed = nn.Embedding(num_pretrained, word_dim, _weight=embedd_word, padding_idx=1)
@@ -160,6 +161,7 @@ class DeepBiAffine(nn.Module):
             out_dim = hidden_size
         else:
             self.input_encoder = RNN(dim_enc, hidden_size, num_layers=num_layers, batch_first=True, bidirectional=True, dropout=p_rnn) 
+            # Jeffrey: stacked bi-lstm
             out_dim = hidden_size * 2
 
         self.arc_h = nn.Linear(out_dim, arc_space)
@@ -182,7 +184,8 @@ class DeepBiAffine(nn.Module):
             self.activation = nn.LeakyReLU(0.1)
         else:
             self.activation = nn.Tanh()
-        self.criterion = nn.CrossEntropyLoss(reduction='none')
+        self.criterion_arc_label = nn.CrossEntropyLoss(reduction='none')
+        self.criterion_arc = nn.BCELoss(reduction='none')
         self.reset_parameters(embedd_word, embedd_char, embedd_pos)
 
     def reset_parameters(self, embedd_word, embedd_char, embedd_pos):
@@ -286,7 +289,7 @@ class DeepBiAffine(nn.Module):
         else:
             # sequence shared mask dropout
             enc = self.dropout_in(enc.transpose(1, 2)).transpose(1, 2)
-            output, _ = self.input_encoder(enc, mask)
+            output, _ = self.input_encoder(enc, mask) # Jeffrey：get the output of bi-lstm
 
         # apply dropout for output
         # [batch, length, hidden_size] --> [batch, hidden_size, length] --> [batch, length, hidden_size]
@@ -330,7 +333,7 @@ class DeepBiAffine(nn.Module):
         # but in heads_3D, it means j is head of i
         logits = logits.permute(0,2,1)
         # (batch, seq_len, seq_len), log softmax over all possible arcs
-        head_logp_given_dep = F.log_softmax(logits, dim=-1)
+        head_logp_given_dep = F.log_softmax(logits, dim=-1) # Jeffrey: dim =-1, for the wi: get the head prob for w0..n
         
         # compute dep logp
         #if self.dep_prob_depend_on_head:
@@ -340,11 +343,11 @@ class DeepBiAffine(nn.Module):
         #    context_layer = torch.matmul(logits.detach(), encoder_output.detach())
         #else:
         # (batch, seq_len, hidden_size)
-        context_layer = self.encoder_output.detach()
+        context_layer = self.encoder_output.detach() # Jeffrey: the encoding by the bi-lstm.
         # (batch, seq_len)
         dep_logp = F.log_softmax(self.dep_dense(context_layer).squeeze(-1), dim=-1)
         # (batch, seq_len, seq_len)
-        head_logp = head_logp_given_dep + dep_logp.unsqueeze(2)
+        head_logp = head_logp_given_dep + dep_logp.unsqueeze(2)  # Jeffrey: why add? why need the word prob? why should learn?
         # (batch, seq_len)
         ref_heads_logp = (head_logp * heads_3D).sum(dim=-1)
         # (batch, seq_len)
@@ -423,7 +426,7 @@ class DeepBiAffine(nn.Module):
         types_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.long, device=heads.device)
         types_3D.scatter_(-1, heads.unsqueeze(-1), types.unsqueeze(-1))
         # (batch, n_rels, seq_len, seq_len)
-        out_type = self.bilinear(type_c, type_h)
+        out_type = self.bilinear(type_c, type_h) # Jeffrey: dep * head
 
         if self.minimize_logp:
             # (batch, seq_len)
@@ -534,6 +537,169 @@ class DeepBiAffine(nn.Module):
         length = mask.sum(dim=1).long().cpu().numpy()
         return parser.decode_MST(energy.cpu().numpy(), length, leading_symbolic=leading_symbolic, labeled=True)
 
+    # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< sdp <<<<<<<<<<<<<<<<<<<<<<<<<<
+    def accuracy_sdp(self, logits, type_logits, heads, types, mask, debug=False):
+        """
+        arc_logits: (batch, seq_len, seq_len)
+        type_logits: (batch, n_rels, seq_len, seq_len)
+        heads: (batch, seq_len)
+        types: (batch, seq_len)
+        mask: (batch, seq_len)
+        """
+        # *********** I am here **************************
+        total_arcs = heads.sum()  # 总体可能存在的弧
+        # (batch, len_h,len_c)
+        arc_preds = logits.ge(0.5).float()  # 多个arc
+        # (batch_size, len_c, len_h, n_rels)
+        transposed_type_logits = type_logits.permute(0, 2, 3, 1)  # permute重新排列张量
+        # (batch_size, seq_len, seq_len)
+        type_preds = transposed_type_logits.argmax(-1)  # 在只有一个label的情况下找到最大的索引
+        # (batch, seq_len). but for sdp it should be [batch,seq_len,seq_len]
+        # type_preds = type_ids.gather(-1, heads.unsqueeze(-1)).squeeze()
+
+        ones = torch.ones_like(heads)
+        zeros = torch.zeros_like(heads)
+        # Jeffrey: for sdp the total rate should be altered
+        arc_correct = (torch.where(arc_preds == heads, ones, zeros) * heads).sum()
+        type_correct = (torch.where(type_preds == types, ones, zeros) * heads * arc_preds).sum()
+
+        if debug:
+            print("arc_logits:\n", logits)
+            print("arc_preds:\n", arc_preds)
+            print("heads:\n", heads)
+            print("type_ids:\n", type_preds)
+            print("type_preds:\n", type_preds)
+            print("types:\n", types)
+            print("mask:\n", mask)
+            print("total_arcs:\n", total_arcs)
+            print("arc_correct:\n", arc_correct)
+            print("type_correct:\n", type_correct)
+
+        return arc_correct.cpu().numpy(), type_correct.cpu().numpy(), total_arcs.cpu().numpy()
+
+    # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< sdp <<<<<<<<<<<<<<<<<<<<<<<
+    def loss_sdp(self, input_word, input_pretrained, input_char, input_pos, heads, types, mask=None):
+        # out_arc shape [batch, length_head, length_child]
+        out_arc, out_type = self(input_word, input_pretrained, input_char, input_pos, mask=mask)
+        # out_type shape [batch, length, type_space]
+        type_h, type_c = out_type
+
+        # get vector for heads [batch, length, type_space],
+        # type_h = type_h.gather(dim=1, index=heads.unsqueeze(2).expand(type_h.size()))
+        # compute output for type [batch, length, num_labels]
+        # out_type = self.bilinear(type_h, type_c)
+        batch_size, seq_len = input_word.size()
+        # (batch, seq_len), seq mask, where at position 0 is 0
+        root_mask = torch.arange(seq_len, device=heads.device).gt(0).float().unsqueeze(0) * mask  # 通过gt(0) 去掉了mask root
+        # (batch, seq_len, seq_len)
+        mask_3D = (root_mask.unsqueeze(-1) * mask.unsqueeze(1))
+        # (batch, seq_len, seq_len)
+        # heads_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
+        # heads_3D.scatter_(-1, heads.unsqueeze(-1), 1)  # 拓展到三维
+        # sdp的heads 传入的就是3D
+        heads = heads * mask_3D
+        # (batch, seq_len, seq_len)
+        # types_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.long, device=heads.device)
+        # types_3D.scatter_(-1, heads.unsqueeze(-1), types.unsqueeze(-1))
+        # sdp的type 传入的就是3D
+
+        # (batch, n_rels, seq_len, seq_len)
+        out_type = self.bilinear(type_c, type_h)
+
+        # if self.minimize_logp:
+        # else:
+        #     # mask invalid position to -inf for log_softmax
+        #     if mask is not None:
+        #         minus_mask = mask.eq(0).unsqueeze(2)
+        #         out_arc = out_arc.masked_fill(minus_mask, float('-inf'))
+        #     # loss_arc shape [batch, length_c]
+        #     loss_arc = self.criterion(out_arc, heads)
+        # loss_type = self.criterion(out_type.transpose(1, 2), types)
+
+        if mask is not None:
+            minus_mask = mask_3D.eq(0)
+            out_arc = out_arc.masked_fill(minus_mask, float('-inf'))
+            # loss_arc shape [batch, length_c]
+        null_arc = torch.sigmoid(out_arc).ge(0.5).float() # Jeffrey: transfer to prob.
+        logits = torch.sigmoid(out_arc)
+        loss_arc = self.criterion_arc(logits, heads)
+        loss_arc = loss_arc*mask_3D
+        loss_arc = loss_arc.sum(-1)
+
+        # Jeffrey: for true heads, the dim 2 is head ids, but for the predicted heads, the dim 1 is head ids
+        loss_type = self.criterion_arc_label(out_type, types)
+        loss_type = loss_type * mask_3D
+        #loss_type = loss_type*null_arc   # Jeffrey: just counting the not null arc
+        loss_type = loss_type.sum(-1)
+
+        arc_correct, type_correct, total_arcs = self.accuracy_sdp(logits, out_type, heads, types, mask_3D)
+
+        # <<<<<<<<<<<<<< sdp : delete <<<<<<<<<<<<<<
+        # mask invalid position to 0 for sum loss
+        # if mask is not None:
+        #     loss_arc = loss_arc * mask
+        #     loss_type = loss_type * mask
+
+        # [batch, length - 1] -> [batch] remove the symbolic root.
+        return loss_arc[:, 1:].sum(dim=1), loss_type[:, 1:].sum(dim=1), arc_correct, type_correct, total_arcs
+    # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< sdp <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+    def decode_sdp(self, input_word, input_pretrained, input_char, input_pos, mask=None, leading_symbolic=0):
+        """
+        Args:
+            input_word: Tensor
+                the word input tensor with shape = [batch, length]
+            input_char: Tensor
+                the character input tensor with shape = [batch, length, char_length]
+            input_pos: Tensor
+                the pos input tensor with shape = [batch, length]
+            mask: Tensor or None
+                the mask tensor with shape = [batch, length]
+            length: Tensor or None
+                the length tensor with shape = [batch]
+            hx: Tensor or None
+                the initial states of RNN
+            leading_symbolic: int
+                number of symbolic labels leading in type alphabets (set it to 0 if you are not sure)
+
+        Returns: (Tensor, Tensor)
+                predicted heads and types.
+
+        """
+        # out_arc shape [batch, length_h, length_c]
+        out_arc, out_type = self(input_word, input_pretrained, input_char, input_pos, mask=mask)
+
+        # out_type shape [batch, length, type_space]
+        type_h, type_c = out_type
+        batch_size, seq_len = input_word.size()
+        # (batch, seq_len), seq mask, where at position 0 is 0
+        root_mask = torch.arange(seq_len, device=input_word.device).gt(0).float().unsqueeze(0) * mask  # 通过gt(0) 去掉了mask root
+        # (batch, seq_len, seq_len)
+        mask_3D = (root_mask.unsqueeze(-1) * mask.unsqueeze(1))
+        # (batch, seq_len, seq_len)
+        # heads_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
+        # heads_3D.scatter_(-1, heads.unsqueeze(-1), 1)  # 拓展到三维
+        # sdp的heads 传入的就是3D
+
+        batch, max_len, type_space = type_h.size()
+
+        #type_h = type_h.unsqueeze(2).expand(batch, max_len, max_len, type_space).contiguous()
+        #type_c = type_c.unsqueeze(1).expand(batch, max_len, max_len, type_space).contiguous()
+        # compute output for type [batch, length_h, length_c, num_labels]
+        #out_type = self.bilinear(type_h, type_c)
+        # (batch, n_rels, seq_len_c, seq_len_h)
+        # => (batch, length_c, length_h, num_labels)
+        out_type = self.bilinear(type_c, type_h)
+
+        if mask is not None:
+            minus_mask = mask_3D.eq(0)
+            out_arc.masked_fill_(minus_mask, float('-inf'))
+        arc_preds = torch.sigmoid(out_arc).ge(0.5).float()  # 多个arc
+        # (batch_size, len_c, len_h, n_rels)
+        transposed_type_logits = out_type.permute(0, 2, 3, 1)  # permute重新排列张量
+        # (batch_size, seq_len, seq_len)
+        type_preds = transposed_type_logits.argmax(-1)  # 在只有一个label的情况下找到最大的索引
+
+        return arc_preds*mask_3D, type_preds
 
 class NeuroMST(DeepBiAffine):
     def __init__(self, word_dim, num_words, char_dim, num_chars, pos_dim, num_pos, rnn_mode, hidden_size, num_layers, num_labels, arc_space, type_space,

@@ -7,4 +7,5 @@ CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=4 python -u parsing.py --mode train --con
  --train "data/PTB3.0/PTB3.0-Stanford_dep/ptb3.0-stanford.auto.cpos.train.conll" \
  --dev "data/PTB3.0/PTB3.0-Stanford_dep/ptb3.0-stanford.auto.cpos.dev.conll" \
  --test "data/PTB3.0/PTB3.0-Stanford_dep/ptb3.0-stanford.auto.cpos.test.conll" \
- --model_path "models/parsing/deepbiaf/"
+ --model_path "models/parsing/deepbiaf/" \
+ --task_type "sdp"
