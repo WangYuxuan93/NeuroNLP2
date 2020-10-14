@@ -595,6 +595,10 @@ class RobustParser(nn.Module):
         zeros = torch.zeros_like(heads)
         arc_correct = (torch.where(arc_preds==heads, ones, zeros) * heads).sum()
         rel_correct = (torch.where(rel_preds==rels, ones, zeros) * heads * arc_preds).sum()
+        # ========================== f1 ================================
+        arc_preds = arc_preds * mask
+        arc_pred_num = arc_preds.sum()
+        # =============================================================
 
         if debug:
             print ("arc_logits:\n", arc_logits)
@@ -607,7 +611,7 @@ class RobustParser(nn.Module):
             print ("arc_correct:\n", arc_correct)
             print ("rel_correct:\n", rel_correct)
 
-        return arc_correct.cpu().numpy(), rel_correct.cpu().numpy(), total_arcs.cpu().numpy()
+        return arc_correct.cpu().numpy(), rel_correct.cpu().numpy(), total_arcs.cpu().numpy(),arc_pred_num
 
     def _argmax(self, logits):
         """
@@ -673,7 +677,7 @@ class RobustParser(nn.Module):
         rel_loss = rel_loss * heads
         rel_loss = rel_loss[:, 1:].sum(dim=1)
 
-        statistics = self.accuracy(arc_logits, rel_logits, heads, rels, root_mask)
+        statistics = self.accuracy(arc_logits, rel_logits, heads, rels, mask_3D)
 
         return (arc_loss, rel_loss), statistics
 

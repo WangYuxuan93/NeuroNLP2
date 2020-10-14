@@ -11,10 +11,10 @@ lmdir=/users2/yxwang/work/data/models
 #  dev=$dev:$dir/$lc/$lc-ud-dev.conllu
   #test=$test:$dir/$lc/$lc-ud-test.conllu
 #done
-dir=/users2/yxwang/work/data/semeval2015-task18/english/conllu/dm
-train=$dir/en.dm.train.conllu
-dev=$dir/en.dm.dev.conllu
-test=$dir/en.id.dm.conllu
+dir=/users2/yxwang/work/data/semeval2015-task18/english/conllu/psd
+train=$dir/en.psd.train.conllu
+dev=$dir/en.psd.dev.conllu
+test=$dir/en.id.psd.conllu
 lans="en"
 
 #tcdir=/users2/yxwang/work/experiments/robust_parser/lm/saves
@@ -25,11 +25,11 @@ main=/users7/zllei/NeuroNLP2/experiments/robust_parser_sdp.py
 #seed=777
 #seed=999
 seed=555
-batch=32
+batch=128
 evalbatch=$batch
 epoch=1000
 patient=20
-lr='0.001'
+lr='0.002'
 lm=none
 lmpath=$lmdir/roberta-base
 #lmpath=$lmdir/roberta-large
@@ -49,9 +49,9 @@ decay='0.75'
 dstep=5000
 warmup=500
 reset=20
-beta1='0.0'
+beta1='0.9'
 #beta2='0.999'
-beta2='0.95'
+beta2='0.9'
 eps='1e-8'
 clip='5.0'
 l2decay='0'
@@ -73,7 +73,7 @@ trim=' --do_trim'
 
 gpu=$1
 mode=$2
-save=/users7/zllei/exp_data/models/parsing/robust_parser_sdp
+save=/users7/zllei/exp_data/models/parsing/robust_parser_sdp_psd
 log=${save}/log_$(date "+%Y%m%d-%H%M%S").txt
 
 if [ -z $2 ];then

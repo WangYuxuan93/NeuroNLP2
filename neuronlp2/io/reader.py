@@ -301,7 +301,19 @@ class CoNLLXReaderSDP(object):
             pos_ids.append(self.__pos_alphabet.get_index(pos))
 
             types.append(typelist)
-            type_ids.append([self.__type_alphabet.get_index(type) for type in typelist])
+            #  exception:
+            temp=[]
+            for type in typelist:
+                try:
+                    temp_type = self.__type_alphabet.get_index(type)
+                    temp.append(temp_type)
+                except:
+                    temp_type = self.__type_alphabet.next_index
+                    self.__type_alphabet.next_index +=1
+                    print("exception arc_label")
+                    temp.append(temp_type)
+            type_ids.append(temp)
+            # type_ids.append([self.__type_alphabet.get_index(type) for type in typelist])
 
             heads.append(headlist)
 

@@ -31,7 +31,7 @@ from neuronlp2.models.stack_pointer import StackPtrParser
 from neuronlp2.models.ensemble import EnsembleParser
 from neuronlp2.optim import ExponentialScheduler, StepScheduler, AttentionScheduler
 from neuronlp2.io import CoNLLXWriter, CoNLLXWriterSDP
-from neuronlp2.tasks import parser
+from neuronlp2.tasks import parser,parser_sdp
 from neuronlp2.nn.utils import freeze_embedding
 from neuronlp2.io import common
 from transformers import *
@@ -100,8 +100,8 @@ def convert_tokens_to_ids(tokenizer, tokens):
     return input_ids, first_indices
 
 
-def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=1, batch_size=256, write_to_tmp=True, prev_best_lcorr=0, prev_best_ucorr=0,
-         pred_filename=None, tokenizer=None, multi_lan_iter=False):
+def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device,
+         beam=1,batch_size=256, write_to_tmp=True, prev_LF=0.0, pred_filename=None, tokenizer=None, multi_lan_iter=False):
     network.eval()
     accum_ucorr = 0.0
     accum_lcorr = 0.0
@@ -132,6 +132,14 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
     all_lengths = []
     all_src_words = []
     all_heads_by_layer = []
+    arc_tp = 0.0  # index 0
+    arc_fp = 0.0  # index 1
+    arc_tn = 0.0  # index 2
+    arc_fn = 0.0  # index 3
+    # type_cal_total = np.zeros((3, type_alphabet.size()), dtype=float)  # index 0: true_1 , index 1: pred_1, index 2: pred_1 and true_1
+    label_match = 0.0
+    label_true = 0.0
+    label_pred_num = 0.0
 
     if multi_lan_iter:
         iterate = multi_language_iterate_data
@@ -191,7 +199,8 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         # print ("rels_pred:\n", rels_pred)
         # print ("heads:\n", heads)
         # print ("err_types:\n", err_types)
-        stats, stats_nopunc, err_stats, err_nopunc_stats, stats_root, num_inst = parser.eval_sdp(words, postags, heads_pred, rels_pred, heads, rels, word_alphabet, pos_alphabet, lengths,
+        stats, stats_nopunc, err_stats, err_nopunc_stats, stats_root, num_inst, arc_cal, type_cal = parser_sdp.eval_sdp(
+            words, postags, heads_pred, rels_pred, heads, rels, word_alphabet, pos_alphabet, lengths,
             punct_set=punct_set, symbolic_root=True, err_types=err_types)
         ucorr, lcorr, total, ucm, lcm = stats
         ucorr_nopunc, lcorr_nopunc, total_nopunc, ucm_nopunc, lcm_nopunc = stats_nopunc
@@ -223,6 +232,24 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
 
         accum_total_inst += num_inst
 
+        # ======================= sdp LF1 & UF1 ===================
+        arc_tp += arc_cal[0]  # index 0
+        arc_fp += arc_cal[1]  # index 1
+        arc_tn += arc_cal[2]  # index 2
+        arc_fn += arc_cal[3]  # index 3
+        label_match += type_cal[0]
+        label_true += type_cal[1]
+        label_pred_num += type_cal[2]
+
+    # ======================= calculate UF  & LF =======================
+    arc_p = arc_tp / (arc_tp + arc_fp)
+    arc_r = arc_tp / (arc_tp + arc_fn)
+    arc_f = (2 * arc_p * arc_r) / (arc_p + arc_r)
+    type_p = label_match/label_pred_num
+    type_r = label_match/label_true
+    type_f = (2 * type_p * type_r) / (type_p + type_r)
+    print("UP:%.4f    LP:%.4f\nUR:%.4f    LR:%.4f\nUF:%.4f    LF:%.4f\n" % (arc_p, type_p,arc_r,type_r,arc_f,type_f))
+    # =============================================================
     print('W. Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%%' % (
         accum_ucorr, accum_lcorr, accum_total, accum_ucorr * 100 / accum_total, accum_lcorr * 100 / accum_total, accum_ucomlpete * 100 / accum_total_inst, accum_lcomplete * 100 / accum_total_inst))
     print('Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%%' % (
@@ -240,7 +267,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
     #    accum_ucorr_err_nopunc * 100 / accum_total_err_nopunc, accum_lcorr_err_nopunc * 100 / accum_total_err_nopunc))
 
     if not write_to_tmp:
-        if prev_best_lcorr < accum_lcorr_nopunc or (prev_best_lcorr == accum_lcorr_nopunc and prev_best_ucorr < accum_ucorr_nopunc):
+        if prev_LF < type_f:
             print('### Writing New Best Dev Prediction File ... ###')
             pred_writer.start(pred_filename)
             for i in range(len(all_words)):
@@ -248,7 +275,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
             pred_writer.close()
 
     return (accum_ucorr, accum_lcorr, accum_ucomlpete, accum_lcomplete, accum_total), (accum_ucorr_nopunc, accum_lcorr_nopunc, accum_ucomlpete_nopunc, accum_lcomplete_nopunc, accum_total_nopunc), (
-    accum_root_corr, accum_total_root, accum_total_inst)
+    accum_root_corr, accum_total_root, accum_total_inst),(arc_f,type_f,arc_p,arc_r,type_p,type_r)
 
 
 def train(args):
@@ -335,7 +362,7 @@ def train(args):
         data_paths = dev_path + test_path
     word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = data_reader.create_alphabets(alphabet_path, train_path, data_paths=data_paths, embedd_dict=word_dict, max_vocabulary_size=400000,
                                                                                             normalize_digits=args.normalize_digits, pos_idx=args.pos_idx,
-                                                                                            expand_with_pretrained=(not args.do_trim and not basic_word_embedding))
+                                                                                            expand_with_pretrained=(not args.do_trim and not basic_word_embedding),task_type="sdp")
     pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path, word_dict, word_alphabet.instances, max_vocabulary_size=400000, do_trim=args.do_trim)
 
     num_words = word_alphabet.size()
@@ -532,7 +559,8 @@ def train(args):
     best_lcorrect = 0.0
     best_ucomlpete = 0.0
     best_lcomplete = 0.0
-
+    best_arc_f = 0.0
+    best_type_f = 0.0
     best_ucorrect_nopunc = 0.0
     best_lcorrect_nopunc = 0.0
     best_ucomlpete_nopunc = 0.0
@@ -559,6 +587,22 @@ def train(args):
     test_total_nopunc = 0
     test_total_inst = 0
     test_total_root = 0
+
+    # ==================================f1 ==================
+    test_arc_f = 0.0
+    test_type_f = 0.0
+    test_arc_p = 0.0
+    test_arc_r = 0.0
+    test_type_p = 0.0
+    test_type_r = 0.0
+
+    best_arc_eval_f = 0.0
+    best_type_eval_f = 0.0
+    best_arc_eval_p = 0.0
+    best_arc_eval_r = 0.0
+    best_type_eval_p = 0.0
+    best_type_eval_r = 0.0
+    # ================================
 
     patient = 0
     num_epochs_without_improvement = 0
@@ -588,7 +632,7 @@ def train(args):
         num_words = 0
         num_back = 0
         num_nans = 0
-        overall_arc_correct, overall_rel_correct, overall_total_arcs = 0, 0, 0
+        overall_arc_correct, overall_rel_correct, overall_total_arcs, overall_total_arcs_pred_num = 0, 0, 0, 0
         network.train()
         lr = scheduler.get_lr()[0]
         total_step = scheduler.get_total_step()
@@ -664,12 +708,14 @@ def train(args):
             arc_loss, rel_loss = losses
             arc_loss = arc_loss.sum()
             rel_loss = rel_loss.sum()
-            loss_total = arc_loss + rel_loss
+            loss_total = (1-loss_interpolation) * arc_loss + loss_interpolation * rel_loss
             if statistics is not None:
-                arc_correct, rel_correct, total_arcs = statistics
+                arc_correct, rel_correct, total_arcs, arc_pred_num = statistics
                 overall_arc_correct += arc_correct
                 overall_rel_correct += rel_correct
                 overall_total_arcs += total_arcs
+                overall_total_arcs_pred_num += arc_pred_num
+
 
             if loss_type_token:
                 loss = loss_total.div(nwords)
@@ -733,9 +779,21 @@ def train(args):
         else:
             train_uas = float(overall_arc_correct) * 100.0 / overall_total_arcs
             train_lacc = float(overall_rel_correct) * 100.0 / overall_total_arcs
+
+            train_UP = float(overall_arc_correct)/ overall_total_arcs_pred_num
+            train_UR = float(overall_arc_correct)/ overall_total_arcs
+            train_UF = 2*train_UP*train_UR/(train_UP+train_UR)
+            train_LP = float(overall_rel_correct)/ overall_total_arcs_pred_num
+            train_LR = float(overall_rel_correct)/ overall_total_arcs
+            train_LF = 2*train_LP*train_LR/(train_LP+train_LR)
+            print("【train period】:\n")
             print('total: %d (%d), epochs w/o improve:%d, nans:%d, uas: %.2f%%, lacc: %.2f%%,  loss: %.4f (%.4f), arc: %.4f (%.4f), rel: %.4f (%.4f), time: %.2fs' % (
             num_insts, num_words, num_epochs_without_improvement, num_nans, train_uas, train_lacc, train_loss / num_insts, train_loss / num_words, train_arc_loss / num_insts,
             train_arc_loss / num_words, train_rel_loss / num_insts, train_rel_loss / num_words, time.time() - start_time))
+            print("=======================UF && LF ===========================\n")
+            print("## Scores including virtual dependencies to top nodes\n")
+            print("UP:%.4f    LP:%.4f\nUR:%.4f    LR:%.4f\nUF:%.4f    LF:%.4f\n" % (train_UP, train_LP, train_UR, train_LR, train_UF, train_LF))
+
         print('-' * 125)
 
         if epoch % eval_every == 0:
@@ -747,9 +805,10 @@ def train(args):
                 # gold_writer.start(gold_filename)
 
                 print('Evaluating dev:')
-                dev_stats, dev_stats_nopunct, dev_stats_root = eval(alg, data_dev, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam,
-                                                                    batch_size=args.eval_batch_size, write_to_tmp=False, prev_best_lcorr=best_lcorrect_nopunc, prev_best_ucorr=best_ucorrect_nopunc,
-                                                                    pred_filename=pred_filename, tokenizer=tokenizer, multi_lan_iter=multi_lan_iter)
+                dev_stats, dev_stats_nopunct, dev_stats_root, f1_score = eval(
+                    alg, data_dev, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam,
+                    batch_size=args.eval_batch_size, write_to_tmp=False, pred_filename=pred_filename, tokenizer=tokenizer,
+                    multi_lan_iter=multi_lan_iter,prev_LF = best_type_f)
 
                 # pred_writer.close()
                 # gold_writer.close()
@@ -757,13 +816,15 @@ def train(args):
                 dev_ucorr, dev_lcorr, dev_ucomlpete, dev_lcomplete, dev_total = dev_stats
                 dev_ucorr_nopunc, dev_lcorr_nopunc, dev_ucomlpete_nopunc, dev_lcomplete_nopunc, dev_total_nopunc = dev_stats_nopunct
                 dev_root_corr, dev_total_root, dev_total_inst = dev_stats_root
+                type_f = f1_score[1]
 
-                if best_lcorrect_nopunc < dev_lcorr_nopunc or (best_lcorrect_nopunc == dev_lcorr_nopunc and best_ucorrect_nopunc < dev_ucorr_nopunc):
+                if best_type_f < type_f:
                     num_epochs_without_improvement = 0
                     best_ucorrect_nopunc = dev_ucorr_nopunc
                     best_lcorrect_nopunc = dev_lcorr_nopunc
                     best_ucomlpete_nopunc = dev_ucomlpete_nopunc
                     best_lcomplete_nopunc = dev_lcomplete_nopunc
+                    best_type_f = type_f
 
                     best_ucorrect = dev_ucorr
                     best_lcorrect = dev_lcorr
@@ -777,6 +838,14 @@ def train(args):
                     best_total_inst = dev_total_inst
 
                     best_epoch = epoch
+                    # =============================== f1 =================
+                    best_arc_eval_f = f1_score[0]
+                    best_type_eval_f = f1_score[1]
+                    best_arc_eval_p = f1_score[2]
+                    best_arc_eval_r = f1_score[3]
+                    best_type_eval_p = f1_score[4]
+                    best_type_eval_r = f1_score[5]
+                    # ======================================================
                     patient = 0
                     torch.save(single_network.state_dict(), model_name)
 
@@ -786,13 +855,19 @@ def train(args):
                     # gold_writer.start(gold_filename)
 
                     print('Evaluating test:')
-                    test_stats, test_stats_nopunct, test_stats_root = eval(alg, data_test, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam,
-                                                                           batch_size=args.eval_batch_size, tokenizer=tokenizer, multi_lan_iter=multi_lan_iter)
+                    test_stats, test_stats_nopunct, test_stats_root, f1_score = eval(
+                        alg, data_test, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device,
+                        beam=beam,batch_size=args.eval_batch_size, tokenizer=tokenizer, multi_lan_iter=multi_lan_iter,prev_LF=0.0)
 
                     test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total = test_stats
                     test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
                     test_root_correct, test_total_root, test_total_inst = test_stats_root
-
+                    test_arc_f = f1_score[0]
+                    test_type_f = f1_score[1]
+                    test_arc_p = f1_score[2]
+                    test_arc_r = f1_score[3]
+                    test_type_p = f1_score[4]
+                    test_type_r = f1_score[5]
                     pred_writer.close()  # gold_writer.close()
                 else:
                     patient += 1
@@ -814,6 +889,14 @@ def train(args):
                     test_ucomlpete_nopunc * 100 / test_total_inst, test_lcomplete_nopunc * 100 / test_total_inst, best_epoch))
                 print('best test Root: corr: %d, total: %d, acc: %.2f%% (epoch: %d)' % (test_root_correct, test_total_root, test_root_correct * 100 / test_total_root, best_epoch))
                 print('=' * 125)
+                print("     best dev             best test\n")
+                print("UP:%.4f  LP:%.4f||||UP:%.4f  LP:%.4f\n"
+                      "UR:%.4f  LR:%.4f||||UR:%.4f  LR:%.4f\n"
+                      "UF:%.4f  LF:%.4f||||UF:%.4f  LF:%.4f\n" %
+                      (best_arc_eval_p, best_type_eval_p,test_arc_p,test_type_p,
+                       best_arc_eval_r,best_type_eval_r,test_arc_r,test_type_r,
+                       best_arc_eval_f, best_type_eval_f,test_arc_f,test_type_f))
+                print("         (epoch: %d)\n          "%best_epoch)
 
                 if reset > 0 and patient >= reset:
                     print("### Reset optimizer state ###")
@@ -856,7 +939,7 @@ def parse(args):
     logger.info("Creating Alphabets")
     alphabet_path = os.path.join(model_path, 'alphabets')
     assert os.path.exists(alphabet_path)
-    word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = data_reader.create_alphabets(alphabet_path, None, normalize_digits=args.normalize_digits, pos_idx=args.pos_idx)
+    word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = data_reader.create_alphabets(alphabet_path, None, normalize_digits=args.normalize_digits, pos_idx=args.pos_idx,task_type="sdp")
     pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path)
 
     num_words = word_alphabet.size()
@@ -951,7 +1034,7 @@ def parse(args):
     if args.output_filename:
         pred_filename = args.output_filename
     else:
-        pred_filename = os.path.join(result_path, 'pred.txt')
+        pred_filename = os.path.join(result_path, 'pred_id.txt')
     pred_writer.start(pred_filename)
     # gold_filename = os.path.join(result_path, 'gold.txt')
     # gold_writer.start(gold_filename)
@@ -963,7 +1046,9 @@ def parse(args):
     with torch.no_grad():
         print('Parsing...')
         start_time = time.time()
-        eval(alg, data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam, batch_size=args.batch_size, tokenizer=tokenizer, multi_lan_iter=multi_lan_iter)
+
+        eval(alg, data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device,
+             beam=beam, batch_size=args.eval_batch_size, tokenizer=tokenizer,multi_lan_iter=multi_lan_iter)
         print('Time: %.2fs' % (time.time() - start_time))
 
     pred_writer.close()  # gold_writer.close()
