@@ -11,10 +11,10 @@ lmdir=/users2/yxwang/work/data/models
 #  dev=$dev:$dir/$lc/$lc-ud-dev.conllu
   #test=$test:$dir/$lc/$lc-ud-test.conllu
 #done
-dir=/users2/yxwang/work/data/semeval2015-task18/english/conllu/psd
-train=$dir/en.psd.train.conllu
-dev=$dir/en.psd.dev.conllu
-test=$dir/en.id.psd.conllu
+dir=/users2/yxwang/work/data/semeval2015-task18/english/conllu/dm
+train=$dir/en.dm.train.conllu
+dev=$dir/en.dm.dev.conllu
+test=$dir/en.ood.dm.conllu
 lans="en"
 
 #tcdir=/users2/yxwang/work/experiments/robust_parser/lm/saves
@@ -25,13 +25,13 @@ main=/users7/zllei/NeuroNLP2/experiments/robust_parser_sdp.py
 #seed=777
 #seed=999
 seed=555
-batch=128
+batch=32
 evalbatch=$batch
 epoch=1000
 patient=20
 lr='0.002'
-lm=none
-lmpath=$lmdir/roberta-base
+lm=elmo
+lmpath=$lmdir/elmo
 #lmpath=$lmdir/roberta-large
 #lm=elmo
 #lmpath=$lmdir/elmo
@@ -73,17 +73,18 @@ trim=' --do_trim'
 
 gpu=$1
 mode=$2
-save=/users7/zllei/exp_data/models/parsing/robust_parser_sdp_psd
-log=${save}/log_$(date "+%Y%m%d-%H%M%S").txt
+save=/users7/zllei/exp_data/models/parsing/robust_parser_sdp_dm_elmo
+log_file=${save}/log_${mode}_$(date "+%Y%m%d-%H%M%S").txt
 
 if [ -z $2 ];then
   echo '[gpu] [save] [log]'
   exit
 fi
 
-#if [ ! -f "$log" ]; then
-#  touch "$log"
-#fi
+if [ ! -f "$log_file" ]; then
+  touch "$log_file"
+  chmod 777 "$log_file"
+fi
 
 #source /users2/yxwang/work/env/py3.6/bin/activate
 CUDA_VISIBLE_DEVICES=$gpu OMP_NUM_THREADS=4 python -u $main --mode $mode \
@@ -101,4 +102,4 @@ CUDA_VISIBLE_DEVICES=$gpu OMP_NUM_THREADS=4 python -u $main --mode $mode \
  --dev $dev \
  --test $test \
  --lan_train $lans --lan_dev $lans --lan_test $lans $mix \
- --model_path $save
+ --model_path ${save} > $log_file

@@ -1034,7 +1034,7 @@ def parse(args):
     if args.output_filename:
         pred_filename = args.output_filename
     else:
-        pred_filename = os.path.join(result_path, 'pred_id.txt')
+        pred_filename = os.path.join(result_path, 'pred_ood.txt')
     pred_writer.start(pred_filename)
     # gold_filename = os.path.join(result_path, 'gold.txt')
     # gold_writer.start(gold_filename)

@@ -230,7 +230,7 @@ class CoNLLXReaderSDP(object):
             if line.startswith('#'):
                 line = self.__source_file.readline()
                 continue
-            items = line.split('\t')
+            items = line.split()
             if re.match('[0-9]+[-.][0-9]+', items[0]):
                 line = self.__source_file.readline()
                 continue
@@ -308,9 +308,10 @@ class CoNLLXReaderSDP(object):
                     temp_type = self.__type_alphabet.get_index(type)
                     temp.append(temp_type)
                 except:
-                    temp_type = self.__type_alphabet.next_index
-                    self.__type_alphabet.next_index +=1
-                    print("exception arc_label")
+                    temp_type = self.__type_alphabet.get_index(ROOT_TYPE)  # Jeffrey type不存在的情况
+                    # temp_type = self.__type_alphabet.next_index
+                    # self.__type_alphabet.next_index +=1
+                    print("【ERROR arc_type:%s】"%type)
                     temp.append(temp_type)
             type_ids.append(temp)
             # type_ids.append([self.__type_alphabet.get_index(type) for type in typelist])

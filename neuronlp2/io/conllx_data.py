@@ -71,8 +71,8 @@ def create_alphabets(alphabet_directory, train_path, data_paths=None, max_vocabu
     logger = get_logger("Create Alphabets")
     word_alphabet = Alphabet('word', default_value=True, singleton=True)
     char_alphabet = Alphabet('character', default_value=True)
-    pos_alphabet = Alphabet('pos')
-    type_alphabet = Alphabet('type')
+    pos_alphabet = Alphabet('pos',keep_growing=True)
+    type_alphabet = Alphabet('type',keep_growing=True)
     if not os.path.isdir(alphabet_directory):
         logger.info("Creating Alphabets: %s" % alphabet_directory)
 
@@ -512,8 +512,8 @@ def read_data_sdp(source_path: str, word_alphabet: Alphabet, char_alphabet: Alph
     cid_inputs = np.empty([data_size, max_length, char_length], dtype=np.int64)
     pid_inputs = np.empty([data_size, max_length], dtype=np.int64)
 
-    hid_inputs = np.empty([data_size, max_length,max_length], dtype=np.int64)
-    tid_inputs = np.empty([data_size, max_length,max_length], dtype=np.int64)
+    hid_inputs = np.zeros([data_size, max_length,max_length], dtype=np.int64)  # Jeffrey: 由empty 改成zeros
+    tid_inputs = np.zeros([data_size, max_length,max_length], dtype=np.int64)
 
 
     preid_inputs = np.empty([data_size, max_length], dtype=np.int64)
