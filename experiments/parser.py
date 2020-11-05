@@ -135,6 +135,11 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
     all_src_words = []
     all_heads_by_layer = []
 
+    if hasattr(network, 'use_elmo'):
+        use_elmo = network.use_elmo
+    else:
+        use_elmo = network.module.use_elmo
+
     if multi_lan_iter:
         iterate = multi_language_iterate_data
     else:

@@ -126,8 +126,8 @@ class BiaffineParser(nn.Module):
             lm_hidden_size = 0
         # for ELMo
         if self.use_elmo:
-            self.elmo_encoder, elmo_hidden_size = load_elmo(lm_path)
-            logger.info("[ELMo] Pretrained ELMo Path: %s" % (lm_path))
+            self.elmo_encoder, elmo_hidden_size = load_elmo(elmo_path)
+            logger.info("[ELMo] Pretrained ELMo Path: %s" % (elmo_path))
         else:
             self.elmo_encoder = None
             elmo_hidden_size = 0
