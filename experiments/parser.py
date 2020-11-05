@@ -501,7 +501,7 @@ def train(args):
         logger.info("Scheduler: %s, init lr=%.6f, warmup_steps=%d" % (schedule, learning_rate, warmup_steps))
     elif schedule == 'exponential':
         logger.info("Scheduler: %s, init lr=%.6f, lr decay=%.6f, warmup_steps=%d" % (schedule, learning_rate, lr_decay, warmup_steps))
-    if not pretrained_lm == 'none':
+    if pretrained_lm != 'none' else use_elmo:
         optim_parameters = [{'params':single_network._basic_parameters()},
                             {'params':single_network.lm_encoder.parameters(), 'lr':args.lm_lr}]
         logger.info("Language model lr: %.6f" % args.lm_lr)
