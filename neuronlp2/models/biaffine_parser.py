@@ -110,7 +110,8 @@ class BiaffineParser(nn.Module):
         logger.info("Network: %s, hidden=%d, act=%s" % (model, hidden_size, activation))
         logger.info("##### Embeddings (POS tag: %s, Char: %s) #####" % (use_pos, use_char))
         logger.info("dropout(in, out): (%.2f, %.2f)" % (p_in, p_out))
-        logger.info("Use Randomly Init Word Emb: %s" % (basic_word_embedding))
+        logger.info("Use Randomly Init Word Emb: %s" % (use_random_static))
+        logger.info("Use Pretrained Word Emb: %s" % (use_pretrained_static))
         logger.info("##### Input Encoder (Type: %s, Layer: %d, Hidden: %d) #####" % (input_encoder_name, num_layers, hidden_size))
         logger.info("Langauge embedding as input: %s (size: %d)" % (self.lan_emb_as_input, lan_emb_size))
         # Initialization
@@ -289,22 +290,20 @@ class BiaffineParser(nn.Module):
         return itertools.chain(*params)
 
     def reset_parameters(self, embedd_word, embedd_char, embedd_pos):
-        if embedd_word is None and self.word_embed is not None:
-            nn.init.uniform_(self.word_embed.weight, -0.1, 0.1)
         if embedd_char is None and self.char_embed is not None:
             nn.init.uniform_(self.char_embed.weight, -0.1, 0.1)
         if embedd_pos is None and self.pos_embed is not None:
             nn.init.uniform_(self.pos_embed.weight, -0.1, 0.1)
-        if self.basic_word_embed is not None:
-            nn.init.uniform_(self.basic_word_embed.weight, -0.1, 0.1)
+        if self.random_word_embed is not None:
+            nn.init.uniform_(self.random_word_embed.weight, -0.1, 0.1)
         if self.language_embed is not None:
             nn.init.uniform_(self.language_embed.weight, -0.1, 0.1)
 
         with torch.no_grad():
-            if self.word_embed is not None:
-                self.word_embed.weight[self.word_embed.padding_idx].fill_(0)
-            if self.basic_word_embed is not None:
-                self.basic_word_embed.weight[self.basic_word_embed.padding_idx].fill_(0)
+            if self.pretrained_word_embed is not None:
+                self.pretrained_word_embed.weight[self.pretrained_word_embed.padding_idx].fill_(0)
+            if self.random_word_embed is not None:
+                self.random_word_embed.weight[self.random_word_embed.padding_idx].fill_(0)
             if self.char_embed is not None:
                 self.char_embed.weight[self.char_embed.padding_idx].fill_(0)
             if self.pos_embed is not None:
