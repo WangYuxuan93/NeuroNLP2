@@ -13,7 +13,7 @@ from neuronlp2.nn.graph_attention_network import GraphAttentionNetworkConfig, Gr
 from neuronlp2.nn.dropout import drop_input_independent
 from torch.autograd import Variable
 from transformers import *
-from neuronlp2.models.robust_parsing import RobustParser
+from neuronlp2.models.biaffine_parser import BiaffineParser
 import random
 
 class PriorOrder(Enum):

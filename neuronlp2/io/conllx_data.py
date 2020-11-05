@@ -117,14 +117,14 @@ def create_alphabets(alphabet_directory, train_path, data_paths=None, max_vocabu
         vocab_list = [word for word in vocab_list if word in _START_VOCAB or vocab[word] > min_occurrence]
         logger.info("Total Vocabulary Size (w.o rare words): %d" % len(vocab_list))
 
-        if len(vocab_list) > max_vocabulary_size:
-            vocab_list = vocab_list[:max_vocabulary_size]
-
         if data_paths is not None and embedd_dict is not None:
             expand_vocab()
 
         if embedd_dict is not None and expand_with_pretrained:
             expand_vocab_with_pretrained()
+
+        if len(vocab_list) > max_vocabulary_size:
+            vocab_list = vocab_list[:max_vocabulary_size]
 
         for word in vocab_list:
             word_alphabet.add(word)

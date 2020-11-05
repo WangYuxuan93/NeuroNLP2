@@ -349,12 +349,15 @@ def train(args):
     logger.info("Creating Alphabets")
     alphabet_path = os.path.join(model_path, 'alphabets')
     if data_format == "conllx":
-        data_paths=[dev_path, test_path]
+        #data_paths=[dev_path, test_path]
+        data_paths=[dev_path]
     elif data_format == "ud":
-        data_paths=dev_path + test_path
+        #data_paths=dev_path + test_path
+        data_paths=dev_path
     word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = data_reader.create_alphabets(alphabet_path, train_path,
                                                                                              data_paths=data_paths, 
-                                                                                             embedd_dict=word_dict, max_vocabulary_size=400000,
+                                                                                             embedd_dict=word_dict, 
+                                                                                             max_vocabulary_size=args.max_vocab_size,
                                                                                              normalize_digits=args.normalize_digits,
                                                                                              pos_idx=args.pos_idx,
                                                                                              expand_with_pretrained=(not args.do_trim))
@@ -385,11 +388,11 @@ def train(args):
     def construct_word_embedding_table(only_pretrain_static=False):
         scale = np.sqrt(3.0 / word_dim)
         if only_pretrain_static:
-            table = np.empty([pretrained_alphabet.size(), word_dim], dtype=np.float32)
-            items = pretrained_alphabet.items()
-        else:
             table = np.empty([word_alphabet.size(), word_dim], dtype=np.float32)
             items = word_alphabet.items()
+        else:
+            table = np.empty([pretrained_alphabet.size(), word_dim], dtype=np.float32)
+            items = pretrained_alphabet.items()
         table[data_reader.UNK_ID, :] = np.zeros([1, word_dim]).astype(np.float32) if freeze else np.random.uniform(-scale, scale, [1, word_dim]).astype(np.float32)
         oov = 0
         for word, index in items:
@@ -655,7 +658,6 @@ def train(args):
             postags = data['POS'].to(device)
             heads = data['HEAD'].to(device)
             nbatch = words.size(0)
-            if not pretrained_lm == 'none':
             srcs = data['SRC']
             if words.size()[0] == 1 and len(srcs) > 1:
                 srcs = [srcs]
@@ -1082,6 +1084,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--beam', type=int, default=1, help='Beam size for decoding')
     args_parser.add_argument('--use_pretrained_static', action='store_true', help='Whether to use pretrained static word embedding.')
     args_parser.add_argument('--use_random_static', action='store_true', help='Whether to use extra randomly initialized trainable word embedding.')
+    args_parser.add_argument('--max_vocab_size', type=int, default=400000, help='Maximum vocabulary size for static embeddings')
     args_parser.add_argument('--do_trim', default=False, action='store_true', help='Whether to trim pretrained alphabet with training/dev/test data')
     args_parser.add_argument('--word_embedding', choices=['glove', 'senna', 'sskip', 'polyglot'], help='Embedding for words')
     args_parser.add_argument('--word_path', help='path for word embedding dict')
