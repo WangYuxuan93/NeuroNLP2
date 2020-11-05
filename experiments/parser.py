@@ -23,8 +23,9 @@ from torch.nn.utils import clip_grad_norm_
 from neuronlp2.nn.utils import total_grad_norm
 from neuronlp2.io import get_logger, conllx_data, ud_data #, iterate_data
 from neuronlp2.io import ud_stacked_data, conllx_stacked_data
-from neuronlp2.models.biaffine_parsing import BiaffineParser
-from neuronlp2.models.stack_pointer import StackPtrParser
+from neuronlp2.models.biaffine_parser import BiaffineParser
+from neuronlp2.models.stack_pointer_parser import StackPointerParser
+#from neuronlp2.models.stack_pointer import StackPtrParser
 from neuronlp2.models.ensemble import EnsembleParser
 from neuronlp2.optim import ExponentialScheduler, StepScheduler, AttentionScheduler
 from neuronlp2 import utils
@@ -177,7 +178,8 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
             err_types = None
             masks = data['MASK_ENC'].to(device)
             heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, 
-                bpes=bpes, first_idx=first_idx, lan_id=lan_id, beam=beam, leading_symbolic=conllx_data.NUM_SYMBOLIC_TAGS)
+                bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id, 
+                beam=beam, leading_symbolic=conllx_data.NUM_SYMBOLIC_TAGS)
         words = words.cpu().numpy()
         postags = postags.cpu().numpy()
 
@@ -428,7 +430,7 @@ def train(args):
     hyps = json.load(open(args.config, 'r'))
     json.dump(hyps, open(os.path.join(model_path, 'config.json'), 'w'), indent=2)
     model_type = hyps['model']
-    assert model_type in ['Biaffine', 'StackPtr']
+    assert model_type in ['Biaffine', 'StackPointer']
     assert word_dim == hyps['input']['word_dim']
     if char_dim is not None:
         assert char_dim == hyps['input']['char_dim']
@@ -453,7 +455,7 @@ def train(args):
         tokenizer = AutoTokenizer.from_pretrained(lm_path)
 
     logger.info("##### Parser Type: {} #####".format(model_type))
-    alg = 'transition' if model_type == 'StackPtr' else 'graph'
+    alg = 'transition' if model_type == 'StackPointer' else 'graph'
     if model_type == 'Biaffine':
         network = BiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels, 
                                 device=device, embedd_word=word_table, embedd_char=char_table,
@@ -461,10 +463,11 @@ def train(args):
                                use_elmo=use_elmo, elmo_path=elmo_path,
                                pretrained_lm=pretrained_lm, lm_path=lm_path,
                                num_lans=num_lans)
-    elif model_type == 'StackPtr':
-        network = StackPtrParser(hyps, num_pretrained, num_words, num_chars, num_pos,
-                               num_rels, device=device, basic_word_embedding=basic_word_embedding,
-                               embedd_word=word_table, embedd_char=char_table, 
+    elif model_type == 'StackPointer':
+        network = StackPointerParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels, 
+                               device=device, embedd_word=word_table, embedd_char=char_table, 
+                               use_pretrained_static=use_pretrained_static, use_random_static=use_random_static,
+                               use_elmo=use_elmo, elmo_path=elmo_path,
                                pretrained_lm=pretrained_lm, lm_path=lm_path,
                                num_lans=num_lans)
     else:
@@ -705,7 +708,8 @@ def train(args):
                 #print ("words:\n", words)
                 nwords = masks_enc.sum() - nbatch
                 losses = network(words, pres, chars, postags, heads, stacked_heads, children, siblings, stacked_rels,
-                                        mask_e=masks_enc, mask_d=masks_dec, bpes=bpes, first_idx=first_idx, lan_id=lan_id)
+                                mask_e=masks_enc, mask_d=masks_dec, bpes=bpes, first_idx=first_idx, 
+                                input_elmo=input_elmo, lan_id=lan_id)
                 statistics = None
             arc_loss, rel_loss = losses
             arc_loss = arc_loss.sum()
@@ -949,7 +953,7 @@ def parse(args):
     logger.info("loading network...")
     hyps = json.load(open(os.path.join(model_path, 'config.json'), 'r'))
     model_type = hyps['model']
-    assert model_type in ['Biaffine', 'StackPtr']
+    assert model_type in ['Biaffine', 'StackPointer']
 
     num_lans = 1
     if data_format == 'ud' and not args.mix_datasets:
@@ -966,7 +970,7 @@ def parse(args):
     else:
         tokenizer = AutoTokenizer.from_pretrained(lm_path)
 
-    alg = 'transition' if model_type == 'StackPtr' else 'graph'
+    alg = 'transition' if model_type == 'StackPointer' else 'graph'
     if args.ensemble:
         network = EnsembleParser(hyps, num_pretrained, num_words, num_chars, num_pos,
                                    num_rels, device=device, basic_word_embedding=args.basic_word_embedding, 
@@ -980,10 +984,12 @@ def parse(args):
                                    use_random_static=args.use_random_static,
                                    use_elmo=use_elmo, elmo_path=elmo_path,
                                    num_lans=num_lans)
-        elif model_type == 'StackPtr':
-            network = StackPtrParser(hyps, num_pretrained, num_words, num_chars, num_pos,
-                                   num_rels, device=device, basic_word_embedding=args.basic_word_embedding,
-                                   pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
+        elif model_type == 'StackPointer':
+            network = StackPointerParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels,
+                                   device=device, pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
+                                   use_pretrained_static=args.use_pretrained_static, 
+                                   use_random_static=args.use_random_static,
+                                   use_elmo=use_elmo, elmo_path=elmo_path,
                                    num_lans=num_lans)
         else:
             raise RuntimeError('Unknown model type: %s' % model_type)
