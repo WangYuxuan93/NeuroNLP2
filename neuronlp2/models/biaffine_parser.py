@@ -116,8 +116,8 @@ class BiaffineParser(nn.Module):
         if self.pretrained_lm != 'none':
             self.lm_encoder = AutoModel.from_pretrained(lm_path)
             
-            logger.info("Pretrained Language Model Type: %s" % (self.lm_encoder.config.model_type))
-            logger.info("Pretrained Language Model Path: %s" % (lm_path))
+            logger.info("[LM] Pretrained Language Model Type: %s" % (self.lm_encoder.config.model_type))
+            logger.info("[LM] Pretrained Language Model Path: %s" % (lm_path))
             lm_hidden_size = self.lm_encoder.config.hidden_size
             #assert lm_hidden_size == word_dim
             #lm_hidden_size = 768
@@ -127,8 +127,7 @@ class BiaffineParser(nn.Module):
         # for ELMo
         if self.use_elmo:
             self.elmo_encoder, elmo_hidden_size = load_elmo(lm_path)
-            logger.info("Pretrained Language Model Type: ELMo")
-            logger.info("Pretrained Language Model Path: %s" % (lm_path))
+            logger.info("[ELMo] Pretrained ELMo Path: %s" % (lm_path))
         else:
             self.elmo_encoder = None
             elmo_hidden_size = 0
@@ -136,9 +135,9 @@ class BiaffineParser(nn.Module):
         if self.use_pretrained_static:
             if self.only_pretrain_static:
                 num_pretrained = num_words
-                logger.info("Only use Pretrained static embeddings. (size=%d)" % num_pretrained)
+                logger.info("[Pretrained Static] Only use Pretrained static embeddings. (size=%d)" % num_pretrained)
             else:
-                logger.info("Pretrained static embeddings size: %d" % num_pretrained)
+                logger.info("[Pretrained Static] Pretrained static embeddings size: %d" % num_pretrained)
             self.pretrained_word_embed = nn.Embedding(num_pretrained, word_dim, _weight=embedd_word, padding_idx=1)
             self.basic_parameters.append(self.pretrained_word_embed)
             pretrained_static_size = word_dim
@@ -147,7 +146,7 @@ class BiaffineParser(nn.Module):
             pretrained_static_size = 0
         # for randomly initialized static word embedding
         if self.use_random_static:
-            logger.info("Randomly initialized static embeddings size: %d" % num_words)
+            logger.info("[Random Static] Randomly initialized static embeddings size: %d" % num_words)
             self.random_word_embed = nn.Embedding(num_words, word_dim, padding_idx=1)
             self.basic_parameters.append(self.random_word_embed)
             random_static_size = word_dim
