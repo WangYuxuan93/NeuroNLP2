@@ -33,7 +33,7 @@ from neuronlp2.io import CoNLLXWriter
 from neuronlp2.tasks import parser
 from neuronlp2.nn.utils import freeze_embedding
 from neuronlp2.io import common
-from transformers import *
+from transformers import AutoTokenizer
 from neuronlp2.io.common import PAD, ROOT, END
 from neuronlp2.io.batcher import multi_language_iterate_data, iterate_data
 from neuronlp2.io import multi_ud_data
@@ -297,7 +297,6 @@ def train(args):
         print ("### Unrecognized data formate: %s ###" % data_format)
         exit()
 
-    basic_word_embedding = args.basic_word_embedding
     num_epochs = args.num_epochs
     patient_epochs = args.patient_epochs
     batch_size = args.batch_size
@@ -975,7 +974,7 @@ def parse(args):
     alg = 'transition' if model_type == 'StackPointer' else 'graph'
     if args.ensemble:
         network = EnsembleParser(hyps, num_pretrained, num_words, num_chars, num_pos,
-                                   num_rels, device=device, basic_word_embedding=args.basic_word_embedding, 
+                                   num_rels, device=device, 
                                    pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
                                    num_lans=num_lans, model_paths=model_paths, merge_by=args.merge_by)
     else:
