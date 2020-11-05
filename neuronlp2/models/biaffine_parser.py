@@ -142,7 +142,11 @@ class BiaffineParser(nn.Module):
             elmo_hidden_size = 0
         # for pretrianed static word embedding
         if self.use_pretrained_static:
-            logger.info("Pretrained static embeddings size: %d" % num_pretrained)
+            if self.only_pretrain_static:
+                num_pretrained = num_words
+                logger.info("Only use Pretrained static embeddings. (size=%d)" % num_pretrained)
+            else:
+                logger.info("Pretrained static embeddings size: %d" % num_pretrained)
             self.pretrained_word_embed = nn.Embedding(num_pretrained, word_dim, _weight=embedd_word, padding_idx=1)
             self.basic_parameters.append(self.pretrained_word_embed)
             pretrained_static_size = word_dim
