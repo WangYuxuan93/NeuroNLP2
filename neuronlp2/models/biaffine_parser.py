@@ -82,11 +82,6 @@ class BiaffineParser(nn.Module):
         self.pretrained_lm = pretrained_lm
         self.only_pretrain_static = use_pretrained_static and not use_random_static
 
-        self.mask_error_token = False
-        self.mask_error_input = False
-        self.mask_random_input = False
-        self.error_prob = 0
-
         # for biaffine layer
         self.arc_mlp_dim = hyps['biaffine']['arc_mlp_dim']
         self.rel_mlp_dim = hyps['biaffine']['rel_mlp_dim']
@@ -123,9 +118,6 @@ class BiaffineParser(nn.Module):
             
             logger.info("Pretrained Language Model Type: %s" % (self.lm_encoder.config.model_type))
             logger.info("Pretrained Language Model Path: %s" % (lm_path))
-            logger.info("Mask out error tokens: %s" % self.mask_error_token)
-            logger.info("Mask random input tokens: %s" % self.mask_random_input)
-            logger.info("Replace error input to LM by [MASK]: %s (error prob:%f)" % (self.mask_error_input, self.error_prob))
             lm_hidden_size = self.lm_encoder.config.hidden_size
             #assert lm_hidden_size == word_dim
             #lm_hidden_size = 768
