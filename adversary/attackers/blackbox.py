@@ -700,14 +700,14 @@ class BlackBoxAttacker(object):
         self.model.eval()
         heads_pred_list, rels_pred_list = [], []
         with torch.no_grad():
-            if self.model.hyps['model'] == 'Robust':
+            if self.model.hyps['model'] == 'Biaffine':
                 for words, pres, chars, pos, masks, bpes, first_idx, input_elmo, lan_id in self.str2id(tokens, tags):
                     heads_pred, rels_pred = self.model.decode(words, pres, chars, pos, mask=masks, 
                             bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id, 
                             leading_symbolic=common.NUM_SYMBOLIC_TAGS)
                     heads_pred_list.append(heads_pred)
                     rels_pred_list.append(rels_pred)
-            elif self.model.hyps['model'] == 'StackPtr':
+            elif self.model.hyps['model'] == 'StackPointer':
                 for words, pres, chars, pos, masks, bpes, first_idx, lan_id in self.str2id(tokens, tags):
                     heads_pred, rels_pred = self.model.decode(words, pres, chars, pos, mask=masks, beam=self.beam,
                             bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id, 

@@ -34,7 +34,7 @@ from neuronlp2.io import CoNLLXWriter
 from neuronlp2.tasks import parser
 from neuronlp2.nn.utils import freeze_embedding
 from neuronlp2.io import common
-from transformers import *
+from transformers import AutoTokenizer, AutoModelWithLMHead
 from neuronlp2.io.common import PAD, ROOT, END
 from neuronlp2.io.batcher import multi_language_iterate_data, iterate_data
 from neuronlp2.io import multi_ud_data
@@ -293,6 +293,8 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
     all_src_words = []
     all_heads_by_layer = []
 
+    use_elmo = network.use_elmo
+
     if multi_lan_iter:
         iterate = multi_language_iterate_data
     else:
@@ -375,11 +377,12 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
             adv_pres = adv_pres.to(device)
         #print ("orig_words:\n{}\nadv_words:\n{}".format(words, adv_words))
 
-        if network.pretrained_lm == 'elmo':
-            bpes = batch_to_ids(adv_src)
-            bpes = bpes.to(device)
-            first_idx = None
-        elif tokenizer:
+        if use_elmo:
+            input_elmo = batch_to_ids(adv_src)
+            input_elmo = input_elmo.to(device)
+        else:
+            input_elmo = None
+        if tokenizer:
             bpes, first_idx = convert_tokens_to_ids(tokenizer, adv_src)
             bpes = bpes.to(device)
             first_idx = first_idx.to(device)
@@ -389,11 +392,11 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
         if alg == 'graph':
             masks = data['MASK'].to(device)
             heads_pred, rels_pred = network.decode(adv_words, adv_pres, chars, postags, mask=masks, 
-                bpes=bpes, first_idx=first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
+                bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
         else:
             masks = data['MASK_ENC'].to(device)
             heads_pred, rels_pred = network.decode(adv_words, adv_pres, chars, postags, mask=masks, 
-                bpes=bpes, first_idx=first_idx, lan_id=lan_id, beam=beam, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
+                bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id, beam=beam, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
 
         adv_words = adv_words.cpu().numpy()
         postags = postags.cpu().numpy()
@@ -555,7 +558,7 @@ def parse(args):
     logger.info("loading network...")
     hyps = json.load(open(os.path.join(model_path, 'config.json'), 'r'))
     model_type = hyps['model']
-    assert model_type in ['Robust', 'StackPtr']
+    assert model_type in ['Biaffine', 'StackPointer']
 
     num_lans = 1
     if data_format == 'ud' and not args.mix_datasets:
@@ -573,21 +576,21 @@ def parse(args):
         tokenizer = AutoTokenizer.from_pretrained(lm_path)
 
     logger.info("##### Parser Type: {} #####".format(model_type))
-    alg = 'transition' if model_type == 'StackPtr' else 'graph'
+    alg = 'transition' if model_type == 'StackPointer' else 'graph'
     if args.ensemble:
         network = EnsembleParser(hyps, num_pretrained, num_words, num_chars, num_pos,
                                    num_rels, device=device,
                                    pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
                                    num_lans=num_lans, model_paths=model_paths, merge_by=args.merge_by)
     else:
-        if model_type == 'Robust':
+        if model_type == 'Biaffine':
             network = BiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels,
                                    device=device, pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
                                    use_pretrained_static=args.use_pretrained_static, 
                                    use_random_static=args.use_random_static,
                                    use_elmo=args.use_elmo, elmo_path=args.elmo_path,
                                    num_lans=num_lans)
-        elif model_type == 'StackPtr':
+        elif model_type == 'StackPointer':
             network = StackPointerParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels,
                                    device=device, pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
                                    use_pretrained_static=args.use_pretrained_static, 
