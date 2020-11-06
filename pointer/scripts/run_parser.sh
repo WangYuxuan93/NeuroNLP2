@@ -5,7 +5,8 @@ if [ ! -f "$log_file" ]; then
   touch "$log_file"
   chmod 777 "$log_file"
 fi
-data=/users7/zllei/SemanticPointer/data
+#data=/users7/zllei/SemanticPointer/data
+data=/users2/yxwang/work/data/semeval2015-task18/english/conllu
 
 CUDA_VISIBLE_DEVICES=$1 \
 python scripts/L2RParser.py --mode FastLSTM --num_epochs 1000 --batch_size 64 \
@@ -15,10 +16,10 @@ python scripts/L2RParser.py --mode FastLSTM --num_epochs 1000 --batch_size 64 \
  --schedule 20 --double_schedule_decay 5 \
  --p_in 0.33 --p_out 0.33 --p_rnn 0.33 0.33 --unk_replace 0.5 --label_smooth 1.0 --pos \
  --word_embedding glove --word_path "/users2/yxwang/work/data/embeddings/glove/glove.6B.100d.txt.gz" --char_embedding random \
-  --train "$data/$2/en_$2_train.dag" \
-   --dev "$data/$2/en_$2_dev.dag" \
-    --test "$data/$2/en_id_$2.dag" \
-    --test2 "$data/$2/en_ood_$2.dag" \
+  --train "$data/$2/en.$2.train.conllu" \
+   --dev "$data/$2/en.$2.dev.conllu" \
+    --test "$data/$2/en.id.$2.conllu" \
+    --test2 "$data/$2/en.ood.$2.conllu" \
  --train_mode $3 \
    --model_path $4 --model_name 'models/network.pt' --beam 1 >$log_file
 

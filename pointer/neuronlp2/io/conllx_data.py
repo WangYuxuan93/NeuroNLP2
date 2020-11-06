@@ -39,7 +39,7 @@ _buckets = [10, 15, 20, 25, 30, 35, 40, 50, 60, 70, 80, 90, 100, 140]
 from .semantic_reader import CoNLLXReader
 import re
 
-def create_alphabets(alphabet_directory, train_path, data_paths=None, max_vocabulary_size=50000, embedd_dict=None, min_occurence=1, normalize_digits=True):
+def create_alphabets(alphabet_directory, train_path, data_paths=None, max_vocabulary_size=50000, embedd_dict=None, min_occurence=1, normalize_digits=True, pos_ids=3):
 
 
     def expand_vocab():
@@ -64,7 +64,7 @@ def create_alphabets(alphabet_directory, train_path, data_paths=None, max_vocabu
                         char_alphabet.add(char)
 
                     word = utils.DIGIT_RE.sub("0", tokens[1]) if normalize_digits else tokens[1]
-                    pos = tokens[3]
+                    pos = tokens[pos_ids]
                     pos_alphabet.add(pos)
 
                     # type = tokens[7]
@@ -72,9 +72,12 @@ def create_alphabets(alphabet_directory, train_path, data_paths=None, max_vocabu
                     # print line, len(tokens)
 
                     # 获取所有的type
-                    for i in range(len(tokens) - 4):
-                        type = tokens[4 + i]
-                        type_alphabet.add(type)  # print type
+                    type = []
+                    for x in tokens[8].split("|"):
+                        if x != '_':
+                            type.append(x.split(":")[1])
+                    for sub_type in type:
+                        type_alphabet.add(sub_type)
 
                     if word not in vocab_set and (word in embedd_dict or word.lower() in embedd_dict):
                         vocab_set.add(word)
@@ -131,12 +134,15 @@ def create_alphabets(alphabet_directory, train_path, data_paths=None, max_vocabu
                 """
 
                 word = utils.DIGIT_RE.sub("0", tokens[1]) if normalize_digits else tokens[1]
-                pos = tokens[3]
+                pos = tokens[pos_ids]
                 pos_alphabet.add(pos)
 
-                for i in range(len(tokens) - 4):
-                    type = tokens[4 + i]
-                    type_alphabet.add(type)
+                type = []
+                for x in tokens[8].split("|"):
+                    if x != '_':
+                        type.append(x.split(":")[1])
+                for sub_type in type:
+                    type_alphabet.add(sub_type)
 
                 if word in vocab:
                     vocab[word] += 1

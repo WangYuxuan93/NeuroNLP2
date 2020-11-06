@@ -31,6 +31,9 @@ class CoNLLXReader(object):
         lines = []
         while len(line.strip()) > 0:
             line = line.strip()
+            if line.startswith("#"):
+                line = self.__source_file.readline()
+                continue
             #line = line.decode('utf-8')
             lines.append(line.split('\t'))
             line = self.__source_file.readline()
@@ -104,17 +107,20 @@ class CoNLLXReader(object):
             node_heads = []
             node_types = []
             node_type_ids = []
-            for i in range(length + 1):
-                # print i, tokens[4+i], len(tokens[4+i])
-                if tokens[4 + i] != '_':
-                    # has_head=True
-                    head = i
-                    type = tokens[4 + i]
-                    # print tokens[0], 'dependency', type, '_', head
-                    node_types.append(type)
-                    node_type_ids.append(self.__type_alphabet.get_index(type))
+            for x in tokens[8].split("|"):
+                if x != '_':
+                    p = x.split(":")
+                    node_heads.append(int(p[0]))
+                    try:
+                        node_types.append(p[1])
+                        temp_type = self.__type_alphabet.get_index(p[1])
+                        node_type_ids.append(temp_type)
+                    except:
+                        node_types.append(PAD_TYPE)
+                        temp_type = self.__type_alphabet.get_index(PAD_TYPE)  # Jeffrey type不存在的情况
+                        node_type_ids.append(temp_type)
+                        print("【ERROR arc_type:%s】" % p[1])
 
-                    node_heads.append(head)
 
             # if has_head == False:
             node_heads.append(int(tokens[0]))
