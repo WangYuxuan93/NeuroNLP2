@@ -585,14 +585,14 @@ def parse(args):
                                    device=device, pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
                                    use_pretrained_static=args.use_pretrained_static, 
                                    use_random_static=args.use_random_static,
-                                   use_elmo=use_elmo, elmo_path=elmo_path,
+                                   use_elmo=args.use_elmo, elmo_path=args.elmo_path,
                                    num_lans=num_lans)
         elif model_type == 'StackPtr':
             network = StackPointerParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels,
                                    device=device, pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
                                    use_pretrained_static=args.use_pretrained_static, 
                                    use_random_static=args.use_random_static,
-                                   use_elmo=use_elmo, elmo_path=elmo_path,
+                                   use_elmo=args.use_elmo, elmo_path=args.elmo_path,
                                    num_lans=num_lans)
         else:
             raise RuntimeError('Unknown model type: %s' % model_type)
@@ -738,10 +738,14 @@ if __name__ == '__main__':
     args_parser.add_argument('--punctuation', nargs='+', type=str, help='List of punctuations')
     args_parser.add_argument('--pos_idx', type=int, default=4, choices=[3, 4], help='Index in Conll file line for Part-of-speech tags')
     args_parser.add_argument('--beam', type=int, default=1, help='Beam size for decoding')
+    args_parser.add_argument('--use_pretrained_static', action='store_true', help='Whether to use pretrained static word embedding.')
+    args_parser.add_argument('--use_random_static', action='store_true', help='Whether to use extra randomly initialized trainable word embedding.')
     args_parser.add_argument('--word_embedding', choices=['glove', 'senna', 'sskip', 'polyglot'], help='Embedding for words')
     args_parser.add_argument('--word_path', help='path for word embedding dict')
     args_parser.add_argument('--char_embedding', choices=['random', 'polyglot'], help='Embedding for characters')
     args_parser.add_argument('--char_path', help='path for character embedding dict')
+    args_parser.add_argument('--use_elmo', action='store_true', default=False, help='Use elmo as input?')
+    args_parser.add_argument('--elmo_path', default=None, help='path for pretrained elmo')
     args_parser.add_argument('--pretrained_lm', default='none', choices=['none', 'elmo', 'bert', 'bart', 'roberta', 'xlm-r', 'electra', 'tc_bert', 'tc_bart', 'tc_roberta', 'tc_electra'], help='Pre-trained language model')
     args_parser.add_argument('--lm_path', help='path for pretrained language model')
     args_parser.add_argument('--normalize_digits', default=False, action='store_true', help='normalize digits to 0 ?')
@@ -767,7 +771,6 @@ if __name__ == '__main__':
     args_parser.add_argument('--adv_gold_filename', type=str, help='output adversarial text with gold heads & rels')
     args_parser.add_argument('--adv_rel_ratio', type=float, default=0.5, help='Relation importance in adversarial attack')
     args_parser.add_argument('--adv_fluency_ratio', type=float, default=0.2, help='Fluency importance in adversarial attack')
-    #args_parser.add_argument('--max_perp_diff_per_token', type=float, default=0.8, help='Maximum allowed perplexity difference per token in adversarial attack')
     args_parser.add_argument('--ppl_inc_thres', type=float, default=20.0, help='Perplexity difference threshold in adversarial attack')
     args_parser.add_argument('--max_mod_percent', type=float, default=0.05, help='Maximum modification percentage of words')
     args_parser.add_argument('--adv_batch_size', type=int, default=16, help='Number of sentences in adv lm each batch')
