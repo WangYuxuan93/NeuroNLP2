@@ -35,7 +35,7 @@ from neuronlp2.nn.utils import freeze_embedding
 from neuronlp2.io import common
 from transformers import AutoTokenizer
 from neuronlp2.io.common import PAD, ROOT, END
-from neuronlp2.io.batcher import multi_language_iterate_data, iterate_data
+from neuronlp2.io.batcher import multi_language_iterate_data, iterate_data,iterate_data_dp
 from neuronlp2.io import multi_ud_data
 
 def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgrad, weight_decay, 
@@ -143,7 +143,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
     if multi_lan_iter:
         iterate = multi_language_iterate_data
     else:
-        iterate = iterate_data
+        iterate = iterate_data_dp
         lan_id = None
 
     for data in iterate(data, batch_size):
@@ -627,7 +627,7 @@ def train(args):
         iterate = multi_language_iterate_data
         multi_lan_iter = True
     else:
-        iterate = iterate_data
+        iterate = iterate_data_dp
         multi_lan_iter = False
         lan_id = None
     for epoch in range(1, num_epochs + 1):

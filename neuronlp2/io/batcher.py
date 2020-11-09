@@ -194,6 +194,13 @@ def iterate_data(data, batch_size, bucketed=False, unk_replace=0., shuffle=False
     else:
         return iterate_batch_sdp(data, batch_size, unk_replace=unk_replace, shuffle=shuffle)
 
+
+def iterate_data_dp(data, batch_size, bucketed=False, unk_replace=0., shuffle=False, **kwargs):
+    if bucketed:
+        return iterate_bucketed_batch(data, batch_size, unk_replace=unk_replace, shuffle=shuffle)
+    else:
+        return iterate_batch(data, batch_size, unk_replace=unk_replace, shuffle=shuffle)
+
 # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< sdp <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 def iterate_bucketed_batch_sdp(data, batch_size, unk_replace=0., shuffle=False):
     data_tensor, bucket_sizes = data
