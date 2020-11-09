@@ -503,7 +503,7 @@ def train(args):
         logger.info("Scheduler: %s, init lr=%.6f, lr decay=%.6f, warmup_steps=%d" % (schedule, learning_rate, lr_decay, warmup_steps))
     if pretrained_lm != 'none' or use_elmo:
         optim_parameters = [{'params':single_network._basic_parameters()},
-                            {'params':single_network.lm_encoder.parameters(), 'lr':args.lm_lr}]
+                            {'params':single_network._lm_parameters(), 'lr':args.lm_lr}]
         logger.info("Language model lr: %.6f" % args.lm_lr)
     else:
         #optim_parameters = single_network._basic_parameters() #single_network.parameters()
