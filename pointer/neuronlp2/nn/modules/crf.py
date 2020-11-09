@@ -6,8 +6,8 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 from torch.nn.parameter import Parameter
-from neuronlp2.nlinalg import logsumexp, logdet
-from neuronlp2.tasks import parser
+from pointer.neuronlp2.nlinalg import logsumexp, logdet
+from pointer.neuronlp2.tasks import parser
 from .attention import BiAAttention
 
 

@@ -6,7 +6,7 @@ import numpy as np
 from gensim.models.word2vec import Word2Vec
 import gzip
 
-from .io import utils
+from .io.conllx_data import DIGIT_RE
 
 
 def load_embedding_dict(embedding, embedding_path, normalize_digits=True):
@@ -41,7 +41,7 @@ def load_embedding_dict(embedding, embedding_path, normalize_digits=True):
                     assert (embedd_dim + 1 == len(tokens))
                 embedd = np.empty([1, embedd_dim], dtype=np.float32)
                 embedd[:] = tokens[1:]
-                word = utils.DIGIT_RE.sub("0", tokens[0]) if normalize_digits else tokens[0]
+                word = DIGIT_RE.sub("0", tokens[0]) if normalize_digits else tokens[0]
                 embedd_dict[word] = embedd
         return embedd_dict, embedd_dim
     elif embedding == 'senna':
@@ -89,7 +89,7 @@ def load_embedding_dict(embedding, embedding_path, normalize_digits=True):
                     start = len(tokens) - embedd_dim
                     word = ' '.join(tokens[0:start])
                     embedd[:] = tokens[start:]
-                    word = utils.DIGIT_RE.sub("0", word) if normalize_digits else word
+                    word = DIGIT_RE.sub("0", word) if normalize_digits else word
                     embedd_dict[word] = embedd
                 except UnicodeDecodeError:
                     continue
@@ -101,7 +101,7 @@ def load_embedding_dict(embedding, embedding_path, normalize_digits=True):
         for i, word in enumerate(words):
             embedd = np.empty([1, embedd_dim], dtype=np.float32)
             embedd[:] = embeddings[i, :]
-            word = utils.DIGIT_RE.sub("0", word) if normalize_digits else word
+            word = DIGIT_RE.sub("0", word) if normalize_digits else word
             embedd_dict[word] = embedd
         return embedd_dict, embedd_dim
 

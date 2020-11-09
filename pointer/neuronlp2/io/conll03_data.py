@@ -6,9 +6,9 @@ import numpy as np
 from .reader import CoNLL03Reader
 from .alphabet import Alphabet
 from .logger import get_logger
-from . import utils
 import torch
 from torch.autograd import Variable
+from .conllx_data import MAX_CHAR_LENGTH,NUM_CHAR_PAD,DIGIT_RE
 
 # Special vocabulary symbols - we always put them at the start.
 PAD = "_PAD"
@@ -43,7 +43,7 @@ def create_alphabets(alphabet_directory, train_path, data_paths=None, max_vocabu
                         continue
 
                     tokens = line.split(' ')
-                    word = utils.DIGIT_RE.sub("0", tokens[1]) if normalize_digits else tokens[1]
+                    word = DIGIT_RE.sub("0", tokens[1]) if normalize_digits else tokens[1]
                     pos = tokens[2]
                     chunk = tokens[3]
                     ner = tokens[4]
@@ -83,7 +83,7 @@ def create_alphabets(alphabet_directory, train_path, data_paths=None, max_vocabu
                 for char in tokens[1]:
                     char_alphabet.add(char)
 
-                word = utils.DIGIT_RE.sub("0", tokens[1]) if normalize_digits else tokens[1]
+                word = DIGIT_RE.sub("0", tokens[1]) if normalize_digits else tokens[1]
                 pos = tokens[2]
                 chunk = tokens[3]
                 ner = tokens[4]
@@ -191,7 +191,7 @@ def get_batch(data, batch_size, word_alphabet=None, unk_replace=0.):
     bucket_id = min([i for i in range(len(buckets_scale)) if buckets_scale[i] > random_number])
 
     bucket_length = _buckets[bucket_id]
-    char_length = min(utils.MAX_CHAR_LENGTH, max_char_length[bucket_id] + utils.NUM_CHAR_PAD)
+    char_length = min(MAX_CHAR_LENGTH, max_char_length[bucket_id] + NUM_CHAR_PAD)
     bucket_size = bucket_sizes[bucket_id]
     batch_size = min(bucket_size, batch_size)
 
@@ -253,7 +253,7 @@ def iterate_batch(data, batch_size, word_alphabet=None, unk_replace=0., shuffle=
             continue
 
         bucket_length = _buckets[bucket_id]
-        char_length = min(utils.MAX_CHAR_LENGTH, max_char_length[bucket_id] + utils.NUM_CHAR_PAD)
+        char_length = min(MAX_CHAR_LENGTH, max_char_length[bucket_id] + NUM_CHAR_PAD)
         wid_inputs = np.empty([bucket_size, bucket_length], dtype=np.int64)
         cid_inputs = np.empty([bucket_size, bucket_length, char_length], dtype=np.int64)
         pid_inputs = np.empty([bucket_size, bucket_length], dtype=np.int64)
@@ -322,7 +322,7 @@ def read_data_to_variable(source_path, word_alphabet, char_alphabet, pos_alphabe
             continue
 
         bucket_length = _buckets[bucket_id]
-        char_length = min(utils.MAX_CHAR_LENGTH, max_char_length[bucket_id] + utils.NUM_CHAR_PAD)
+        char_length = min(MAX_CHAR_LENGTH, max_char_length[bucket_id] + NUM_CHAR_PAD)
         wid_inputs = np.empty([bucket_size, bucket_length], dtype=np.int64)
         cid_inputs = np.empty([bucket_size, bucket_length, char_length], dtype=np.int64)
         pid_inputs = np.empty([bucket_size, bucket_length], dtype=np.int64)

@@ -4,8 +4,8 @@ __author__ = 'max'
 
 from .instance import DependencyInstance, NERInstance
 from .instance import Sentence
-from .conllx_data import ROOT, ROOT_POS, ROOT_CHAR, ROOT_TYPE, END, END_POS, END_CHAR, END_TYPE, PAD_ID_TAG, PAD_TYPE
-from . import utils
+from .conllx_data import ROOT, ROOT_POS, ROOT_CHAR, ROOT_TYPE, END, END_POS, END_CHAR, END_TYPE, PAD_ID_TAG, PAD_TYPE,DIGIT_RE,MAX_CHAR_LENGTH
+
 
 
 class CoNLLXReader(object):
@@ -78,16 +78,16 @@ class CoNLLXReader(object):
             for char in tokens[1]:
                 chars.append(char)
                 char_ids.append(self.__char_alphabet.get_index(char))
-            if len(chars) > utils.MAX_CHAR_LENGTH:
-                chars = chars[:utils.MAX_CHAR_LENGTH]
-                char_ids = char_ids[:utils.MAX_CHAR_LENGTH]
+            if len(chars) > MAX_CHAR_LENGTH:
+                chars = chars[:MAX_CHAR_LENGTH]
+                char_ids = char_ids[:MAX_CHAR_LENGTH]
             char_seqs.append(chars)
             char_id_seqs.append(char_ids)
 
             if debug: print(tokens[1], tokens[2], tokens[3])  # , tokens[4],tokens[5], tokens[6], tokens[7]
 
             # ADD WORD AND POS
-            word = utils.DIGIT_RE.sub("0", tokens[1]) if normalize_digits else tokens[1]
+            word = DIGIT_RE.sub("0", tokens[1]) if normalize_digits else tokens[1]
             pos = tokens[3]
 
             words.append(word)
@@ -97,7 +97,7 @@ class CoNLLXReader(object):
             pos_ids.append(self.__pos_alphabet.get_index(pos))
 
             # ADD LEMMAS
-            lemma = utils.DIGIT_RE.sub("0", tokens[2]) if normalize_digits else tokens[2]
+            lemma = DIGIT_RE.sub("0", tokens[2]) if normalize_digits else tokens[2]
             lemmas.append(lemma)
             lemma_ids.append(self.__lemma_alphabet.get_index(lemma))
 
@@ -200,13 +200,13 @@ class CoNLL03Reader(object):
             for char in tokens[1]:
                 chars.append(char)
                 char_ids.append(self.__char_alphabet.get_index(char))
-            if len(chars) > utils.MAX_CHAR_LENGTH:
-                chars = chars[:utils.MAX_CHAR_LENGTH]
-                char_ids = char_ids[:utils.MAX_CHAR_LENGTH]
+            if len(chars) > MAX_CHAR_LENGTH:
+                chars = chars[:MAX_CHAR_LENGTH]
+                char_ids = char_ids[:MAX_CHAR_LENGTH]
             char_seqs.append(chars)
             char_id_seqs.append(char_ids)
 
-            word = utils.DIGIT_RE.sub("0", tokens[1]) if normalize_digits else tokens[1]
+            word = DIGIT_RE.sub("0", tokens[1]) if normalize_digits else tokens[1]
             pos = tokens[2]
             chunk = tokens[3]
             ner = tokens[4]

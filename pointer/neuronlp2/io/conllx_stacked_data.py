@@ -4,9 +4,8 @@ import numpy as np
 import torch
 from torch.autograd import Variable
 from .conllx_data import _buckets, PAD_ID_WORD, PAD_ID_CHAR, PAD_ID_TAG, UNK_ID
-from .conllx_data import NUM_SYMBOLIC_TAGS
+from .conllx_data import NUM_SYMBOLIC_TAGS,MAX_CHAR_LENGTH,NUM_CHAR_PAD
 from .conllx_data import create_alphabets
-from . import utils
 # from .reader import CoNLLXReader
 from .semantic_reader import CoNLLXReader
 
@@ -184,7 +183,7 @@ def read_stacked_data_to_variable(source_path, word_alphabet, char_alphabet, pos
             continue
 
         bucket_length = _buckets[bucket_id]
-        char_length = min(utils.MAX_CHAR_LENGTH, max_char_length[bucket_id] + utils.NUM_CHAR_PAD)
+        char_length = min(MAX_CHAR_LENGTH, max_char_length[bucket_id] + NUM_CHAR_PAD)
         wid_inputs = np.empty([bucket_size, bucket_length], dtype=np.int64)
         lid_inputs = np.empty([bucket_size, bucket_length], dtype=np.int64)  # lemma
         cid_inputs = np.empty([bucket_size, bucket_length, char_length], dtype=np.int64)

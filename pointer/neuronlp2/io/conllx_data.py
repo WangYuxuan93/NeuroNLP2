@@ -6,9 +6,9 @@ import random
 import numpy as np
 from .alphabet import Alphabet
 from .logger import get_logger
-from . import utils
 import torch
 from torch.autograd import Variable
+import re
 
 # Special vocabulary symbols - we always put them at the start.
 PAD = "_PAD"
@@ -24,6 +24,11 @@ END_POS = "_END_POS"
 END_TYPE = "_<END>"
 END_CHAR = "_END_CHAR"
 _START_VOCAB = [PAD, ROOT, END]
+
+MAX_CHAR_LENGTH = 45
+NUM_CHAR_PAD = 2
+# Regular expressions used to normalize digits.
+DIGIT_RE = re.compile(r"\d")
 
 UNK_ID = 0
 PAD_ID_WORD = 1

@@ -978,6 +978,7 @@ class NewStackPtrNet(nn.Module):
 
     def _get_encoder_output(self, input_word, input_lemma, input_char, input_pos, mask_e=None, length_e=None, hx=None):
         # [batch, length, word_dim]
+
         word = self.word_embedd(input_word)
         # apply dropout on input
         word = self.dropout_in(word)
