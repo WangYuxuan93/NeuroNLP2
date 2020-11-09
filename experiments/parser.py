@@ -364,7 +364,7 @@ def train(args):
                                                                                              max_vocabulary_size=args.max_vocab_size,
                                                                                              normalize_digits=args.normalize_digits,
                                                                                              pos_idx=args.pos_idx,
-                                                                                             expand_with_pretrained=(not args.do_trim))
+                                                                                             expand_with_pretrained=(only_pretrain_static))
     pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path, word_dict, 
                                 word_alphabet.instances, max_vocabulary_size=400000, do_trim=args.do_trim)
 
@@ -389,7 +389,7 @@ def train(args):
         punct_set = set(punctuation)
         logger.info("punctuations(%d): %s" % (len(punct_set), ' '.join(punct_set)))
 
-    def construct_word_embedding_table(only_pretrain_static=False):
+    def construct_word_embedding_table(only_pretrain_static=True):
         scale = np.sqrt(3.0 / word_dim)
         if only_pretrain_static:
             table = np.empty([word_alphabet.size(), word_dim], dtype=np.float32)
