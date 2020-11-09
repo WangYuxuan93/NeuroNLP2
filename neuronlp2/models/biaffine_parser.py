@@ -112,10 +112,12 @@ class BiaffineParser(nn.Module):
         # Initialization
         # to collect all params other than langauge model
         self.basic_parameters = []
+        # collect all params for language model
+        self.lm_parameters = []
         # for Pretrained LM
         if self.pretrained_lm != 'none':
             self.lm_encoder = AutoModel.from_pretrained(lm_path)
-            
+            self.lm_parameters.append(self.lm_encoder)
             logger.info("[LM] Pretrained Language Model Type: %s" % (self.lm_encoder.config.model_type))
             logger.info("[LM] Pretrained Language Model Path: %s" % (lm_path))
             lm_hidden_size = self.lm_encoder.config.hidden_size
@@ -127,6 +129,7 @@ class BiaffineParser(nn.Module):
         # for ELMo
         if self.use_elmo:
             self.elmo_encoder, elmo_hidden_size = load_elmo(elmo_path)
+            self.lm_parameters.append(self.elmo_encoder)
             logger.info("[ELMo] Pretrained ELMo Path: %s" % (elmo_path))
         else:
             self.elmo_encoder = None
@@ -283,6 +286,15 @@ class BiaffineParser(nn.Module):
         params = [p.parameters() for p in self.basic_parameters]
         #print (params)
         return itertools.chain(*params)
+
+    def _lm_parameters(self):
+        if not self.lm_parameters:
+            return None
+        if len(self.lm_parameters) == 1:
+            return self.lm_parameters[0].parameters()
+        else:
+            params = [p.parameters() for p in self.lm_parameters]
+            return itertools.chain(*params)
 
     def reset_parameters(self, embedd_word, embedd_char, embedd_pos):
         if embedd_char is None and self.char_embed is not None:
