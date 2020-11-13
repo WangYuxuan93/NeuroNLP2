@@ -26,7 +26,7 @@ from neuronlp2.io import ud_stacked_data, conllx_stacked_data
 from neuronlp2.models.biaffine_parser import BiaffineParser
 from neuronlp2.models.stack_pointer_parser import StackPointerParser
 #from neuronlp2.models.stack_pointer import StackPtrParser
-from neuronlp2.models.ensemble import EnsembleParser
+from neuronlp2.models.ensemble_parser import EnsembleParser
 from neuronlp2.optim import ExponentialScheduler, StepScheduler, AttentionScheduler
 from neuronlp2 import utils
 from neuronlp2.io import CoNLLXWriter
@@ -978,9 +978,12 @@ def parse(args):
 
     alg = 'transition' if model_type == 'StackPointer' else 'graph'
     if args.ensemble:
-        network = EnsembleParser(hyps, num_pretrained, num_words, num_chars, num_pos,
-                                   num_rels, device=device, 
-                                   pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
+        network = EnsembleParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels, 
+                                   device=device, pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
+                                   model_type=model_type,
+                                   use_pretrained_static=args.use_pretrained_static, 
+                                   use_random_static=args.use_random_static,
+                                   use_elmo=use_elmo, elmo_path=elmo_path,
                                    num_lans=num_lans, model_paths=model_paths, merge_by=args.merge_by)
     else:
         if model_type == 'Biaffine':
