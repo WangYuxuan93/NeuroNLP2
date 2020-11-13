@@ -337,7 +337,7 @@ class StackPointerParser(BiaffineParser):
             # [batch, num_hyp]
             hypothesis_scores = hypothesis_scores[:, :num_hyp]
             hyp_index = hyp_index[:, :num_hyp]
-            base_index = hyp_index / max_len
+            base_index = hyp_index // max_len
             child_index = hyp_index % max_len
 
             # [batch, num_hyp]

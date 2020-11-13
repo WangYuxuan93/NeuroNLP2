@@ -25,34 +25,34 @@ seed=666
 #seed=777
 #seed=999
 #seed=555
-batch=16
-evalbatch=16
+batch=32
+evalbatch=32
 epoch=1000
-patient=100
+patient=20
 lr='0.002'
 lm=none
 #lm=roberta
-lmpath=$lmdir/electra-base-discriminator
+lmpath=$lmdir/roberta-base
 #lmpath=$lmdir/roberta-large
 #lmpath=$lmdir/roberta-base
 #lm=electra
 #lmpath=$lmdir/electra-large-discriminator
 #lmpath=$lmdir/electra-base-discriminator
 
-use_elmo=''
+use_elmo=' --use_elmo '
 #use_elmo=' --use_elmo '
 elmo_path=$lmdir/elmo
 
 random_word=''
 #random_word=' --use_random_static '
-pretrain_word=' --use_pretrained_static '
+pretrain_word=''
 #pretrain_word=' --use_pretrained_static '
 freeze=''
 #freeze=' --freeze'
 #trim=''
 trim=' --do_trim'
 #vocab_size=400000
-vocab_size=500000
+vocab_size=400000
 
 lmlr='2e-5'
 #lmlr=0
@@ -81,7 +81,7 @@ mix=' --mix_datasets'
 form=conllx
 
 gpu=$1
-save=/users7/zllei/exp_data/models/parsing/PTB/glove_${seed}
+save=/users7/zllei/exp_data/models/parsing/PTB/biaffine/elmo-${seed}
 log_file=${save}/log_train_$(date "+%Y%m%d-%H%M%S").txt
 
 if [ -z $1 ];then
@@ -102,7 +102,7 @@ CUDA_VISIBLE_DEVICES=$gpu OMP_NUM_THREADS=4 python -u $main --mode train \
  --beta1 $beta1 --beta2 $beta2 --eps $eps --grad_clip $clip \
  --eval_every $evalevery --noscreen ${random_word} ${pretrain_word} $freeze \
  --loss_type $losstype --warmup_steps $warmup --reset $reset --weight_decay $l2decay --unk_replace $unk \
- --word_embedding sskip --word_path $emb --char_embedding random \
+ --word_embedding glove --word_path $emb --char_embedding random \
  --max_vocab_size ${vocab_size} $trim $ndigit \
  --elmo_path ${elmo_path} ${use_elmo} \
  --pretrained_lm $lm --lm_path $lmpath --lm_lr $lmlr \

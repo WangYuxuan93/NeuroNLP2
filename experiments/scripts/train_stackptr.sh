@@ -18,19 +18,19 @@ test=$dir/PTB_test_auto.conll
 lans="en"
 
 tcdir=/users2/yxwang/work/experiments/robust_parser/lm/saves
-main=/users2/yxwang/work/codes/NeuroNLP2/experiments/parser.py
+main=/users7/zllei/NeuroNLP2/experiments/parser.py
 
 seed=666
 #seed=888
 #seed=777
 #seed=999
 #seed=555
-batch=128
-evalbatch=128
+batch=32
+evalbatch=32
 epoch=1000
-patient=100
+patient=20
 lr='0.002'
-lm=none
+lm=roberta
 #lm=roberta
 lmpath=$lmdir/roberta-base
 #lmpath=$lmdir/roberta-large
@@ -44,14 +44,14 @@ elmo_path=$lmdir/elmo
 
 random_word=''
 #random_word=' --use_random_static '
-#pretrain_word=''
-pretrain_word=' --use_pretrained_static '
+pretrain_word=''
+#pretrain_word=' --use_pretrained_static '
 freeze=''
 #freeze=' --freeze'
 #trim=''
 trim=' --do_trim'
 #vocab_size=400000
-vocab_size=50000
+vocab_size=40000
 
 lmlr='2e-5'
 #lmlr=0
@@ -81,22 +81,27 @@ mix=' --mix_datasets'
 form=conllx
 
 gpu=$1
-save=$2
-log=$3
+save=/users7/zllei/exp_data/models/parsing/PTB/stack-ptr/roberta-${seed}
+log_file=${save}/log_train_$(date "+%Y%m%d-%H%M%S").txt
 
-if [ -z $3 ];then
+if [ -z $1 ];then
   echo '[gpu] [save] [log]'
   exit
 fi
 
-source /users2/yxwang/work/env/py3.6/bin/activate
-CUDA_VISIBLE_DEVICES=$gpu OMP_NUM_THREADS=4 python -u $main --mode train --config parsers/configs/stackptr.json --seed $seed \
+if [ ! -f "$log_file" ]; then
+  touch "$log_file"
+  chmod 777 "$log_file"
+fi
+
+#source /users2/yxwang/work/env/py3.6/bin/activate
+CUDA_VISIBLE_DEVICES=$gpu OMP_NUM_THREADS=4 python -u $main --mode train --config configs/parsing/stackptr.json --seed $seed \
  --num_epochs $epoch --patient_epochs $patient --batch_size $batch --eval_batch_size $evalbatch \
  --opt $opt --schedule $sched --learning_rate $lr --lr_decay $decay --decay_steps $dstep \
  --beta1 $beta1 --beta2 $beta2 --eps $eps --grad_clip $clip --beam $beam \
  --eval_every $evalevery --noscreen ${random_word} ${pretrain_word} $freeze \
  --loss_type $losstype --warmup_steps $warmup --reset $reset --weight_decay $l2decay --unk_replace $unk \
- --word_embedding sskip --word_path $emb --char_embedding random \
+ --word_embedding glove --word_path $emb --char_embedding random \
  --max_vocab_size ${vocab_size} $trim $ndigit \
  --elmo_path ${elmo_path} ${use_elmo} \
  --pretrained_lm $lm --lm_path $lmpath --lm_lr $lmlr \
@@ -106,4 +111,4 @@ CUDA_VISIBLE_DEVICES=$gpu OMP_NUM_THREADS=4 python -u $main --mode train --confi
  --dev $dev \
  --test $test \
  --lan_train $lans --lan_dev $lans --lan_test $lans $mix \
- --model_path $save > $log
+ --model_path $save > $log_file

@@ -35,6 +35,7 @@ parser.add_argument("--out_lemma", type=str, default="lemma.pkl", help="output p
 parser.add_argument("--save_binary", action="store_true", help="whether save in binary")
 args = parser.parse_args()
 
+
 with open(args.input, 'r') as fi:
 	data = load_conll(fi)
 if args.vocab is None:

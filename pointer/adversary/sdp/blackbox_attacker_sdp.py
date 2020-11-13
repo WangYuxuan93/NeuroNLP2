@@ -589,62 +589,60 @@ class BlackBoxAttacker(object):
 
     def str2id(self, tokens, tags):
         #word_ids = [[self.word_alphabet.get_index(x) for x in s] for s in tokens]
-        self.logger.info(tokens)
-        word_ids = []
+        word_ids = [] # get index
         for s in tokens:
             word_list = []
             for x in s:
                 x = DIGIT_RE.sub("0", x) if self.normalize_digits else x
                 word_list.append(self.word_alphabet.get_index(x))
             word_ids.append(word_list)
-        self.logger.info(word_ids)
         #pre_ids = [[self.pretrained_alphabet.get_index(x) for x in s] for s in tokens]
-        # pre_ids = []
-        # for s in tokens:
-        #     pre_list = []
-        #     for w in s:
-        #         pid = self.pretrained_alphabet.get_index(w)
-        #         if pid == 0:
-        #             pid = self.pretrained_alphabet.get_index(w.lower())
-        #         pre_list.append(pid)
-        #     pre_ids.append(pre_list)
-        if self.model.pos:
+        pre_ids = []
+        for s in tokens:
+            pre_list = []
+            for w in s:
+                pid = self.pretrained_alphabet.get_index(w)
+                if pid == 0:
+                    pid = self.pretrained_alphabet.get_index(w.lower())
+                pre_list.append(pid)
+            pre_ids.append(pre_list)
+        if self.model.hyps['input']['use_pos']:
             tag_ids = [[self.pos_alphabet.get_index(x) for x in s] for s in tags]
         else:
             tag_ids = None
-        if not self.model.char:
+        if not self.model.hyps['input']['use_char']:
             chars = None
-
-        # lan_id = None
-        # if self.model.pretrained_lm == 'elmo':
-        #     bpes = batch_to_ids(tokens)
-        #     bpes = bpes.to(self.device)
-        #     first_idx = None
-        # elif self.model.pretrained_lm != "none":
-        #     bpes, first_idx = convert_tokens_to_ids(self.tokenizer, tokens)
-        #     bpes = bpes.to(self.device)
-        #     first_idx = first_idx.to(self.device)
+        if not self.model.lan_emb_as_input:
+            lan_id = None
+        if self.model.pretrained_lm == 'elmo':
+            bpes = batch_to_ids(tokens)
+            bpes = bpes.to(self.device)
+            first_idx = None
+        elif self.model.pretrained_lm != "none":
+            bpes, first_idx = convert_tokens_to_ids(self.tokenizer, tokens)
+            bpes = bpes.to(self.device)
+            first_idx = first_idx.to(self.device)
         else:
             bpes, first_idx = None, None
 
         data_size = len(tokens)
         max_length = max([len(s) for s in tokens])
         wid_inputs = np.empty([data_size, max_length], dtype=np.int64)
-        # pre_inputs = np.empty([data_size, max_length], dtype=np.int64)
+        pre_inputs = np.empty([data_size, max_length], dtype=np.int64)
         tid_inputs = np.empty([data_size, max_length], dtype=np.int64)
         pid_inputs = np.empty([data_size, max_length], dtype=np.int64)
         masks = np.zeros([data_size, max_length], dtype=np.float32)
 
         for i in range(len(word_ids)):
             wids = word_ids[i]
-            # preids = pre_ids[i]
+            preids = pre_ids[i]
             inst_size = len(wids)
             # word ids
             wid_inputs[i, :inst_size] = wids
             wid_inputs[i, inst_size:] = PAD_ID_WORD
             # pretrained ids
-            # pre_inputs[i, :inst_size] = preids
-            # pre_inputs[i, inst_size:] = PAD_ID_WORD
+            pre_inputs[i, :inst_size] = preids
+            pre_inputs[i, inst_size:] = PAD_ID_WORD
             # pos ids
             if tag_ids is not None:
                 pids = tag_ids[i]
@@ -665,12 +663,12 @@ class BlackBoxAttacker(object):
         words = torch.from_numpy(wid_inputs).to(self.device)
         pos = torch.from_numpy(pid_inputs).to(self.device)
         masks = torch.from_numpy(masks).to(self.device)
-        # pres = torch.from_numpy(pre_inputs).to(self.device)
+        pres = torch.from_numpy(pre_inputs).to(self.device)
 
         for start_idx in range(0, data_size, self.batch_size):
             excerpt = slice(start_idx, start_idx + self.batch_size)
             b_words = words[excerpt, :]
-            # b_pres = pres[excerpt, :]
+            b_pres = pres[excerpt, :]
             b_pos = pos[excerpt, :]
             b_masks = masks[excerpt, :]
             if chars is not None:
@@ -686,7 +684,7 @@ class BlackBoxAttacker(object):
             else:
                 b_first_idx = None
             b_lan_id = None
-            yield b_words, None, b_chars, b_pos, b_masks, b_bpes, b_first_idx, b_lan_id
+            yield b_words, b_pres, b_chars, b_pos, b_masks, b_bpes, b_first_idx, b_lan_id
 
     def str2id_pointer(self,tokens,tags):
         word_ids = []
@@ -700,14 +698,49 @@ class BlackBoxAttacker(object):
         self.logger.info(word_ids)
         if self.model.pos:
             tag_ids = [[self.pos_alphabet.get_index(x) for x in s] for s in tags]
+
         data_size = len(tokens)
+        max_length = max([len(s) for s in tokens])
+        wid_inputs = np.empty([data_size, max_length], dtype=np.int64)
+        pid_inputs = np.empty([data_size, max_length], dtype=np.int64)
+        masks = np.zeros([data_size, max_length], dtype=np.float32)
+
+        for i in range(len(word_ids)):
+            wids = word_ids[i]
+            inst_size = len(wids)
+            # word ids
+            wid_inputs[i, :inst_size] = wids
+            wid_inputs[i, inst_size:] = PAD_ID_WORD
+            # pretrained ids
+            # pos ids
+            if tag_ids is not None:
+                pids = tag_ids[i]
+                pid_inputs[i, :inst_size] = pids
+                pid_inputs[i, inst_size:] = PAD_ID_TAG
+            # masks
+            if self.symbolic_end:
+                # mask out the end token
+                masks[i, :inst_size-1] = 1.0
+            else:
+                masks[i, :inst_size] = 1.0
+            #for j, wid in enumerate(wids):
+            #    if word_alphabet.is_singleton(wid):
+            #        single[i, j] = 1
+        if self.mask_out_root:
+            masks[:,0] = 0
+
+        words = torch.from_numpy(wid_inputs).to(self.device)
+        pos = torch.from_numpy(pid_inputs).to(self.device)
+        masks = torch.from_numpy(masks).to(self.device)
 
         for start_idx in range(0, data_size, self.batch_size):
             excerpt = slice(start_idx, start_idx + self.batch_size)
-            b_words = word_ids[excerpt]
-            b_pos = tag_ids[excerpt]
+            b_words = words[excerpt, :]
+            b_pos = pos[excerpt, :]
+            b_masks = masks[excerpt, :]
 
-            yield word_ids,tag_ids
+
+            yield b_words, None, b_pos, b_masks
 
     def get_prediction(self, tokens, tags):
         """
@@ -721,13 +754,13 @@ class BlackBoxAttacker(object):
         self.model.eval()
         heads_pred_list, rels_pred_list = [], []
         with torch.no_grad():
-            for words, pos in self.str2id_pointer(tokens, tags):
-                self.logger.info("Is tensor?%s" % str(torch.is_tensor(words)))
-                heads_pred, rels_pred, _, _ = self.model.decode(words, None, None, pos, mask=None,
-                                                                length=[len(tokens[0]) for _ in range(len(tokens))], beam=self.beam, leading_symbolic=conllx_stacked_data.NUM_SYMBOLIC_TAGS)
+            for b_words, _, b_pos, b_masks in self.str2id_pointer(tokens, tags):
 
-                heads_pred_list.append(heads_pred.cpu())
-                rels_pred_list.append(rels_pred.cpu())
+                heads_pred, rels_pred, _, _ = self.model.decode(b_words, None, None, b_pos, mask=b_masks,
+                                                                length=[len(tokens[i]) for i in range(len(tokens))], beam=self.beam, leading_symbolic=conllx_stacked_data.NUM_SYMBOLIC_TAGS)
+
+                heads_pred_list.append(heads_pred)
+                rels_pred_list.append(rels_pred)
 
         heads_pred = np.concatenate(heads_pred_list, axis=0)
         rels_pred = np.concatenate(rels_pred_list, axis=0)

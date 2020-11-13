@@ -36,7 +36,7 @@ from neuronlp2.nn.utils import freeze_embedding
 from neuronlp2.io import common
 from transformers import AutoTokenizer, AutoModelWithLMHead
 from neuronlp2.io.common import PAD, ROOT, END
-from neuronlp2.io.batcher import multi_language_iterate_data, iterate_data
+from neuronlp2.io.batcher import multi_language_iterate_data, iterate_data, iterate_data_dp
 from neuronlp2.io import multi_ud_data
 from neuronlp2.io.common import PAD_CHAR, PAD, PAD_POS, PAD_TYPE, PAD_ID_CHAR, PAD_ID_TAG, PAD_ID_WORD
 from adversary.attackers.blackbox import BlackBoxAttacker
@@ -125,7 +125,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
     if multi_lan_iter:
         iterate = multi_language_iterate_data
     else:
-        iterate = iterate_data
+        iterate = iterate_data_dp
         lan_id = None
 
     for data in iterate(data, batch_size):
@@ -298,7 +298,7 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
     if multi_lan_iter:
         iterate = multi_language_iterate_data
     else:
-        iterate = iterate_data
+        iterate = iterate_data_dp
         lan_id = None
 
     if cand_cache_path is not None and attacker.cached_cands is None:
