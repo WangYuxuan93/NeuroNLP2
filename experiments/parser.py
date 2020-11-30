@@ -958,7 +958,7 @@ def parse(args):
             alphabet_path = os.path.join(model_path, 'alphabets')
             assert os.path.exists(alphabet_path)
             word_alphabets[i], char_alphabets[i], pos_alphabets[i], rel_alphabets[i] = data_reader.create_alphabets(alphabet_path, None, 
-                                            normalize_digits=args.normalize_digits, pos_idx=args.pos_idx)
+                                            normalize_digits=args.normalize_digits, pos_idx=args.pos_idx, log_name="Create Alphabets-%d"%i)
             pretrained_alphabets[i] = utils.create_alphabet_from_embedding(alphabet_path)
             if not alphabet_equal(rel_alphabets[0], rel_alphabets[i]):
                 logger.info("Label alphabet mismatch: ({}) vs. ({})".format(model_paths[0], model_paths[i]))
