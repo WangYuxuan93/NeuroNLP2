@@ -14,6 +14,8 @@ class EnsembleParser(nn.Module):
     def __init__(self, hyps, num_pretrained, num_words, num_chars, num_pos, num_labels,
                  device=torch.device('cpu'), 
                  embedd_word=None, embedd_char=None, embedd_pos=None,
+                 use_pretrained_static=True, use_random_static=False,
+                 use_elmo=False, elmo_path=None, 
                  pretrained_lm='none', lm_path=None, num_lans=1, model_paths=None,
                  merge_by='logits'):
         super(EnsembleParser, self).__init__()
@@ -28,7 +30,9 @@ class EnsembleParser(nn.Module):
             model_name = os.path.join(path, 'model.pt')
             logger.info("Loading sub-model from: %s" % model_name)
             network = BiaffineParser(hyps, num_pretrained[i], num_words[i], num_chars[i], num_pos[i],
-                               num_labels[i], device=device, basic_word_embedding=basic_word_embedding, 
+                               num_labels[i], device=device, 
+                               use_pretrained_static=use_pretrained_static, use_random_static=use_random_static,
+                               use_elmo=use_elmo, elmo_path=elmo_path,
                                pretrained_lm=pretrained_lm, lm_path=lm_path,
                                num_lans=num_lans, log_name='Network-'+str(len(self.networks)))
             network = network.to(device)
