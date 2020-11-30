@@ -34,8 +34,8 @@ class EnsembleParser(nn.Module):
             for path in model_paths:
                 model_name = os.path.join(path, 'model.pt')
                 logger.info("Loading sub-model from: %s" % model_name)
-                network = BiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos,
-                                   num_labels, device=device,
+                network = BiaffineParser(hyps, num_pretrained[i], num_words[i], num_chars[i], num_pos[i],
+                                   num_labels[i], device=device,
                                    pretrained_lm=pretrained_lm, lm_path=lm_path,
                                    use_pretrained_static=use_pretrained_static, 
                                    use_random_static=use_random_static,
@@ -58,7 +58,8 @@ class EnsembleParser(nn.Module):
                 bpes=None, first_idx=None, input_elmo=None, lan_id=None, leading_symbolic=0):
         if self.merge_by == 'logits':
             arc_logits_list, rel_logits_list = [], []
-            for network in self.networks:
+            for i, network in enumerate(self.networks):
+                input_word, input_char, input_pos = input_words[i], input_chars[i], input_poss[i]
                 arc_logits, rel_logits = network.get_logits(input_word, input_pretrained, input_char, 
                     input_pos, mask=mask, bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, 
                     lan_id=lan_id, leading_symbolic=leading_symbolic)
@@ -68,7 +69,8 @@ class EnsembleParser(nn.Module):
             rel_logits = sum(rel_logits_list)
         elif self.merge_by == 'probs':
             arc_logits_list, rel_logits_list = [], []
-            for network in self.networks:
+            for i, network in enumerate(self.networks):
+                input_word, input_char, input_pos = input_words[i], input_chars[i], input_poss[i]
                 arc_logits, rel_logits = network.get_probs(input_word, input_pretrained, input_char, 
                     input_pos, mask=mask, bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, 
                     lan_id=lan_id, leading_symbolic=leading_symbolic)
