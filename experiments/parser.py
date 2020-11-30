@@ -1036,7 +1036,7 @@ def parse(args):
                                    model_type=model_type,
                                    use_pretrained_static=args.use_pretrained_static, 
                                    use_random_static=args.use_random_static,
-                                   use_elmo=use_elmo, elmo_path=elmo_path,
+                                   use_elmo=args.use_elmo, elmo_path=args.elmo_path,
                                    num_lans=num_lans, model_paths=model_paths, merge_by=args.merge_by)
     else:
         if model_type == 'Biaffine':
@@ -1044,14 +1044,14 @@ def parse(args):
                                    device=device, pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
                                    use_pretrained_static=args.use_pretrained_static, 
                                    use_random_static=args.use_random_static,
-                                   use_elmo=use_elmo, elmo_path=elmo_path,
+                                   use_elmo=args.use_elmo, elmo_path=args.elmo_path,
                                    num_lans=num_lans)
         elif model_type == 'StackPointer':
             network = StackPointerParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels,
                                    device=device, pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
                                    use_pretrained_static=args.use_pretrained_static, 
                                    use_random_static=args.use_random_static,
-                                   use_elmo=use_elmo, elmo_path=elmo_path,
+                                   use_elmo=args.use_elmo, elmo_path=args.elmo_path,
                                    num_lans=num_lans)
         else:
             raise RuntimeError('Unknown model type: %s' % model_type)

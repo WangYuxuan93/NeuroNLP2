@@ -8,11 +8,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from neuronlp2.tasks import parser
 from neuronlp2.io import get_logger
-from neuronlp2.models.robust_parsing import RobustParser
+from neuronlp2.models.biaffine_parsing import BiaffineParser
 
 class EnsembleParser(nn.Module):
     def __init__(self, hyps, num_pretrained, num_words, num_chars, num_pos, num_labels,
-                 device=torch.device('cpu'), basic_word_embedding=True, 
+                 device=torch.device('cpu'), 
                  embedd_word=None, embedd_char=None, embedd_pos=None,
                  pretrained_lm='none', lm_path=None, num_lans=1, model_paths=None,
                  merge_by='logits'):
@@ -27,7 +27,7 @@ class EnsembleParser(nn.Module):
         for i, path in enumerate(model_paths):
             model_name = os.path.join(path, 'model.pt')
             logger.info("Loading sub-model from: %s" % model_name)
-            network = RobustParser(hyps, num_pretrained[i], num_words[i], num_chars[i], num_pos[i],
+            network = BiaffineParser(hyps, num_pretrained[i], num_words[i], num_chars[i], num_pos[i],
                                num_labels[i], device=device, basic_word_embedding=basic_word_embedding, 
                                pretrained_lm=pretrained_lm, lm_path=lm_path,
                                num_lans=num_lans, log_name='Network-'+str(len(self.networks)))
