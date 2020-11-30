@@ -31,7 +31,7 @@ class EnsembleParser(nn.Module):
         logger = get_logger("Ensemble")
         logger.info("Number of models: %d (merge by: %s)" % (len(model_paths), merge_by))
         if model_type == "Biaffine":
-            for path in model_paths:
+            for i, path in enumerate(model_paths):
                 model_name = os.path.join(path, 'model.pt')
                 logger.info("Loading sub-model from: %s" % model_name)
                 network = BiaffineParser(hyps, num_pretrained[i], num_words[i], num_chars[i], num_pos[i],
@@ -54,7 +54,7 @@ class EnsembleParser(nn.Module):
         for i in range(len(self.networks)):
             self.networks[i].eval()
 
-    def decode(self, input_word, input_pretrained, input_char, input_pos, mask=None, 
+    def decode(self, input_words, input_pretrained, input_chars, input_poss, mask=None, 
                 bpes=None, first_idx=None, input_elmo=None, lan_id=None, leading_symbolic=0):
         if self.merge_by == 'logits':
             arc_logits_list, rel_logits_list = [], []

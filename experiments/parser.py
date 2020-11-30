@@ -148,9 +148,10 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
 
     if ensemble:
         n = len(data) - 1
-        data = data[0]
+        data_ = data
+        data = data_[0]
         sub_batchers = []
-        for d in data[1:]:
+        for d in data_[1:]:
             sub_batchers.append(iter(iterate(d, batch_size)))
 
     for data in iterate(data, batch_size):
@@ -182,9 +183,12 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
             chars = [chars]
             postags = [postags]
             for batcher in sub_batchers:
-                words.append(next(batcher, None)['WORD'].to(device))
-                chars.append(next(batcher, None)['CHAR'].to(device))
-                postags.append(next(batcher, None)['POS'].to(device))
+                sub_data = next(batcher, None)
+                lens = sub_data['LENGTH'].numpy()
+                assert (lens == lengths).all()
+                words.append(sub_data['WORD'].to(device))
+                chars.append(sub_data['CHAR'].to(device))
+                postags.append(sub_data['POS'].to(device))
         if alg == 'graph':
             pres = data['PRETRAINED'].to(device)
             masks = data['MASK'].to(device)
