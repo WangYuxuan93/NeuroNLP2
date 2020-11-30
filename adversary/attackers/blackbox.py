@@ -1256,7 +1256,7 @@ class BlackBoxAttacker(object):
         neigbhours_list = []
         cand_cache = []
         #stop_words = nltk.corpus.stopwords.words('english')
-        if not ("mlm" in self.generators and self.dynamic_mlm_cand):
+        if cache:
             for i in range(x_len):
                 #print (adv_tokens[i], self._word2id(adv_tokens[i]))
                 cands, cache_data = self.get_candidate_set(adv_tokens, tags[i], i, sent_id=sent_id, cache=cache)

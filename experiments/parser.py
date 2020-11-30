@@ -103,7 +103,7 @@ def convert_tokens_to_ids(tokenizer, tokens):
 
 def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, 
         device, beam=1, batch_size=256, write_to_tmp=True, prev_best_lcorr=0, prev_best_ucorr=0,
-        pred_filename=None, tokenizer=None, multi_lan_iter=False):
+        pred_filename=None, tokenizer=None, multi_lan_iter=False, ensemble=False):
     network.eval()
     accum_ucorr = 0.0
     accum_lcorr = 0.0
@@ -146,6 +146,13 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         iterate = iterate_data
         lan_id = None
 
+    if ensemble:
+        n = len(data) - 1
+        data = data[0]
+        sub_batchers = []
+        for d in data[1:]:
+            sub_batchers.append(iter(iterate(d, batch_size)))
+
     for data in iterate(data, batch_size):
         if multi_lan_iter:
             lan_id, data = data
@@ -170,6 +177,14 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
             first_idx = first_idx.to(device)
         else:
             bpes = first_idx = None
+        if ensemble:
+            words = [words]
+            chars = [chars]
+            postags = [postags]
+            for batcher in sub_batchers:
+                words.append(next(batcher, None)['WORD'].to(device))
+                chars.append(next(batcher, None)['CHAR'].to(device))
+                postags.append(next(batcher, None)['POS'].to(device))
         if alg == 'graph':
             pres = data['PRETRAINED'].to(device)
             masks = data['MASK'].to(device)
@@ -185,6 +200,10 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
             heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, 
                 bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id, 
                 beam=beam, leading_symbolic=conllx_data.NUM_SYMBOLIC_TAGS)
+        
+        if ensemble:
+            words = words[0]
+            postags = postags[0]
         words = words.cpu().numpy()
         postags = postags.cpu().numpy()
 
@@ -900,6 +919,13 @@ def train(args):
             logger.info("More than %d epochs without improvement, exit!" % patient_epochs)
             exit()
 
+def alphabet_equal(a1, a2):
+    if a1.size() != a2.size():
+        return False
+    if a1.items() == a2.items():
+        return True
+    else:
+        return False
 
 def parse(args):
     logger = get_logger("Parsing")
@@ -916,36 +942,63 @@ def parse(args):
         print ("### Unrecognized data formate: %s ###" % data_format)
         exit()
 
+    print(args)
+    punctuation = args.punctuation
+    pretrained_lm = args.pretrained_lm
+    lm_path = args.lm_path
+    
     if args.ensemble:
         model_paths = args.model_path.split(':')
-        # here the model must have same alphabets
+        n = len(model_paths)
+        word_alphabets, char_alphabets, pos_alphabets, rel_alphabets, pretrained_alphabets = n*[None],n*[None],n*[None],n*[None],n*[None]
+        num_words, num_chars, num_pos, num_rels, num_pretrained = n*[None],n*[None],n*[None],n*[None],n*[None]
+        # load alphabet from different paths
+        for i, model_path in enumerate(model_paths):
+            logger.info("Creating Alphabets-%d"% i)
+            alphabet_path = os.path.join(model_path, 'alphabets')
+            assert os.path.exists(alphabet_path)
+            word_alphabets[i], char_alphabets[i], pos_alphabets[i], rel_alphabets[i] = data_reader.create_alphabets(alphabet_path, None, 
+                                            normalize_digits=args.normalize_digits, pos_idx=args.pos_idx)
+            pretrained_alphabets[i] = utils.create_alphabet_from_embedding(alphabet_path)
+            if not alphabet_equal(rel_alphabets[0], rel_alphabets[i]):
+                logger.info("Label alphabet mismatch: ({}) vs. ({})".format(model_paths[0], model_paths[i]))
+                exit()
+
+            num_words[i] = word_alphabets[i].size()
+            num_chars[i] = char_alphabets[i].size()
+            num_pos[i] = pos_alphabets[i].size()
+            num_rels[i] = rel_alphabets[i].size()
+            num_pretrained[i] = pretrained_alphabets[i].size()
+
+            logger.info("Word Alphabet Size: %d" % num_words[i])
+            logger.info("Pretrained Alphabet Size: %d" % num_pretrained[i])
+            logger.info("Character Alphabet Size: %d" % num_chars[i])
+            logger.info("POS Alphabet Size: %d" % num_pos[i])
+            logger.info("Rel Alphabet Size: %d" % num_rels[i])
         model_path = model_paths[0]
     else:
         model_path = args.model_path
         model_name = os.path.join(model_path, 'model.pt')
-    punctuation = args.punctuation
-    pretrained_lm = args.pretrained_lm
-    lm_path = args.lm_path
-    print(args)
+    
+        logger.info("Creating Alphabets")
+        alphabet_path = os.path.join(model_path, 'alphabets')
+        assert os.path.exists(alphabet_path)
+        word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = data_reader.create_alphabets(alphabet_path, None, 
+                                        normalize_digits=args.normalize_digits, pos_idx=args.pos_idx)
+        pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path)
 
-    logger.info("Creating Alphabets")
-    alphabet_path = os.path.join(model_path, 'alphabets')
-    assert os.path.exists(alphabet_path)
-    word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = data_reader.create_alphabets(alphabet_path, None, 
-                                    normalize_digits=args.normalize_digits, pos_idx=args.pos_idx)
-    pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path)
+        num_words = word_alphabet.size()
+        num_chars = char_alphabet.size()
+        num_pos = pos_alphabet.size()
+        num_rels = rel_alphabet.size()
+        num_pretrained = pretrained_alphabet.size()
 
-    num_words = word_alphabet.size()
-    num_chars = char_alphabet.size()
-    num_pos = pos_alphabet.size()
-    num_rels = rel_alphabet.size()
-    num_pretrained = pretrained_alphabet.size()
+        logger.info("Word Alphabet Size: %d" % num_words)
+        logger.info("Pretrained Alphabet Size: %d" % num_pretrained)
+        logger.info("Character Alphabet Size: %d" % num_chars)
+        logger.info("POS Alphabet Size: %d" % num_pos)
+        logger.info("Rel Alphabet Size: %d" % num_rels)
 
-    logger.info("Word Alphabet Size: %d" % num_words)
-    logger.info("Pretrained Alphabet Size: %d" % num_pretrained)
-    logger.info("Character Alphabet Size: %d" % num_chars)
-    logger.info("POS Alphabet Size: %d" % num_pos)
-    logger.info("Rel Alphabet Size: %d" % num_rels)
 
     result_path = os.path.join(model_path, 'tmp')
     if not os.path.exists(result_path):
@@ -1007,32 +1060,63 @@ def parse(args):
         network.load_state_dict(torch.load(model_name, map_location=device))
 
     logger.info("Reading Data")
-    if alg == 'graph':
-        if data_format == 'ud' and not args.mix_datasets:
-            data_test = data_reader.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, 
-                                            rel_alphabet, normalize_digits=args.normalize_digits, 
-                                            symbolic_root=True, pre_alphabet=pretrained_alphabet, 
-                                            pos_idx=args.pos_idx, lans=lans_test, 
-                                            lan_alphabet=language_alphabet)
-        else:
-            data_test = data_reader.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, 
-                                          rel_alphabet, normalize_digits=args.normalize_digits, 
-                                          symbolic_root=True, pre_alphabet=pretrained_alphabet, 
-                                          pos_idx=args.pos_idx)
-    elif alg == 'transition':
-        prior_order = hyps['input']['prior_order']
-        if data_format == "conllx":
-            data_test = conllx_stacked_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
-                                                normalize_digits=args.normalize_digits,
-                                                pos_idx=args.pos_idx, 
-                                                prior_order=prior_order)
-        else:
-            data_test = ud_stacked_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
-                                                normalize_digits=args.normalize_digits, symbolic_root=True,
-                                                pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx, 
-                                                prior_order=prior_order)
+    if args.ensemble:
+        n = len(word_alphabets)
+        data_tests = [None] * n
+        for i in range(n):
+            if alg == 'graph':
+                if data_format == 'ud' and not args.mix_datasets:
+                    data_tests[i] = data_reader.read_data(test_path, word_alphabets[i], char_alphabets[i], pos_alphabets[i], 
+                                                    rel_alphabets[i], normalize_digits=args.normalize_digits, 
+                                                    symbolic_root=True, pre_alphabet=pretrained_alphabets[i], 
+                                                    pos_idx=args.pos_idx, lans=lans_test, 
+                                                    lan_alphabet=language_alphabet)
+                else:
+                    data_tests[i] = data_reader.read_data(test_path, word_alphabets[i], char_alphabets[i], pos_alphabets[i], 
+                                                  rel_alphabets[i], normalize_digits=args.normalize_digits, 
+                                                  symbolic_root=True, pre_alphabet=pretrained_alphabets[i], 
+                                                  pos_idx=args.pos_idx)
+            elif alg == 'transition':
+                prior_order = hyps['input']['prior_order']
+                if data_format == "conllx":
+                    data_tests[i] = conllx_stacked_data.read_data(test_path, word_alphabets[i], char_alphabets[i], pos_alphabets[i], rel_alphabets[i],
+                                                        normalize_digits=args.normalize_digits,
+                                                        pos_idx=args.pos_idx, 
+                                                        prior_order=prior_order)
+                else:
+                    data_tests[i] = ud_stacked_data.read_data(test_path, word_alphabets[i], char_alphabets[i], pos_alphabets[i], rel_alphabets[i],
+                                                        normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                        pre_alphabet=pretrained_alphabets[i], pos_idx=args.pos_idx, 
+                                                        prior_order=prior_order)
+        word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = word_alphabets[0], char_alphabets[0], pos_alphabets[0], rel_alphabets[0]
+        data_test = data_tests
+    else:
+        if alg == 'graph':
+            if data_format == 'ud' and not args.mix_datasets:
+                data_test = data_reader.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, 
+                                                rel_alphabet, normalize_digits=args.normalize_digits, 
+                                                symbolic_root=True, pre_alphabet=pretrained_alphabet, 
+                                                pos_idx=args.pos_idx, lans=lans_test, 
+                                                lan_alphabet=language_alphabet)
+            else:
+                data_test = data_reader.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, 
+                                              rel_alphabet, normalize_digits=args.normalize_digits, 
+                                              symbolic_root=True, pre_alphabet=pretrained_alphabet, 
+                                              pos_idx=args.pos_idx)
+        elif alg == 'transition':
+            prior_order = hyps['input']['prior_order']
+            if data_format == "conllx":
+                data_test = conllx_stacked_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                    normalize_digits=args.normalize_digits,
+                                                    pos_idx=args.pos_idx, 
+                                                    prior_order=prior_order)
+            else:
+                data_test = ud_stacked_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                    normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                    pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx, 
+                                                    prior_order=prior_order)
 
-    beam = args.beam
+    
     pred_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
     gold_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
     if args.output_filename:
@@ -1051,8 +1135,8 @@ def parse(args):
         print('Parsing...')
         start_time = time.time()
         eval(alg, data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, 
-            pos_alphabet, device, beam, batch_size=args.batch_size, tokenizer=tokenizer, 
-            multi_lan_iter=multi_lan_iter)
+            pos_alphabet, device, args.beam, batch_size=args.batch_size, tokenizer=tokenizer, 
+            multi_lan_iter=multi_lan_iter, ensemble=args.ensemble)
         print('Time: %.2fs' % (time.time() - start_time))
 
     pred_writer.close()
