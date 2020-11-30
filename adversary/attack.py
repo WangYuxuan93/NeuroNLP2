@@ -322,7 +322,7 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
     all_heads_by_layer = []
 
     if ensemble:
-        word_alphabets = word_alphabet
+        word_alphabets = word_alphabet.copy()
         word_alphabet = word_alphabets[0]
 
     use_elmo = network.use_elmo
@@ -456,6 +456,7 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
 
         if ensemble:
             adv_words = adv_words[0]
+            postags = postags[0]
         adv_words = adv_words.cpu().numpy()
         postags = postags.cpu().numpy()
 
@@ -613,7 +614,7 @@ def run(args):
             logger.info("Character Alphabet Size: %d" % num_chars[i])
             logger.info("POS Alphabet Size: %d" % num_pos[i])
             logger.info("Rel Alphabet Size: %d" % num_rels[i])
-        model_path = model_paths[0]
+        model_path = model_paths[0] 
     else:
         model_path = args.model_path
         model_name = os.path.join(model_path, 'model.pt')
@@ -726,7 +727,7 @@ def run(args):
     if args.mode == 'black':
         attacker = BlackBoxAttacker(network, candidates, vocab, synonyms, filters=filters, generators=generators,
                         max_mod_percent=args.max_mod_percent, tagger=args.tagger, ensemble=args.ensemble,
-                        punct_set=punct_set, beam=beam, normalize_digits=args.normalize_digits,
+                        punct_set=punct_set, beam=args.beam, normalize_digits=args.normalize_digits,
                         cached_path=args.cached_path, train_vocab=args.train_vocab, knn_path=args.knn_path, 
                         max_knn_candidates=args.max_knn_candidates, sent_encoder_path=args.sent_encoder_path,
                         min_word_cos_sim=args.min_word_cos_sim, min_sent_cos_sim=args.min_sent_cos_sim, 
@@ -775,6 +776,7 @@ def run(args):
                                                         pre_alphabet=pretrained_alphabets[i], pos_idx=args.pos_idx, 
                                                         prior_order=prior_order)
         word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = word_alphabets[0], char_alphabets[0], pos_alphabets[0], rel_alphabets[0]
+        pretrained_alphabet = pretrained_alphabets[0]
         data_test = data_tests
     else:
         if alg == 'graph':
@@ -833,7 +835,7 @@ def run(args):
         print('Parsing Original Data...')
         start_time = time.time()
         eval(alg, data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, 
-            pos_alphabet, device, beam, batch_size=args.batch_size, tokenizer=tokenizer, 
+            pos_alphabet, device, args.beam, batch_size=args.batch_size, tokenizer=tokenizer, 
             multi_lan_iter=multi_lan_iter, ensemble=args.ensemble)
         print('Time: %.2fs' % (time.time() - start_time))
     print ('\n------------------\n')
@@ -841,9 +843,12 @@ def run(args):
         print('Attacking...')
         logger.info("use pad in input to attacker: {}".format(args.use_pad))
         start_time = time.time()
+        if args.ensemble:
+            word_alphabet = word_alphabets
+            data_test = data_test[0]
         # debug = 1: show orig/adv tokens / debug = 2: show log inside attacker
         attack(attacker, alg, data_test, network, adv_writer, adv_gold_writer, punct_set, word_alphabet, 
-            pos_alphabet, device, beam, batch_size=args.batch_size, tokenizer=tokenizer, 
+            pos_alphabet, device, args.beam, batch_size=args.batch_size, tokenizer=tokenizer, 
             multi_lan_iter=multi_lan_iter, debug=3, pretrained_alphabet=pretrained_alphabet,
             use_pad=args.use_pad, cand_cache_path=args.cand_cache_path, ensemble=args.ensemble)
         print('Time: %.2fs' % (time.time() - start_time))

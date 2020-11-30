@@ -460,6 +460,7 @@ class BlackBoxAttacker(object):
         if alphabets is not None:
             if self.ensemble:
                 self.word_alphabets, self.char_alphabets, self.pos_alphabets, self.rel_alphabet, self.pretrained_alphabets = alphabets
+                self.pretrained_alphabet = self.pretrained_alphabets[0]
             else:
                 self.word_alphabet, self.char_alphabet, self.pos_alphabet, self.rel_alphabet, self.pretrained_alphabet = alphabets
         self.tokenizer = tokenizer
@@ -592,9 +593,9 @@ class BlackBoxAttacker(object):
         #word_ids = [[self.word_alphabet.get_index(x) for x in s] for s in tokens]
         if self.ensemble:
             num_models = len(self.word_alphabets)
-            word_ids = [] * num_models
+            word_ids = [[] for _ in range(num_models)]
             if self.model.hyps['input']['use_pos']:
-                tag_ids = [] * num_models
+                tag_ids = [[] for _ in range(num_models)]
             else:
                 tag_ids = None
             for i in range(num_models):
@@ -1311,7 +1312,7 @@ class BlackBoxAttacker(object):
         neigbhours_list = []
         cand_cache = []
         #stop_words = nltk.corpus.stopwords.words('english')
-        if cache:
+        if not self.dynamic_mlm_cand:
             for i in range(x_len):
                 #print (adv_tokens[i], self._word2id(adv_tokens[i]))
                 cands, cache_data = self.get_candidate_set(adv_tokens, tags[i], i, sent_id=sent_id, cache=cache)
