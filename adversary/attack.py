@@ -473,6 +473,7 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
         if ensemble:
             adv_words = adv_words[0]
             postags = postags[0]
+            words = words[0]
         adv_words = adv_words.cpu().numpy()
         postags = postags.cpu().numpy()
 
