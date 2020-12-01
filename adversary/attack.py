@@ -324,6 +324,11 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
     if ensemble:
         word_alphabets = word_alphabet.copy()
         word_alphabet = word_alphabets[0]
+        data_ = data
+        data = data_[0]
+        sub_batchers = []
+        for d in data_[1:]:
+            sub_batchers.append(iter(iterate(d, batch_size)))
 
     use_elmo = network.use_elmo
 
@@ -353,19 +358,34 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
         heads = data['HEAD'].numpy()
         rels = data['TYPE'].numpy()
         lengths = data['LENGTH'].numpy()
-        #err_types = data['ERR_TYPE']
-
-        adv_words = words.clone()
+        
         if ensemble:
-            num_models = len(network.networks)
-            adv_words = num_models * [adv_words]
+            words = [words]
+            chars = [chars]
+            postags = [postags]
+            for batcher in sub_batchers:
+                sub_data = next(batcher, None)
+                lens = sub_data['LENGTH'].numpy()
+                assert (lens == lengths).all()
+                words.append(sub_data['WORD'].to(device))
+                chars.append(sub_data['CHAR'].to(device))
+                postags.append(sub_data['POS'].to(device))
+            adv_words = [t.clone() for t in words]
+        else:
+            adv_words = words.clone()
+        #if ensemble:
+        #    num_models = len(network.networks)
+        #    adv_words = num_models * [adv_words]
         adv_pres = pres.clone() if alg == 'graph' else None
         adv_src = []
         for i in range(len(lengths)):
             accum_total_sent += 1
             length = lengths[i]
-            adv_tokens = data['SRC'][i].copy() 
-            adv_postags = [pos_alphabet.get_instance(w) for w in postags[i][:length]]
+            adv_tokens = data['SRC'][i].copy()
+            if ensemble:
+                adv_postags = [pos_alphabet.get_instance(w) for w in postags[0][i][:length]]
+            else:
+                adv_postags = [pos_alphabet.get_instance(w) for w in postags[i][:length]]
             adv_heads = heads[i][:length]
             adv_rels = rels[i][:length]
             adv_rels[0] = 0
@@ -440,10 +460,6 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
             first_idx = first_idx.to(device)
         else:
             bpes = first_idx = None
-
-        if ensemble:
-            chars = num_models * [chars]
-            postags = num_models * [postags]
 
         if alg == 'graph':
             masks = data['MASK'].to(device)
