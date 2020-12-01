@@ -321,6 +321,12 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
     all_src_words = []
     all_heads_by_layer = []
 
+    if multi_lan_iter:
+        iterate = multi_language_iterate_data
+    else:
+        iterate = iterate_data
+        lan_id = None
+
     if ensemble:
         word_alphabets = word_alphabet.copy()
         word_alphabet = word_alphabets[0]
@@ -331,12 +337,6 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
             sub_batchers.append(iter(iterate(d, batch_size)))
 
     use_elmo = network.use_elmo
-
-    if multi_lan_iter:
-        iterate = multi_language_iterate_data
-    else:
-        iterate = iterate_data
-        lan_id = None
 
     if cand_cache_path is not None and attacker.cached_cands is None:
         save_cache = True
@@ -360,6 +360,7 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
         lengths = data['LENGTH'].numpy()
         
         if ensemble:
+            num_models = len(network.networks)
             words = [words]
             chars = [chars]
             postags = [postags]
@@ -374,7 +375,6 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
         else:
             adv_words = words.clone()
         #if ensemble:
-        #    num_models = len(network.networks)
         #    adv_words = num_models * [adv_words]
         adv_pres = pres.clone() if alg == 'graph' else None
         adv_src = []
@@ -861,7 +861,7 @@ def run(args):
         start_time = time.time()
         if args.ensemble:
             word_alphabet = word_alphabets
-            data_test = data_test[0]
+            #data_test = data_test[0]
         # debug = 1: show orig/adv tokens / debug = 2: show log inside attacker
         attack(attacker, alg, data_test, network, adv_writer, adv_gold_writer, punct_set, word_alphabet, 
             pos_alphabet, device, args.beam, batch_size=args.batch_size, tokenizer=tokenizer, 
