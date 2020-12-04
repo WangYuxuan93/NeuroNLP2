@@ -291,11 +291,13 @@ def train(args):
     if data_format == 'conllx':
         data_reader = conllx_data
         train_path = args.train
+        train_adv_path = args.train_adv
         dev_path = args.dev
         test_path = args.test
     elif data_format == 'ud':
         data_reader = ud_data
         train_path = args.train.split(':')
+        train_adv_path = args.train_adv.split(':')
         dev_path = args.dev.split(':')
         test_path = args.test.split(':')
     else:
@@ -358,8 +360,26 @@ def train(args):
     elif data_format == "ud":
         #data_paths=dev_path + test_path
         data_paths=dev_path
+    # ************ jeffrey: add adversarial sample ****************8
+
+    ratio = 0.5
+    seed = 1529
+    np.random.seed(seed)
+    allline = []
+    if train_adv_path != "none":
+        with open(train_path, "r", encoding="utf-8") as f:
+            allline = f.read().strip().split("\n\n")
+            with open(train_adv_path,"r",encoding="utf-8") as f1:
+                lines = f1.read().strip().split("\n\n")
+            allline.extend(lines)
+        np.random.shuffle(allline)
+        train_path=os.path.join(args.model_path, "merge_train.txt")
+        with open(train_path, "w", encoding="utf-8") as f:
+            for x in range(len(allline)):
+                f.write(allline[x]+"\n\n")
+
     word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = data_reader.create_alphabets(alphabet_path, train_path,
-                                                                                             data_paths=data_paths, 
+                                                                                             data_paths=data_paths,
                                                                                              embedd_dict=word_dict, 
                                                                                              max_vocabulary_size=args.max_vocab_size,
                                                                                              normalize_digits=args.normalize_digits,
@@ -657,6 +677,7 @@ def train(args):
                 lan_id = torch.LongTensor([lan_id]).to(device)
                 #print ("lan_id:",lan_id)
             optimizer.zero_grad()
+
             words = data['WORD'].to(device)
             chars = data['CHAR'].to(device)
             postags = data['POS'].to(device)
@@ -694,6 +715,7 @@ def train(args):
                 rels = data['TYPE'].to(device)
                 masks = data['MASK'].to(device)
                 nwords = masks.sum() - nbatch
+
                 losses, statistics = network(words, pres, chars, postags, heads, rels, 
                             mask=masks, bpes=bpes, first_idx=first_idx, input_elmo=input_elmo,
                             lan_id=lan_id)
@@ -959,6 +981,8 @@ def parse(args):
     logger.info("loading network...")
     hyps = json.load(open(os.path.join(model_path, 'config.json'), 'r'))
     model_type = hyps['model']
+    use_elmo = args.use_elmo
+    elmo_path = args.elmo_path
     assert model_type in ['Biaffine', 'StackPointer']
 
     num_lans = 1
@@ -1038,7 +1062,8 @@ def parse(args):
     if args.output_filename:
         pred_filename = args.output_filename
     else:
-        pred_filename = os.path.join(result_path, 'pred.txt')
+        pred_filename = os.path.join(result_path, 'transferability-same-embedding.txt')
+        #pred_filename = os.path.join("/users7/zllei/exp_data/models/parsing/PTB/biaffine", 'transferability-same-embedding.txt')
     pred_writer.start(pred_filename)
     #gold_filename = os.path.join(result_path, 'gold.txt')
     #gold_writer.start(gold_filename)
@@ -1109,6 +1134,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--lan_dev', type=str, default='en', help='lc for dev files (split with \':\')')
     args_parser.add_argument('--lan_test', type=str, default='en', help='lc for test files (split with \':\')')
     args_parser.add_argument('--train', help='path for training file.')
+    args_parser.add_argument('--train_adv', help='path for adversarial file.')
     args_parser.add_argument('--dev', help='path for dev file.')
     args_parser.add_argument('--test', help='path for test file.', required=True)
     args_parser.add_argument('--model_path', help='path for saving model file.', required=True)

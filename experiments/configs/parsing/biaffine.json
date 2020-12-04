@@ -1,5 +1,5 @@
 {
-  "model": "Biaffine", 
+  "model": "Biaffine",
   "input": {
     "word_dim": 100,
     "pos_dim": 100,

@@ -40,7 +40,8 @@ from neuronlp2.io.batcher import multi_language_iterate_data, iterate_data, iter
 from neuronlp2.io import multi_ud_data
 from neuronlp2.io.common import PAD_CHAR, PAD, PAD_POS, PAD_TYPE, PAD_ID_CHAR, PAD_ID_TAG, PAD_ID_WORD
 from adversary.attackers.blackbox import BlackBoxAttacker
-
+from adversary.scripts.mlm_generator import load_conll,MLM_Generator
+from collections import OrderedDict
 
 def convert_tokens_to_ids(tokenizer, tokens):
 
@@ -85,6 +86,27 @@ def convert_tokens_to_ids(tokenizer, tokens):
 
     return input_ids, first_indices
 
+def mlm_gen(input,out_put):
+    bert_path="/users2/yxwang/work/data/models/bert-large-uncased"
+    temp=1.0
+    top_k=100
+    n_mlm_cands=50
+    with open(input, 'r') as f:
+        data = load_conll(f)
+    device = torch.device('cuda', 0) #if args.cuda else torch.device('cpu')
+    generator = MLM_Generator(bert_path, device=device, temperature=temp,
+                            top_k=top_k, top_p=None, n_mlm_cands=n_mlm_cands)
+
+    all_cands = OrderedDict()
+    print ("total sent:", len(data))
+    for i, sent in enumerate(data):
+        if i % 100 == 0:
+            print(i,"... ",end="")
+            sys.stdout.flush()
+        tokens = [line[1] for line in sent]
+        cands_list = generator.generate(tokens, args.n_mlm_cands)
+        all_cands[i] = cands_list
+    json.dump(all_cands, open(out_put, 'w'), indent=4)
 
 def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, 
         device, beam=1, batch_size=256, write_to_tmp=True, prev_best_lcorr=0, prev_best_ucorr=0,
@@ -162,8 +184,8 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         else:
             pres = None
             masks = data['MASK_ENC'].to(device)
-            heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, 
-                bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, an_id=lan_id, beam=beam, 
+            heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks,
+                bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id, beam=beam,
                 leading_symbolic=conllx_data.NUM_SYMBOLIC_TAGS)
         words = words.cpu().numpy()
         postags = postags.cpu().numpy()
@@ -504,6 +526,7 @@ def parse(args):
     args.cuda = torch.cuda.is_available()
     device = torch.device('cuda', 0) if args.cuda else torch.device('cpu')
     data_format = args.format
+
     if data_format == 'conllx':
         data_reader = conllx_data
         test_path = args.test
@@ -513,6 +536,29 @@ def parse(args):
     else:
         print ("### Unrecognized data formate: %s ###" % data_format)
         exit()
+
+    # # *****************************************
+    # add_adv = args.add_adv
+    # sents = []
+    # alpha_adv = 50.0
+    # seed=5617
+    # np.random.seed(seed)
+    # # **************** jeffrey: generate new adv sentence ********************
+    # if add_adv == "true":
+    #     logger.info("Generating %.2f%% training samples" % alpha_adv)
+    #     with open(test_path, "r", encoding="utf-8") as f:
+    #         sents = f.read().strip().split("\n\n")
+    #         np.random.shuffle(sents)
+    #     test_path = args.new_path + "_" + str(seed)+ "_" + str(alpha_adv)
+    #     with open(test_path, "w", encoding="utf-8") as f:
+    #         for ind in range(round(len(sents) * alpha_adv / 100)):
+    #             f.write(sents[ind] + "\n\n")
+    #
+    # # 执行脚本,产生新的对应句子顺序的候选词
+    # if add_adv == "true":
+    #     mlm_gen(test_path,"/users7/zllei/NeuroNLP2/adversary/pkt/mlm_cand.json")
+    # # *******************************************
+    # logger.info("mlm candidates is ok!")
 
     if args.ensemble:
         model_paths = args.model_path.split(':')
@@ -650,6 +696,7 @@ def parse(args):
     #rels = [0, 3, 4, 5, 6, 7, 8, 9, 10]#, 11]
     #attacker.attack(tokens, tags, heads, rels, True)
     #exit()
+
 
     logger.info("Reading Data")
     if alg == 'graph':
@@ -796,6 +843,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--cand_cache_path', type=str, default=None, help='output filename for candidate cache file')
     args_parser.add_argument('--ensemble', action='store_true', default=False, help='ensemble multiple parsers for predicting')
     args_parser.add_argument('--merge_by', type=str, choices=['logits', 'probs'], default='logits', help='ensemble policy')
-
+    args_parser.add_argument('--new_path', type=str, default=None, help="generate new adv_sample")
+    args_parser.add_argument('--add_adv',choices=['true', 'false'],default='false', help='')
     args = args_parser.parse_args()
     parse(args)

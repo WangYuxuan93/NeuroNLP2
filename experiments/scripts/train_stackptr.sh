@@ -2,6 +2,8 @@
 #emb=/users2/yxwang/work/data/ud/embeddings/muse/en_ewt.300.muse.vec.gz
 emb=/users2/yxwang/work/data/embeddings/glove/glove.6B.100d.txt.gz
 lmdir=/users2/yxwang/work/data/models
+#advdir=/users7/zllei/exp_data/models/adv/ptb/stack-ptr/roberta-888/biaf
+# -glove-v50k-v0-black-ptb_test-0.15-v0
 #lmpath=$lmdir/bert-base-cased
 #dir=/users2/yxwang/work/data/ud/ud-v2.2
 #for lc in ${lcs[@]};
@@ -12,9 +14,12 @@ lmdir=/users2/yxwang/work/data/models
   #test=$test:$dir/$lc/$lc-ud-test.conllu
 #done
 dir=/users2/yxwang/work/data/ptb/dependency-stanford-chen14
-train=$dir/PTB_train_auto.conll
+model_types=elmo-666
+train=/users7/zllei/exp_data/models/adv/ptb/adv_gen/PTB_train_auto.conll_5617_50.0
+train_adv=/users7/zllei/exp_data/models/adv/ptb/adv_gen/stack-ptr/${model_types}/biaf-glove-v50k-v0-black-ptb_test-0.15-v0/${model_types}@PTB_train_auto.conll_5617_50.0.adv@black-0.5-0-20.0-0.7-0.95-0.15.gold
 dev=$dir/PTB_dev_auto.conll
 test=$dir/PTB_test_auto.conll
+#test=$advdir/roberta-888@PTB_test_auto.conll.adv@black-0.5-0-20.0-0.7-0.95-0.15
 lans="en"
 
 tcdir=/users2/yxwang/work/experiments/robust_parser/lm/saves
@@ -30,15 +35,15 @@ evalbatch=32
 epoch=1000
 patient=20
 lr='0.002'
-lm=roberta
-#lm=roberta
-lmpath=$lmdir/roberta-base
+lm=none
+#lm=roberta-base
+lmpath=$lmdir/electra-base-discriminator
 #lmpath=$lmdir/roberta-large
 #lm=electra
 #lmpath=$lmdir/electra-large-discriminator
 #lmpath=$lmdir/electra-base-discriminator
 
-use_elmo=''
+use_elmo=' --use_elmo '
 #use_elmo=' --use_elmo '
 elmo_path=$lmdir/elmo
 
@@ -48,8 +53,8 @@ pretrain_word=''
 #pretrain_word=' --use_pretrained_static '
 freeze=''
 #freeze=' --freeze'
-#trim=''
-trim=' --do_trim'
+trim=''
+#trim=' --do_trim'
 #vocab_size=400000
 vocab_size=40000
 
@@ -81,9 +86,11 @@ mix=' --mix_datasets'
 form=conllx
 
 gpu=$1
-save=/users7/zllei/exp_data/models/parsing/PTB/stack-ptr/roberta-${seed}
-log_file=${save}/log_train_$(date "+%Y%m%d-%H%M%S").txt
-
+mode=train
+save=/users7/zllei/exp_data/models/parsing/PTB/adv-parser/stack-ptr/elmo-${seed}
+log_file=${save}/log_${mode}_$(date "+%Y%m%d-%H%M%S").txt
+#log_file=/users7/zllei/exp_data/models/parsing/PTB/stack-vocab/glove-$
+# {vocab_size}-unk-${unk}-${seed}/log_${mode}_ensemble_$(date "+%Y%m%d-%H%M%S").txt
 if [ -z $1 ];then
   echo '[gpu] [save] [log]'
   exit
@@ -95,19 +102,21 @@ if [ ! -f "$log_file" ]; then
 fi
 
 #source /users2/yxwang/work/env/py3.6/bin/activate
-CUDA_VISIBLE_DEVICES=$gpu OMP_NUM_THREADS=4 python -u $main --mode train --config configs/parsing/stackptr.json --seed $seed \
+CUDA_VISIBLE_DEVICES=$gpu OMP_NUM_THREADS=4 python -u $main --mode $mode \
+--config configs/parsing/stackptr.json --seed $seed \
  --num_epochs $epoch --patient_epochs $patient --batch_size $batch --eval_batch_size $evalbatch \
  --opt $opt --schedule $sched --learning_rate $lr --lr_decay $decay --decay_steps $dstep \
  --beta1 $beta1 --beta2 $beta2 --eps $eps --grad_clip $clip --beam $beam \
  --eval_every $evalevery --noscreen ${random_word} ${pretrain_word} $freeze \
  --loss_type $losstype --warmup_steps $warmup --reset $reset --weight_decay $l2decay --unk_replace $unk \
- --word_embedding glove --word_path $emb --char_embedding random \
+ --word_embedding sskip --word_path $emb --char_embedding random \
  --max_vocab_size ${vocab_size} $trim $ndigit \
  --elmo_path ${elmo_path} ${use_elmo} \
  --pretrained_lm $lm --lm_path $lmpath --lm_lr $lmlr \
  --punctuation '.' '``' "''" ':' ',' --pos_idx $posidx \
  --format $form \
  --train $train \
+  --train_adv $train_adv --ensemble\
  --dev $dev \
  --test $test \
  --lan_train $lans --lan_dev $lans --lan_test $lans $mix \

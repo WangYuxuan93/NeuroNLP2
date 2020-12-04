@@ -32,7 +32,7 @@ from adversary.lm.bert import Bert
 #from adversary.adv_attack import convert_tokens_to_ids
 from neuronlp2.io.common import DIGIT_RE
 
-sys.stdout = codecs.getwriter("utf-8")(sys.stdout.detach())
+#sys.stdout = codecs.getwriter("utf-8")(sys.stdout.detach())
 
 stopwords = set(
         [
@@ -712,7 +712,7 @@ class BlackBoxAttacker(object):
                     heads_pred_list.append(heads_pred)
                     rels_pred_list.append(rels_pred)
             elif self.model.hyps['model'] == 'StackPointer':
-                for words, pres, chars, pos, masks, bpes, first_idx, lan_id in self.str2id(tokens, tags):
+                for words, pres, chars, pos, masks, bpes, first_idx,input_elmo, lan_id in self.str2id(tokens, tags):
                     heads_pred, rels_pred = self.model.decode(words, pres, chars, pos, mask=masks, beam=self.beam,
                             bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id, 
                             leading_symbolic=common.NUM_SYMBOLIC_TAGS)

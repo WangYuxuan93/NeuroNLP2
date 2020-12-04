@@ -2,9 +2,9 @@
   "biaf-glove-v50k-v0-black-ptb_test-0.15-v0": {
     "ndigit": "",
     "ens": "",
-    "seed": 888,
+    "seed": 666,
     "tagger": "nltk",
-    "parser": "/users7/zllei/exp_data/models/parsing/PTB/biaffine/electra-888",
+    "parser": "/users7/zllei/exp_data/models/parsing/PTB/adv-parser/stack-ptr/electra-666",
     "mode": "black",
     "use_random": "",
     "use_pretrain": "",

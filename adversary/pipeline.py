@@ -31,7 +31,7 @@ class Attacker(object):
 --min_word_cos_sim {wsim} --min_sent_cos_sim {ssim} --max_knn_candidates {max_knn} \
 --adv_rel_ratio {rel_ratio} --adv_fluency_ratio {flu_ratio} \
 --max_mod_percent {max_mod_percent} --ppl_inc_thres {ppl_diff_thres} \
---test {test} --model_path {parser} \
+--test {test} --new_path {new_path} --add_adv {add_adv} --model_path {parser} \
 --output_filename {orig_output} --adv_filename {adv_output} --adv_gold_filename {adv_gold_output} \
 --noscreen --punctuation \'.\' \'``\' \"\'\'\" \':\' \',\' \
 --format conllx --lan_test en --pos_idx 3 > {log} 2>&1".format(**dict)

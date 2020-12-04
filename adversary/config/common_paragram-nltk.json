@@ -24,5 +24,7 @@
   "wordpiece_backoff": "",
   "cached_path": " --cached_path /users2/yxwang/work/experiments/adversarial/data/ptb.test.all-cands.nltk.json ",
   "test": "/users2/yxwang/work/data/ptb/dependency-stanford-chen14/PTB_test_auto.conll",
+  "new_path": "/users7/zllei/exp_data/models/adv/ptb/adv_gen/elmo-666/PTB_train_auto.conll",
+  "add_adv": "false",
   "use_random": ""
 }
