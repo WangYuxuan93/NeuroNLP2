@@ -371,7 +371,7 @@ def recover_word_case(word, reference_word):
 class BlackBoxAttacker(object):
     def __init__(self, model, candidates, vocab, synonyms, filters=['word_sim', 'sent_sim', 'lm', 'train'],
                 generators=['synonym', 'sememe', 'embedding'], max_mod_percent=0.05, 
-                tagger="nltk", punct_set=[], beam=1, normalize_digits=False,
+                tagger="nltk", ensemble=False, punct_set=[], beam=1, normalize_digits=False,
                 cached_path=None, train_vocab=None,
                 knn_path=None, max_knn_candidates=50, sent_encoder_path=None,
                 min_word_cos_sim=0.8, min_sent_cos_sim=0.8, 
@@ -385,6 +385,7 @@ class BlackBoxAttacker(object):
         logger = get_logger("Attacker")
         logger.info("##### Attacker Type: {} #####".format(self.__class__.__name__))
         self.model = model
+        self.ensemble = ensemble
         self.candidates = candidates
         self.synonyms = synonyms
         self.word2id = vocab
@@ -457,7 +458,11 @@ class BlackBoxAttacker(object):
             self.mlm_cand_dict = None
             self.n_mlm_cands = None
         if alphabets is not None:
-            self.word_alphabet, self.char_alphabet, self.pos_alphabet, self.rel_alphabet, self.pretrained_alphabet = alphabets
+            if self.ensemble:
+                self.word_alphabets, self.char_alphabets, self.pos_alphabets, self.rel_alphabet, self.pretrained_alphabets = alphabets
+                self.pretrained_alphabet = self.pretrained_alphabets[0]
+            else:
+                self.word_alphabet, self.char_alphabet, self.pos_alphabet, self.rel_alphabet, self.pretrained_alphabet = alphabets
         self.tokenizer = tokenizer
         self.device = device
         self.lm_device = lm_device
@@ -586,13 +591,34 @@ class BlackBoxAttacker(object):
 
     def str2id(self, tokens, tags):
         #word_ids = [[self.word_alphabet.get_index(x) for x in s] for s in tokens]
-        word_ids = []
-        for s in tokens:
-            word_list = []
-            for x in s:
-                x = DIGIT_RE.sub("0", x) if self.normalize_digits else x
-                word_list.append(self.word_alphabet.get_index(x))
-            word_ids.append(word_list)
+        if self.ensemble:
+            num_models = len(self.word_alphabets)
+            word_ids = [[] for _ in range(num_models)]
+            if self.model.hyps['input']['use_pos']:
+                tag_ids = [[] for _ in range(num_models)]
+            else:
+                tag_ids = None
+            for i in range(num_models):
+                for s in tokens:
+                    word_list = []
+                    for x in s:
+                        x = DIGIT_RE.sub("0", x) if self.normalize_digits else x
+                        word_list.append(self.word_alphabets[i].get_index(x))
+                    word_ids[i].append(word_list)
+                if self.model.hyps['input']['use_pos']:
+                    tag_ids[i] = [[self.pos_alphabets[i].get_index(x) for x in s] for s in tags]
+        else:
+            word_ids = []
+            for s in tokens:
+                word_list = []
+                for x in s:
+                    x = DIGIT_RE.sub("0", x) if self.normalize_digits else x
+                    word_list.append(self.word_alphabet.get_index(x))
+                word_ids.append(word_list)
+            if self.model.hyps['input']['use_pos']:
+                tag_ids = [[self.pos_alphabet.get_index(x) for x in s] for s in tags]
+            else:
+                tag_ids = None
         #pre_ids = [[self.pretrained_alphabet.get_index(x) for x in s] for s in tokens]
         pre_ids = []
         for s in tokens:
@@ -603,10 +629,7 @@ class BlackBoxAttacker(object):
                     pid = self.pretrained_alphabet.get_index(w.lower())
                 pre_list.append(pid)
             pre_ids.append(pre_list)
-        if self.model.hyps['input']['use_pos']:
-            tag_ids = [[self.pos_alphabet.get_index(x) for x in s] for s in tags]
-        else:
-            tag_ids = None
+        
         if not self.model.hyps['input']['use_char']:
             chars = None
         if not self.model.lan_emb_as_input:
@@ -625,27 +648,47 @@ class BlackBoxAttacker(object):
 
         data_size = len(tokens)
         max_length = max([len(s) for s in tokens])
-        wid_inputs = np.empty([data_size, max_length], dtype=np.int64)
+        if self.ensemble:
+            wid_inputs = [np.empty([data_size, max_length], dtype=np.int64) for _ in range(num_models)]
+            pid_inputs = [np.empty([data_size, max_length], dtype=np.int64) for _ in range(num_models)]
+        else:
+            wid_inputs = np.empty([data_size, max_length], dtype=np.int64)
+            pid_inputs = np.empty([data_size, max_length], dtype=np.int64)
         pre_inputs = np.empty([data_size, max_length], dtype=np.int64)
         tid_inputs = np.empty([data_size, max_length], dtype=np.int64)
-        pid_inputs = np.empty([data_size, max_length], dtype=np.int64)
+        
         masks = np.zeros([data_size, max_length], dtype=np.float32)
 
-        for i in range(len(word_ids)):
-            wids = word_ids[i]
+        for i in range(data_size):
+            if self.ensemble:
+                inst_size = len(word_ids[0][i])
+                for j in range(num_models):
+                    wids = word_ids[j][i]
+                    # word ids
+                    wid_inputs[j][i, :inst_size] = wids
+                    wid_inputs[j][i, inst_size:] = PAD_ID_WORD
+                    # pos ids
+                    if tag_ids is not None:
+                        pids = tag_ids[j][i]
+                        pid_inputs[j][i, :inst_size] = pids
+                        pid_inputs[j][i, inst_size:] = PAD_ID_TAG
+            else:
+                wids = word_ids[i]
+                inst_size = len(wids)
+                # word ids
+                wid_inputs[i, :inst_size] = wids
+                wid_inputs[i, inst_size:] = PAD_ID_WORD
+                
+                # pos ids
+                if tag_ids is not None:
+                    pids = tag_ids[i]
+                    pid_inputs[i, :inst_size] = pids
+                    pid_inputs[i, inst_size:] = PAD_ID_TAG
+            
             preids = pre_ids[i]
-            inst_size = len(wids)
-            # word ids
-            wid_inputs[i, :inst_size] = wids
-            wid_inputs[i, inst_size:] = PAD_ID_WORD
             # pretrained ids
             pre_inputs[i, :inst_size] = preids
             pre_inputs[i, inst_size:] = PAD_ID_WORD
-            # pos ids
-            if tag_ids is not None:
-                pids = tag_ids[i]
-                pid_inputs[i, :inst_size] = pids
-                pid_inputs[i, inst_size:] = PAD_ID_TAG
             # masks
             if self.symbolic_end:
                 # mask out the end token
@@ -658,21 +701,34 @@ class BlackBoxAttacker(object):
         if self.mask_out_root:
             masks[:,0] = 0
 
-        words = torch.from_numpy(wid_inputs).to(self.device)
-        pos = torch.from_numpy(pid_inputs).to(self.device)
+        if self.ensemble:
+            words = [torch.from_numpy(wid_input).to(self.device) for wid_input in wid_inputs]
+            pos = [torch.from_numpy(pid_input).to(self.device) for pid_input in pid_inputs]
+        else:
+            words = torch.from_numpy(wid_inputs).to(self.device)
+            pos = torch.from_numpy(pid_inputs).to(self.device)
         masks = torch.from_numpy(masks).to(self.device)
         pres = torch.from_numpy(pre_inputs).to(self.device)
 
         for start_idx in range(0, data_size, self.batch_size):
             excerpt = slice(start_idx, start_idx + self.batch_size)
-            b_words = words[excerpt, :]
-            b_pres = pres[excerpt, :]
-            b_pos = pos[excerpt, :]
-            b_masks = masks[excerpt, :]
-            if chars is not None:
-                b_chars = chars[excerpt, :]
+            if self.ensemble:
+                b_words = [word[excerpt, :] for word in words] 
+                b_pos = [pos_[excerpt, :] for pos_ in pos] 
+                if chars is not None:
+                    b_chars = chars[excerpt, :]
+                else:
+                    b_chars = [None] * num_models
             else:
-                b_chars = None
+                b_words = words[excerpt, :]
+                b_pos = pos[excerpt, :]
+                if chars is not None:
+                    b_chars = chars[excerpt, :]
+                else:
+                    b_chars = None
+
+            b_pres = pres[excerpt, :]
+            b_masks = masks[excerpt, :]
             if elmo_inputs is not None:
                 b_elms = elmo_inputs[excerpt, :]
             else:
@@ -1256,7 +1312,7 @@ class BlackBoxAttacker(object):
         neigbhours_list = []
         cand_cache = []
         #stop_words = nltk.corpus.stopwords.words('english')
-        if not ("mlm" in self.generators and self.dynamic_mlm_cand):
+        if not self.dynamic_mlm_cand:
             for i in range(x_len):
                 #print (adv_tokens[i], self._word2id(adv_tokens[i]))
                 cands, cache_data = self.get_candidate_set(adv_tokens, tags[i], i, sent_id=sent_id, cache=cache)
