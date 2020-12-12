@@ -482,6 +482,7 @@ def train(args):
     if pretrained_lm in ['none','elmo']:
         tokenizer = None 
     else:
+        print (lm_path)
         tokenizer = AutoTokenizer.from_pretrained(lm_path)
 
     logger.info("##### Parser Type: {} #####".format(model_type))
@@ -505,6 +506,9 @@ def train(args):
 
     num_gpu = torch.cuda.device_count()
     logger.info("GPU Number: %d" % num_gpu)
+    if args.fine_tune:
+        logger.info("Loading pre-trained model from: %s" % model_name)
+        network.load_state_dict(torch.load(model_name, map_location=device))
     if num_gpu > 1:
         logger.info("Using Data Parallel")
         network = torch.nn.DataParallel(network)
@@ -1202,6 +1206,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--model_path', help='path for saving model file.', required=True)
     args_parser.add_argument('--output_filename', type=str, help='output filename for parse')
     args_parser.add_argument('--ensemble', action='store_true', default=False, help='ensemble multiple parsers for predicting')
+    args_parser.add_argument('--fine_tune', action='store_true', default=False, help='fine-tuning from pretrained parser')
     args_parser.add_argument('--merge_by', type=str, choices=['logits', 'probs'], default='logits', help='ensemble policy')
 
     args = args_parser.parse_args()
