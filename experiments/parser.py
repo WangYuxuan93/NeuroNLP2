@@ -89,10 +89,10 @@ def convert_tokens_to_ids(tokenizer, tokens):
             first_index_list.append(len(wordpiece_list)+1)
             wordpiece_list += wordpiece
             #print (wordpiece)
-        print ("wordpiece_list:\n", wordpiece_list)
+        #print ("wordpiece_list:\n", wordpiece_list)
         #print (first_index_list)
         bpe_ids = tokenizer.convert_tokens_to_ids(wordpiece_list)
-        print ("bpe_ids:\n", bpe_ids)
+        #print ("bpe_ids:\n", bpe_ids)
         bpe_ids = tokenizer.build_inputs_with_special_tokens(bpe_ids)
         #print (bpe_ids)
         all_wordpiece_list.append(bpe_ids)
