@@ -626,25 +626,26 @@ def run(args):
     # # *****************************************
     # add_adv = args.add_adv
     # sents = []
-    # alpha_adv = 50.0
+    # alpha_adv = 100.0
     # seed=5617
     # np.random.seed(seed)
+    #
     # # **************** jeffrey: generate new adv sentence ********************
     # if add_adv == "true":
     #     logger.info("Generating %.2f%% training samples" % alpha_adv)
     #     with open(test_path, "r", encoding="utf-8") as f:
     #         sents = f.read().strip().split("\n\n")
     #         np.random.shuffle(sents)
-    #     test_path = args.new_path + "_" + str(seed)+ "_" + str(alpha_adv)
+    #     test_path = os.path.join(args.new_path, "PTB_train_auto.conll_" + str(seed)+ "_" + str(alpha_adv))
     #     with open(test_path, "w", encoding="utf-8") as f:
     #         for ind in range(round(len(sents) * alpha_adv / 100)):
     #             f.write(sents[ind] + "\n\n")
-    #
-    # # 执行脚本,产生新的对应句子顺序的候选词
+
+    # 执行脚本,产生新的对应句子顺序的候选词
     # if add_adv == "true":
-    #     mlm_gen(test_path,"/users7/zllei/NeuroNLP2/adversary/pkt/mlm_cand.json")
-    # # *******************************************
-    # logger.info("mlm candidates is ok!")
+    #     mlm_gen(test_path, "/users7/zllei/NeuroNLP2/adversary/pkt-train-1.0/mlm_cand.json")
+    # *******************************************
+    logger.info("mlm candidates is ok!")
 
 
     print(args)

@@ -364,7 +364,7 @@ def train(args):
     only_pretrain_static = use_pretrained_static and not use_random_static
     use_elmo = args.use_elmo
     elmo_path = args.elmo_path
-
+    pretrained_network = args.pretrained_network
     print(args)
 
     word_dict, word_dim = utils.load_embedding_dict(word_embedding, word_path)
@@ -394,7 +394,17 @@ def train(args):
             allline = f.read().strip().split("\n\n")
             with open(train_adv_path,"r",encoding="utf-8") as f1:
                 lines = f1.read().strip().split("\n\n")
-            allline.extend(lines)
+                # filter out sentences not attacked
+                # for sent in lines:
+                #     flag = False
+                #     for x in sent.split("\n"):
+                #         word=x.split("\t")
+                #         if word[9]!="_":
+                #             flag=True
+                #             break
+                #     if flag:
+                #         allline.append(sent)
+                allline.extend(lines)
         np.random.shuffle(allline)
         train_path=os.path.join(args.model_path, "merge_train.txt")
         with open(train_path, "w", encoding="utf-8") as f:
@@ -522,7 +532,11 @@ def train(args):
                                num_lans=num_lans)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
-
+    # ********* pre_trained network  *************
+    if pretrained_network:
+        model_name_pre = os.path.join(model_path, 'model_pretrained.pt')
+        network.load_state_dict(torch.load(model_name_pre, map_location=device))
+        logger.info("pretrained parameters is loaded successfully! ")
     num_gpu = torch.cuda.device_count()
     logger.info("GPU Number: %d" % num_gpu)
     if num_gpu > 1:
@@ -1065,7 +1079,7 @@ def parse(args):
                                    use_pretrained_static=args.use_pretrained_static, 
                                    use_random_static=args.use_random_static,
                                    use_elmo=args.use_elmo, elmo_path=args.elmo_path,
-                                   num_lans=num_lans, model_paths=model_paths, merge_by=args.merge_by)
+                                   num_lans=num_lans, model_paths=model_paths, merge_by=args.merge_by,beam=args.beam)
     else:
         if model_type == 'Biaffine':
             network = BiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels,
@@ -1229,7 +1243,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--output_filename', type=str, help='output filename for parse')
     args_parser.add_argument('--ensemble', action='store_true', default=False, help='ensemble multiple parsers for predicting')
     args_parser.add_argument('--merge_by', type=str, choices=['logits', 'probs'], default='logits', help='ensemble policy')
-
+    args_parser.add_argument('--pretrained_network', default=False, action='store_true', help='ensemble types')
     args = args_parser.parse_args()
     if args.mode == 'train':
         train(args)
