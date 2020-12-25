@@ -486,7 +486,7 @@ class BlackBoxAttacker(object):
         else:
             logger.info("Empty stop word list.")
             self.stop_words = []
-        self.stop_tags = ['PRP','PRP$','DT','CC','CD','UH','WDT','WP','WP$','-LRB-','-RRB-','.','``',"\'\'",':',',','?',';']
+        self.stop_tags = ['PRP','PRP$','DT','CC','IN','CD','UH','WDT','WP','WP$','-LRB-','-RRB-','.','``',"\'\'",':',',','?',';']
         self.random_backoff = random_backoff
         self.wordpiece_backoff = wordpiece_backoff
         if self.wordpiece_backoff and self.tokenizer is None:
