@@ -556,7 +556,7 @@ class BlackBoxAttacker(object):
             for i, nbr_id in enumerate(nnids):
                 nbr_word = self.word_embedding_index2word[nbr_id]
                 #candidate_words.append(recover_word_case(nbr_word, word))
-                candidate_words.append(nbr_word, word)
+                candidate_words.append(nbr_word)
             return candidate_words
         except KeyError:
             # This word is not in our word embedding database, so return an empty list.
@@ -1128,13 +1128,14 @@ class BlackBoxAttacker(object):
     def pos_filter(self, tokens, cands, tag, idx):
         filtered_cands = []
         tmps = tokens.copy()
+        #print ("token={}, tag={}".format(tokens[idx], tag))
         for cand in cands:
             tmps[idx] = cand
             #tokens[idx] = cand
             #cand_tag = nltk.pos_tag(tokens)[idx][1]
             if self.tagger == 'stanza':
                 data = self.stanza_tagger([tmps]).sentences[0]
-                cand_tag = [data.words[i].xpos for i in range(len(data.words))]
+                cand_tag = data.words[idx].xpos
             elif self.tagger == 'nltk':
                 #cand_tag = nltk.pos_tag([cand.lower()])[0][1]
                 cand_tag = nltk.pos_tag(tmps)[idx][1]
@@ -1143,6 +1144,7 @@ class BlackBoxAttacker(object):
                 cand_tag = nlp(' '.join(tmps))[idx].tag_
             elif self.tagger == 'stanford':
                 cand_tag = self.stanford_tagger.tag(tmps)[idx][1]
+            #print ("cand={}, tag={}".format(cand, cand_tag))
             if cand_tag == tag:
                 filtered_cands.append(cand)
         return filtered_cands
