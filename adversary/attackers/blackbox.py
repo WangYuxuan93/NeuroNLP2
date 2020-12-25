@@ -1129,10 +1129,26 @@ class BlackBoxAttacker(object):
         filtered_cands = []
         tmps = tokens.copy()
         #print ("token={}, tag={}".format(tokens[idx], tag))
-        for cand in cands:
+        cand_sents = [tokens[:idx]+[c]+tokens[idx+1:] for c in cands]
+        if self.tagger == 'stanza':
+            sent_tags = self.stanza_tagger(cand_sents).sentences
+            cand_tags = [x.words[idx].xpos for x in sent_tags]
+        elif self.tagger == 'nltk':
+            #cand_tag = nltk.pos_tag([cand.lower()])[0][1]
+            cand_tags = [nltk.pos_tag(x)[idx][1] for x in cand_sents]
+        elif self.tagger == 'spacy':
+            #cand_tag = nlp(cand.lower())[0].tag_
+            cand_tag = [nlp(' '.join(x))[idx].tag_ for x in cand_sents]
+        elif self.tagger == 'stanford':
+            sent_tags = self.stanford_tagger.tag_sents(cand_sents)[idx][1]
+            cand_tags = [x[idx][1] for x in sent_tags]
+
+
+        for cand_tag, cand in zip(cand_tags, cands):
             tmps[idx] = cand
-            #tokens[idx] = cand
-            #cand_tag = nltk.pos_tag(tokens)[idx][1]
+            if cand_tag == tag:
+                filtered_cands.append(cand)
+            """
             if self.tagger == 'stanza':
                 data = self.stanza_tagger([tmps]).sentences[0]
                 cand_tag = data.words[idx].xpos
@@ -1144,9 +1160,9 @@ class BlackBoxAttacker(object):
                 cand_tag = nlp(' '.join(tmps))[idx].tag_
             elif self.tagger == 'stanford':
                 cand_tag = self.stanford_tagger.tag(tmps)[idx][1]
+            """
             #print ("cand={}, tag={}".format(cand, cand_tag))
-            if cand_tag == tag:
-                filtered_cands.append(cand)
+            
         return filtered_cands
 
     def get_syn_cands(self, token, tag):
