@@ -3,6 +3,7 @@ from nltk.corpus import wordnet as wn
 import spacy
 nlp = spacy.load('en_core_web_sm')
 import language_check
+import stanza
 
 from functools import partial
 import numpy as np
@@ -408,7 +409,10 @@ class BlackBoxAttacker(object):
             self.cached_cands = json.load(open(cached_path, 'r'))
         else:
             self.cached_cands = None
-        if self.tagger == 'stanford':
+        if self.tagger == 'stanza':
+            self.stanza_tagger = stanza.Pipeline(lang='en', processors='tokenize,pos', 
+                                                    tokenize_pretokenized=True, use_gpu=True)
+        elif self.tagger == 'stanford':
             jar = 'stanford-postagger-2018-10-16/stanford-postagger.jar'
             model = 'stanford-postagger-2018-10-16/models/english-left3words-distsim.tagger'
             logger.info("Loading stanford tagger from: %s" % model)
@@ -551,7 +555,8 @@ class BlackBoxAttacker(object):
             candidate_words = []
             for i, nbr_id in enumerate(nnids):
                 nbr_word = self.word_embedding_index2word[nbr_id]
-                candidate_words.append(recover_word_case(nbr_word, word))
+                #candidate_words.append(recover_word_case(nbr_word, word))
+                candidate_words.append(nbr_word, word)
             return candidate_words
         except KeyError:
             # This word is not in our word embedding database, so return an empty list.
@@ -1115,7 +1120,34 @@ class BlackBoxAttacker(object):
                 return cand_idx
         return None
 
-    def get_synonyms(self, token, tag):
+    def post_process(self, tokens, cands, tag, idx):
+        # replace with cased version, same format as original token
+        cased_cands = [recover_word_case(c, tokens[idx]) for c in cands]
+        return self.pos_filter(tokens, cased_cands, tag, idx)
+
+    def pos_filter(self, tokens, cands, tag, idx):
+        filtered_cands = []
+        tmps = tokens.copy()
+        for cand in cands:
+            tmps[idx] = cand
+            #tokens[idx] = cand
+            #cand_tag = nltk.pos_tag(tokens)[idx][1]
+            if self.tagger == 'stanza':
+                data = self.stanza_tagger([tmps]).sentences[0]
+                cand_tag = [data.words[i].xpos for i in range(len(data.words))]
+            elif self.tagger == 'nltk':
+                #cand_tag = nltk.pos_tag([cand.lower()])[0][1]
+                cand_tag = nltk.pos_tag(tmps)[idx][1]
+            elif self.tagger == 'spacy':
+                #cand_tag = nlp(cand.lower())[0].tag_
+                cand_tag = nlp(' '.join(tmps))[idx].tag_
+            elif self.tagger == 'stanford':
+                cand_tag = self.stanford_tagger.tag(tmps)[idx][1]
+            if cand_tag == tag:
+                filtered_cands.append(cand)
+        return filtered_cands
+
+    def get_syn_cands(self, token, tag):
         if token not in self.synonyms:
             return []
         if token in self.stop_words:
@@ -1125,7 +1157,7 @@ class BlackBoxAttacker(object):
         else:
             return []
 
-    def get_sememe_cands(self, token, tag):
+    def get_sem_cands(self, token, tag):
         tag_list = ['JJ', 'NN', 'RB', 'VB']
         if self._word2id(token) not in range(1, 50000):
             return []
@@ -1146,45 +1178,11 @@ class BlackBoxAttacker(object):
         else:
             return []
 
-    def get_knn_cands(self, tokens, tag, idx):
-        cands = []
-        knn_cands = self._get_knn_words(tokens[idx])
-        tmps = tokens.copy()
-        for cand in knn_cands:
-            tmps[idx] = cand
-            #tokens[idx] = cand
-            #cand_tag = nltk.pos_tag(tokens)[idx][1]
-            if self.tagger == "nltk":
-                #cand_tag = nltk.pos_tag([cand.lower()])[0][1]
-                cand_tag = nltk.pos_tag(tmps)[idx][1]
-            elif self.tagger == 'spacy':
-                #cand_tag = nlp(cand.lower())[0].tag_
-                cand_tag = nlp(' '.join(tmps))[idx].tag_
-            elif self.tagger == 'stanford':
-                cand_tag = self.stanford_tagger.tag(tmps)[idx][1]
-            if cand_tag == tag:
-                cands.append(cand)
-        return cands
+    def get_emb_cands(self, tokens, tag, idx):
+        return self._get_knn_words(tokens[idx])
 
     def get_mlm_cands(self, tokens, tag, idx, sent_id=None):
-        cands = []
-        mlm_cands = self._get_mlm_cands(tokens, idx, n=self.n_mlm_cands, sent_id=sent_id)
-        mlm_cands = [recover_word_case(c, tokens[idx]) for c in mlm_cands]
-        tmps = tokens.copy()
-        for cand in mlm_cands:
-            tmps[idx] = cand
-            #cand_tag = nltk.pos_tag(tokens)[idx][1]
-            if self.tagger == "nltk":
-                #cand_tag = nltk.pos_tag([cand.lower()])[0][1]
-                cand_tag = nltk.pos_tag(tmps)[idx][1]
-            elif self.tagger == 'spacy':
-                #cand_tag = nlp(cand.lower())[0].tag_
-                cand_tag = nlp(' '.join(tmps))[idx].tag_
-            elif self.tagger == 'stanford':
-                cand_tag = self.stanford_tagger.tag(tmps)[idx][1]
-            if cand_tag == tag:
-                cands.append(cand)
-        return cands
+        return self._get_mlm_cands(tokens, idx, n=self.n_mlm_cands, sent_id=sent_id)
 
     def _get_mlm_cands(self, tokens, idx, n=50, sent_id=None):
         # load directly from preprocessed file
@@ -1212,8 +1210,8 @@ class BlackBoxAttacker(object):
     def update_cand_set(self, token, cand_set, cands, lower_set):
         for c in cands:
             if c.lower() not in lower_set and c.lower() != token.lower():
-                #candidate_set.append(c)
                 cand_set.append(recover_word_case(c, token))
+                #cand_set.append(c)
                 lower_set.add(c.lower())
         return cand_set, lower_set
 
@@ -1259,30 +1257,34 @@ class BlackBoxAttacker(object):
         lower_set = set()
         #print ("origin token: ", token)
         if 'sememe' in self.generators:
-            sememe_cands = self.get_sememe_cands(token, tag)
-            self.update_cand_set(token, candidate_set, sememe_cands, lower_set)
-            #print ("sememe:", sememe_cands)
+            sem_cands = self.get_sem_cands(token, tag)
+            sem_cands = self.post_process(tokens.copy(), sem_cands, tag, idx)
+            self.update_cand_set(token, candidate_set, sem_cands, lower_set)
+            #print ("sememe:", sem_cands)
         else:
-            sememe_cands = []
+            sem_cands = []
         if 'synonym' in self.generators:
-            synonyms = self.get_synonyms(token, tag)
-            self.update_cand_set(token, candidate_set, synonyms, lower_set)
-            #print ("syn:", synonyms)
+            syn_cands = self.get_syn_cands(token, tag)
+            syn_cands = self.post_process(tokens.copy(), syn_cands, tag, idx)
+            self.update_cand_set(token, candidate_set, syn_cands, lower_set)
+            #print ("syn:", syn_cands)
         else:
-            synonyms = []
+            syn_cands = []
         if 'embedding' in self.generators:
-            knn_cands = self.get_knn_cands(tokens.copy(), tag, idx)
-            self.update_cand_set(token, candidate_set, knn_cands, lower_set)
-            #print ("knn cands:\n", knn_cands)
+            emb_cands = self.get_emb_cands(tokens.copy(), tag, idx)
+            emb_cands = self.post_process(tokens.copy(), emb_cands, tag, idx)
+            self.update_cand_set(token, candidate_set, emb_cands, lower_set)
+            #print ("knn cands:\n", emb_cands)
         else:
-            knn_cands = []
+            emb_cands = []
         if 'mlm' in self.generators:
             mlm_cands = self.get_mlm_cands(tokens.copy(), tag, idx, sent_id=sent_id)
+            mlm_cands = self.post_process(tokens.copy(), mlm_cands, tag, idx)
             self.update_cand_set(token, candidate_set, mlm_cands, lower_set)
         else:
             mlm_cands = []
         if cache:
-            cache_data = {'sem_cands':sememe_cands, 'syn_cands':synonyms, 'emb_cands':knn_cands,
+            cache_data = {'sem_cands':sem_cands, 'syn_cands':syn_cands, 'emb_cands':emb_cands,
                           'mlm_cands':mlm_cands}
             
         return candidate_set, cache_data
