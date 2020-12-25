@@ -1126,6 +1126,8 @@ class BlackBoxAttacker(object):
         return self.pos_filter(tokens, cased_cands, tag, idx)
 
     def pos_filter(self, tokens, cands, tag, idx):
+        if not cands:
+            return []
         filtered_cands = []
         tmps = tokens.copy()
         #print ("token={}, tag={}".format(tokens[idx], tag))
@@ -1140,7 +1142,7 @@ class BlackBoxAttacker(object):
             #cand_tag = nlp(cand.lower())[0].tag_
             cand_tag = [nlp(' '.join(x))[idx].tag_ for x in cand_sents]
         elif self.tagger == 'stanford':
-            sent_tags = self.stanford_tagger.tag_sents(cand_sents)[idx][1]
+            sent_tags = self.stanford_tagger.tag_sents(cand_sents)
             cand_tags = [x[idx][1] for x in sent_tags]
 
 
