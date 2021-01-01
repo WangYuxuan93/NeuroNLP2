@@ -144,6 +144,15 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
     all_src_words = []
     all_heads_by_layer = []
 
+    arc_tp = 0.0  # index 0
+    arc_fp = 0.0  # index 1
+    arc_tn = 0.0  # index 2
+    arc_fn = 0.0  # index 3
+    
+    label_match = 0.0
+    label_true = 0.0
+    label_pred_num = 0.0
+
     if hasattr(network, 'use_elmo'):
         use_elmo = network.use_elmo
     else:
