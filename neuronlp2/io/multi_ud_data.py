@@ -350,7 +350,7 @@ def read_bucketed_data(source_paths: [str], word_alphabet: Alphabet, char_alphab
 
             data_tensor = {'WORD': words, 'CHAR': chars, 'POS': pos, 'HEAD': heads, 'TYPE': types,
                            'MASK': masks, 'SINGLE': single, 'LENGTH': lengths, 'PRETRAINED': pres,
-                           'SRC': np.array(src_words[bucket_id]), 'ERR_TYPE': np.array(err_types[bucket_id]),
+                           'SRC': np.array(src_words[bucket_id], dtype=object), 'ERR_TYPE': np.array(err_types[bucket_id]),
                            'LANG': lan_alphabet.get_index(lans[set_id])}
             data_tensors.append(data_tensor)
         all_tensors.append(data_tensors)

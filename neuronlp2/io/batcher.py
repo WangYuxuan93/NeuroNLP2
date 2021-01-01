@@ -190,9 +190,88 @@ def iterate_bucketed_batch(data, batch_size, unk_replace=0., shuffle=False):
 
 def iterate_data(data, batch_size, bucketed=False, unk_replace=0., shuffle=False, **kwargs):
     if bucketed:
-        return iterate_bucketed_batch(data, batch_size, unk_replace=unk_replace, shuffle=shuffle)
+        return iterate_bucketed_batch_sdp(data, batch_size, unk_replace=unk_replace, shuffle=shuffle)
     else:
-        return iterate_batch(data, batch_size, unk_replace=unk_replace, shuffle=shuffle)
+        return iterate_batch_sdp(data, batch_size, unk_replace=unk_replace, shuffle=shuffle)
+
+# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< sdp <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+def iterate_bucketed_batch_sdp(data, batch_size, unk_replace=0., shuffle=False):
+    data_tensor, bucket_sizes = data
+
+    bucket_indices = np.arange(len(bucket_sizes))
+    if shuffle:
+        np.random.shuffle((bucket_indices))
+
+    stack_keys = ['STACK_HEAD', 'CHILD', 'SIBLING', 'STACK_TYPE', 'SKIP_CONNECT', 'MASK_DEC']
+    exclude_keys = set(['SINGLE', 'WORD', 'LENGTH', 'SRC','HEAD','TYPE'] + stack_keys)
+    sdp_keys = ["HEAD", "TYPE"]
+    stack_keys = set(stack_keys)
+    for bucket_id in bucket_indices:
+        data = data_tensor[bucket_id]
+        bucket_size = bucket_sizes[bucket_id]
+        if bucket_size == 0:
+            continue
+
+        words = data['WORD']
+        single = data['SINGLE']
+        bucket_length = words.size(1)
+        if unk_replace:
+            ones = single.new_ones(bucket_size, bucket_length)
+            noise = single.new_empty(bucket_size, bucket_length).bernoulli_(unk_replace).long()
+            words = words * (ones - single * noise)
+
+        indices = None
+        if shuffle:
+            indices = torch.randperm(bucket_size).long()
+            indices = indices.to(words.device)
+        for start_idx in range(0, bucket_size, batch_size):
+            if shuffle:
+                excerpt = indices[start_idx:start_idx + batch_size]
+            else:
+                excerpt = slice(start_idx, start_idx + batch_size)
+
+            lengths = data['LENGTH'][excerpt]
+            batch_length = lengths.max().item()
+            batch = {'WORD': words[excerpt, :batch_length], 'LENGTH': lengths, "SRC":data["SRC"][excerpt]}#, 'SRC': data['SRC'][excerpt]}
+            batch.update({key: field[excerpt, :batch_length] for key, field in data.items() if key not in exclude_keys})
+            batch.update({key: field[excerpt, :2 * batch_length - 1] for key, field in data.items() if key in stack_keys})
+            batch.update({key: field[excerpt, :batch_length,:batch_length] for key, field in data.items() if key  in sdp_keys})
+            yield batch
+
+# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< sdp <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+def iterate_batch_sdp(data, batch_size, unk_replace=0., shuffle=False):
+    data, data_size = data
+    words = data['WORD']
+    single = data['SINGLE']
+    max_length = words.size(1)
+
+    if unk_replace:
+        ones = single.new_ones(data_size, max_length)
+        noise = single.new_empty(data_size, max_length).bernoulli_(unk_replace).long()
+        words = words * (ones - single * noise)
+
+    indices = None
+    if shuffle:
+        indices = torch.randperm(data_size).long()
+        indices = indices.to(words.device)
+
+    stack_keys = ['STACK_HEAD', 'CHILD', 'SIBLING', 'STACK_TYPE', 'SKIP_CONNECT', 'MASK_DEC']
+    exclude_keys = set(['SINGLE', 'WORD', 'LENGTH', 'SRC', 'HEAD', 'TYPE'] + stack_keys)
+    stack_keys = set(stack_keys)
+    sdp_keys = ['HEAD', 'TYPE']
+    for start_idx in range(0, data_size, batch_size):
+        if shuffle:
+            excerpt = indices[start_idx:start_idx + batch_size]
+        else:
+            excerpt = slice(start_idx, start_idx + batch_size)
+
+        lengths = data['LENGTH'][excerpt]
+        batch_length = lengths.max().item()
+        batch = {'WORD': words[excerpt, :batch_length], 'LENGTH': lengths, 'SRC': data['SRC'][excerpt]}
+        batch.update({key: field[excerpt, :batch_length] for key, field in data.items() if key not in exclude_keys})
+        batch.update({key: field[excerpt, :2 * batch_length - 1] for key, field in data.items() if key in stack_keys})
+        batch.update({key: field[excerpt, :batch_length,:batch_length] for key, field in data.items() if key  in sdp_keys})
+        yield batch
 
 
 if __name__ == '__main__':
