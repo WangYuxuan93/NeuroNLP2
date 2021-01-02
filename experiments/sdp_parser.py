@@ -755,12 +755,14 @@ def train(args):
             arc_loss, rel_loss = losses
             arc_loss = arc_loss.sum()
             rel_loss = rel_loss.sum()
-            loss_total = arc_loss + rel_loss
+            #loss_total = arc_loss + rel_loss
+            loss_total = (1-loss_interpolation) * arc_loss + loss_interpolation * rel_loss
             if statistics is not None:
-                arc_correct, rel_correct, total_arcs = statistics
-                overall_arc_correct += arc_correct.sum().cpu().numpy()
-                overall_rel_correct += rel_correct.sum().cpu().numpy()
-                overall_total_arcs += total_arcs.sum().cpu().numpy()
+                arc_correct, rel_correct, total_arcs, arc_pred_num = statistics
+                overall_arc_correct += arc_correct
+                overall_rel_correct += rel_correct
+                overall_total_arcs += total_arcs
+                overall_total_arcs_pred_num += arc_pred_num
                 
             if loss_type_token:
                 loss = loss_total.div(nwords)
