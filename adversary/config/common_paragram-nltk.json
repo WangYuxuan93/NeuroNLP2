@@ -22,9 +22,9 @@
   "n_mlm_cands": 50,
   "dynamic_mlm_cand": "",
   "wordpiece_backoff": "",
-  "cached_path": "",
+  "cached_path": " --cached_path /users2/yxwang/work/experiments/adversarial/data/ptb.test.all-cands.nltk.json ",
   "test": "/users2/yxwang/work/data/ptb/dependency-stanford-chen14/PTB_test_auto.conll",
-  "new_path": "",
+  "new_path": "none",
   "add_adv": "false",
   "use_random": ""
 }

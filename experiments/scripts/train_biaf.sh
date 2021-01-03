@@ -16,14 +16,17 @@ dir=/users2/yxwang/work/data/ptb/dependency-stanford-chen14
 #origin=glove-666
 #advdir=/users7/zllei/exp_data/models/adv/ptb/stack-ptr/$attack/biaf-glove-v50k-v0-black-ptb_test-0.15-v0
 model_types=roberta-666
-train=$dir/PTB_train_auto.conll
-train_adv=/users7/zllei/exp_data/models/adv/ptb/adv_gen/biaffine/${model_types}/biaf-glove-v50k-v0-black-ptb_test-0.15-v0/${model_types}@PTB_train_auto.conll_5617_50.0.adv@black-0.5-0-20.0-0.7-0.95-0.15.gold
+train=/users7/zllei/exp_data/train_augment.txt
+#train_adv=/users7/zllei/exp_data/models/adv/ptb/adv_gen/biaffine/$
+# {model_types}/biaf-glove-v50k-v0-black-ptb_test-0.15-v0/${model_types}@PTB_train_auto.conll_5617_50.0.adv@black-0.5-0-20.0-0.7-0.95-0.15.gold
 
-#train_adv=none
+#train_adv=/users7/zllei/exp_data/models/parsing/PTB/biaffine/revised-roberta
+# -666/tmp/augment_pred.txt
+train_adv=none
 #train=$dir/PTB_train_auto.conll
 dev=$dir/PTB_dev_auto.conll
 test=$dir/PTB_test_auto.conll
-#test=$advdir/${attack}@PTB_test_auto.conll.adv@black-0.5-0-20.0-0.7-0.95-0.15
+#test=/users7/zllei/script/augment.conll
 lans="en"
 
 tcdir=/users2/yxwang/work/experiments/robust_parser/lm/saves
@@ -92,10 +95,10 @@ mix=' --mix_datasets'
 form=conllx
 
 gpu=$1
-mode=train
-save=/users7/zllei/exp_data/models/parsing/PTB/adversial/biaffine/roberta-${seed}
+mode=parse
+save=/users7/zllei/exp_data/models/parsing/PTB/oot/biaffine/revised-roberta-666
 #save=/users2/yxwang/work/experiments/adv/parsers/saves/ptb-biaf-glove-v50k-v0
-log_file=${save}/log_${mode}_$(date "+%Y%m%d-%H%M%S").txt
+log_file=${save}/log_${mode}_augment_$(date "+%Y%m%d-%H%M%S").txt
 #log_file=/users7/zllei/exp_data/models/parsing/PTB/biaffine/log_${mode}_$
 # (date "+%Y%m%d-%H%M%S").txt
 

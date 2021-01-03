@@ -396,26 +396,32 @@ def train(args):
         data_paths=dev_path
     # ************ jeffrey: add adversarial sample ****************8
 
-    ratio = 0.5
+    ratio = 1.0
     seed = 1529
     np.random.seed(seed)
     allline = []
+    chosen_sents = []
     if train_adv_path != "none":
-        with open(train_path, "r", encoding="utf-8") as f:
-            allline = f.read().strip().split("\n\n")
-            with open(train_adv_path,"r",encoding="utf-8") as f1:
-                lines = f1.read().strip().split("\n\n")
-                # filter out sentences not attacked
-                # for sent in lines:
-                #     flag = False
-                #     for x in sent.split("\n"):
-                #         word=x.split("\t")
-                #         if word[9]!="_":
-                #             flag=True
-                #             break
-                #     if flag:
-                #         allline.append(sent)
-                allline.extend(lines)
+        if train_path !="none":
+            with open(train_path, "r", encoding="utf-8") as f:
+                allline = f.read().strip().split("\n\n")
+        with open(train_adv_path,"r",encoding="utf-8") as f1:
+            lines = f1.read().strip().split("\n\n")
+            # filter out sentences not attacked
+            # for sent in lines:
+                #******** 选择攻击成功的句子加入*********
+                # flag = False
+                # for x in sent.split("\n"):
+                #     word=x.split("\t")
+                #     if word[9]!="_":
+                #         flag=True
+                #         break
+                # if flag:
+                #     chosen_sents.append(sent)
+                # *************************end ***********
+            chosen_sents = lines
+        np.random.shuffle(chosen_sents)
+        allline.extend(chosen_sents[0:round(len(chosen_sents)*ratio)])  # ratio要确认好
         np.random.shuffle(allline)
         train_path=os.path.join(args.model_path, "merge_train.txt")
         with open(train_path, "w", encoding="utf-8") as f:
@@ -521,10 +527,14 @@ def train(args):
         data_reader = multi_ud_data
 
     if pretrained_lm in ['none','elmo']:
-        tokenizer = None 
+        tokenizer = None
     else:
-        print (lm_path)
+        print(lm_path)
         tokenizer = AutoTokenizer.from_pretrained(lm_path)
+        # ********** Jeffrey: add tokenizes for all bert ******
+        if False:
+            tokenizer.add_tokens(['nerves','lawyer'])
+        # ****************************************
 
     logger.info("##### Parser Type: {} #####".format(model_type))
     alg = 'transition' if model_type == 'StackPointer' else 'graph'
@@ -768,7 +778,7 @@ def train(args):
                 masks = data['MASK'].to(device)
                 nwords = masks.sum() - nbatch
 
-                losses, statistics = network(words, pres, chars, postags, heads, rels, 
+                losses, statistics = network(words, pres, chars, postags, heads, rels,
                             mask=masks, bpes=bpes, first_idx=first_idx, input_elmo=input_elmo,
                             lan_id=lan_id)
             else:
@@ -1179,7 +1189,7 @@ def parse(args):
     if args.output_filename:
         pred_filename = args.output_filename
     else:
-        pred_filename = os.path.join(result_path, 'transferability-same-embedding.txt')
+        pred_filename = os.path.join(result_path, 'parse_pred.txt')
         #pred_filename = os.path.join("/users7/zllei/exp_data/models/parsing/PTB/biaffine", 'transferability-same-embedding.txt')
     pred_writer.start(pred_filename)
     #gold_filename = os.path.join(result_path, 'gold.txt')

@@ -15,11 +15,12 @@ lmdir=/users2/yxwang/work/data/models
 #done
 dir=/users2/yxwang/work/data/ptb/dependency-stanford-chen14
 model_types=glove-400000-unk-1-666
-train=$dir/PTB_train_auto.conll
+#train=$dir/PTB_train_auto.conll
+train=/users7/zllei/exp_data/train_augment.txt
 #train=/users7/zllei/exp_data/models/adv/ptb/adv_gen/vocab/${model_types
 # }/biaf-glove-v50k-v0-black-ptb_test-0.15-v0/${model_types}@PTB_train_auto.conll_5617_50.0.adv@black-0.5-0-20.0-0.7-0.95-0.15.gold
-#train_adv=/users7/zllei/exp_data/models/adv/ptb/adv_gen/stack-ptr-vocab-size
-# /${model_types}/biaf-glove-v50k-v0-black-ptb_test-0.15-v0/${model_types}@PTB_train_auto.conll_5617_50.0.adv@black-0.5-0-20.0-0.7-0.95-0.15.gold
+#train_adv=/users7/zllei/exp_data/models/adv/ptb/adv_gen/ratio-experiment/1
+# .0/biaf-glove-v50k-v0-black-ptb_test-0.15-v0/${model_types}@PTB_train_auto.conll_5617_100.0.adv@black-0.5-0-20.0-0.7-0.95-0.15.gold
 train_adv=none
 dev=$dir/PTB_dev_auto.conll
 test=$dir/PTB_test_auto.conll
@@ -34,14 +35,14 @@ seed=666
 #seed=777
 #seed=999
 #seed=555
-batch=128
-evalbatch=128
+batch=32
+evalbatch=32
 epoch=1000
-patient=100
+patient=20
 lr='0.002'
-lm=none
+lm=roberta
 #lm=roberta-base
-lmpath=$lmdir/electra-base-discriminator
+lmpath=$lmdir/roberta-base
 #lmpath=$lmdir/roberta-large
 #lm=electra
 #lmpath=$lmdir/electra-large-discriminator
@@ -53,14 +54,14 @@ elmo_path=$lmdir/elmo
 
 random_word=''
 #random_word=' --use_random_static '
-pretrain_word=' --use_pretrained_static '
+pretrain_word=''
 #pretrain_word=' --use_pretrained_static '
 freeze=''
 #freeze=' --freeze'
 trim=''
 #trim=' --do_trim'
 #vocab_size=400000
-vocab_size=400000
+vocab_size=40000
 
 lmlr='2e-5'
 #lmlr=0
@@ -79,7 +80,7 @@ eps='1e-8'
 beam=1
 clip='5.0'
 l2decay='0'
-unk=1
+unk=0
 #unk='1.0'
 ndigit=''
 #ndigit=' --normalize_digits'
@@ -91,8 +92,8 @@ form=conllx
 
 gpu=$1
 mode=train
-save=/users7/zllei/exp_data/models/parsing/PTB/adversial/demo_delete_not_attack/glove-400000-unk-1-${seed}-no-adv
-log_file=${save}/log_${mode}_$(date "+%Y%m%d-%H%M%S").txt
+save=/users7/zllei/exp_data/models/parsing/PTB/oot/stackptr/revised-roberta-666
+log_file=${save}/log_${mode}_augment_$(date "+%Y%m%d-%H%M%S").txt
 #log_file=/users7/zllei/exp_data/models/parsing/PTB/stack-vocab/glove-$
 # {vocab_size}-unk-${unk}-${seed}/log_${mode}_ensemble_$(date "+%Y%m%d-%H%M%S").txt
 if [ -z $1 ];then
