@@ -46,26 +46,36 @@ def convert_tokens_to_ids(tokenizer, tokens):
 
     all_wordpiece_list = []
     all_first_index_list = []
-
+    convert_map = {"-LRB-":"(", "-RRB-":")", "-LCB-":"{", "-RCB-":"}", PAD:tokenizer.pad_token,
+                 ROOT: tokenizer.cls_token, END:tokenizer.sep_token}
     for toks in tokens:
+        """
+        toks = [toks_[0], toks_[1]]
+        for i in range(2,len(toks_)):
+            t = toks_[i]
+            # LCB, LRB, `` have left blank
+            if t in [PAD, ROOT, END, "-RCB-","-RRB-","--","''"] or t in string.punctuation:
+                toks.append(t)
+            else:
+                toks.append(" "+t)
+        """
         wordpiece_list = []
         first_index_list = []
-        for token in toks:
-            if token == PAD:
-                token = tokenizer.pad_token
-            elif token == ROOT:
-                token = tokenizer.cls_token
-            elif token == END:
-                token = tokenizer.sep_token
+        for i, token in enumerate(toks):
+            if token in convert_map:
+                token = convert_map[token]
+            if not (i == 1 or token in string.punctuation or token in ["--","''",
+                tokenizer.pad_token,tokenizer.cls_token, tokenizer.sep_token]):
+                token = " "+token
             wordpiece = tokenizer.tokenize(token)
             # add 1 for cls_token <s>
             first_index_list.append(len(wordpiece_list)+1)
             wordpiece_list += wordpiece
             #print (wordpiece)
-        #print (wordpiece_list)
+        #print ("wordpiece_list:\n", wordpiece_list)
         #print (first_index_list)
         bpe_ids = tokenizer.convert_tokens_to_ids(wordpiece_list)
-        #print (bpe_ids)
+        #print ("bpe_ids:\n", bpe_ids)
         bpe_ids = tokenizer.build_inputs_with_special_tokens(bpe_ids)
         #print (bpe_ids)
         all_wordpiece_list.append(bpe_ids)
