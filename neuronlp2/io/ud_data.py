@@ -61,8 +61,8 @@ def create_alphabets(alphabet_directory, train_paths, data_paths=None, max_vocab
     logger = get_logger("Create Alphabets")
     word_alphabet = Alphabet('word', default_value=True, singleton=True)
     char_alphabet = Alphabet('character', default_value=True)
-    pos_alphabet = Alphabet('pos')
-    type_alphabet = Alphabet('type')
+    pos_alphabet = Alphabet('pos',keep_growing=True)
+    type_alphabet = Alphabet('type',keep_growing=True)
     if not os.path.isdir(alphabet_directory):
         logger.info("Creating Alphabets: %s" % alphabet_directory)
 
