@@ -61,36 +61,50 @@ def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgra
 
 
 def convert_tokens_to_ids(tokenizer, tokens):
+
     all_wordpiece_list = []
     all_first_index_list = []
-
+    convert_map = {"-LRB-":"(", "-RRB-":")", "-LCB-":"{", "-RCB-":"}", PAD:tokenizer.pad_token,
+                 ROOT: tokenizer.cls_token, END:tokenizer.sep_token}
     for toks in tokens:
+        """
+        toks = [toks_[0], toks_[1]]
+        for i in range(2,len(toks_)):
+            t = toks_[i]
+            # LCB, LRB, `` have left blank
+            if t in [PAD, ROOT, END, "-RCB-","-RRB-","--","''"] or t in string.punctuation:
+                toks.append(t)
+            else:
+                toks.append(" "+t)
+        """
         wordpiece_list = []
         first_index_list = []
-        for token in toks:
-            if token == PAD:
-                token = tokenizer.pad_token
-            elif token == ROOT:
-                token = tokenizer.cls_token
-            elif token == END:
-                token = tokenizer.sep_token
+        for i, token in enumerate(toks):
+            if token in convert_map:
+                token = convert_map[token]
+            if not (i == 1 or token in string.punctuation or token in ["--","''",
+                tokenizer.pad_token,tokenizer.cls_token, tokenizer.sep_token]):
+                token = " "+token
             wordpiece = tokenizer.tokenize(token)
             # add 1 for cls_token <s>
-            first_index_list.append(len(wordpiece_list) + 1)
-            wordpiece_list += wordpiece  # print (wordpiece)
-        # print (wordpiece_list)
-        # print (first_index_list)
+            first_index_list.append(len(wordpiece_list)+1)
+            wordpiece_list += wordpiece
+            #print (wordpiece)
+        #print ("wordpiece_list:\n", wordpiece_list)
+        #print (first_index_list)
         bpe_ids = tokenizer.convert_tokens_to_ids(wordpiece_list)
-        # print (bpe_ids)
+        #print ("bpe_ids:\n", bpe_ids)
         bpe_ids = tokenizer.build_inputs_with_special_tokens(bpe_ids)
-        # print (bpe_ids)
+        #print (bpe_ids)
         all_wordpiece_list.append(bpe_ids)
         all_first_index_list.append(first_index_list)
 
     all_wordpiece_max_len = max([len(w) for w in all_wordpiece_list])
-    all_wordpiece = np.stack([np.pad(a, (0, all_wordpiece_max_len - len(a)), 'constant', constant_values=tokenizer.pad_token_id) for a in all_wordpiece_list])
+    all_wordpiece = np.stack(
+          [np.pad(a, (0, all_wordpiece_max_len - len(a)), 'constant', constant_values=tokenizer.pad_token_id) for a in all_wordpiece_list])
     all_first_index_max_len = max([len(i) for i in all_first_index_list])
-    all_first_index = np.stack([np.pad(a, (0, all_first_index_max_len - len(a)), 'constant', constant_values=0) for a in all_first_index_list])
+    all_first_index = np.stack(
+          [np.pad(a, (0, all_first_index_max_len - len(a)), 'constant', constant_values=0) for a in all_first_index_list])
 
     # (batch, max_bpe_len)
     input_ids = torch.from_numpy(all_wordpiece)
@@ -250,12 +264,14 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
     type_f = (2 * type_p * type_r) / (type_p + type_r)
     print("UP:%.4f    LP:%.4f\nUR:%.4f    LR:%.4f\nUF:%.4f    LF:%.4f\n" % (arc_p, type_p,arc_r,type_r,arc_f,type_f))
     # =============================================================
+    """
     print('W. Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%%' % (
         accum_ucorr, accum_lcorr, accum_total, accum_ucorr * 100 / accum_total, accum_lcorr * 100 / accum_total, accum_ucomlpete * 100 / accum_total_inst, accum_lcomplete * 100 / accum_total_inst))
     print('Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%%' % (
         accum_ucorr_nopunc, accum_lcorr_nopunc, accum_total_nopunc, accum_ucorr_nopunc * 100 / accum_total_nopunc, accum_lcorr_nopunc * 100 / accum_total_nopunc,
         accum_ucomlpete_nopunc * 100 / accum_total_inst, accum_lcomplete_nopunc * 100 / accum_total_inst))
     print('Root: corr: %d, total: %d, acc: %.2f%%' % (accum_root_corr, accum_total_root, accum_root_corr * 100 / accum_total_root))
+    """
     if accum_total_err == 0:
         accum_total_err = 1
     if accum_total_err_nopunc == 0:
@@ -872,6 +888,7 @@ def train(args):
                 else:
                     patient += 1
 
+                """
                 print('-' * 125)
                 print('best dev  W. Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%% (epoch: %d)' % (
                     best_ucorrect, best_lcorrect, best_total, best_ucorrect * 100 / best_total, best_lcorrect * 100 / best_total, best_ucomlpete * 100 / dev_total_inst,
@@ -888,6 +905,7 @@ def train(args):
                     test_ucorrect_nopunc, test_lcorrect_nopunc, test_total_nopunc, test_ucorrect_nopunc * 100 / test_total_nopunc, test_lcorrect_nopunc * 100 / test_total_nopunc,
                     test_ucomlpete_nopunc * 100 / test_total_inst, test_lcomplete_nopunc * 100 / test_total_inst, best_epoch))
                 print('best test Root: corr: %d, total: %d, acc: %.2f%% (epoch: %d)' % (test_root_correct, test_total_root, test_root_correct * 100 / test_total_root, best_epoch))
+                """
                 print('=' * 125)
                 print("     best dev             best test\n")
                 print("UP:%.4f  LP:%.4f||||UP:%.4f  LP:%.4f\n"

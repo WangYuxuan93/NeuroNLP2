@@ -1,3 +1,5 @@
+# -*- coding:utf-8 -*-
+
 __author__ = 'max'
 
 import os
@@ -58,40 +60,29 @@ def load_elmo(path):
     output_size = conf['lstm']['projection_dim'] * 2
     return elmo, output_size
 
-class RobustParser(nn.Module):
+class SDPBiaffineParser(nn.Module):
     def __init__(self, hyps, num_pretrained, num_words, num_chars, num_pos, num_labels,
-                 device=torch.device('cpu'), basic_word_embedding=True, 
+                 device=torch.device('cpu'), 
                  embedd_word=None, embedd_char=None, embedd_pos=None,
+                 use_pretrained_static=True, use_random_static=False,
+                 use_elmo=False, elmo_path=None, 
                  pretrained_lm='none', lm_path=None, num_lans=1, log_name='Network'):
-        super(RobustParser, self).__init__()
+        super(SDPBiaffineParser, self).__init__()
         self.hyps = hyps
         self.device = device
-        # for refinement
-        #self.refine_layers = hyps['refinement']['num_layers']
-        #self.use_separate_first_biaf = hyps['refinement']['use_separate_first_biaf']
-        #self.use_prev_layer_output = hyps['refinement']['use_prev_layer_output']
-        #if self.refine_layers == 1:
-        #    self.use_separate_first_biaf = False
+
         # for input embeddings
         use_pos = hyps['input']['use_pos']
         use_char = hyps['input']['use_char']
         word_dim = hyps['input']['word_dim']
         pos_dim = hyps['input']['pos_dim']
         char_dim = hyps['input']['char_dim']
-        self.basic_word_embedding = basic_word_embedding
+        self.use_pretrained_static = use_pretrained_static
+        self.use_random_static = use_random_static
+        self.use_elmo = use_elmo and elmo_path is not None
         self.pretrained_lm = pretrained_lm
-        self.mask_error_token = False
-        self.mask_error_input = False
-        self.mask_random_input = False
-        if self.pretrained_lm.startswith('tc_') and 'mask_error_token' in hyps['input']:
-            self.mask_error_token = hyps['input']['mask_error_token']
-        if self.pretrained_lm.startswith('tc_') and 'mask_error_input' in hyps['input']:
-            self.mask_error_input = hyps['input']['mask_error_input']
-        if 'mask_random_input' in hyps['input']:
-            self.mask_random_input = hyps['input']['mask_random_input']
-        self.error_prob = 0
-        if 'error_prob' in hyps['input']:
-            self.error_prob = hyps['input']['error_prob']
+        self.only_pretrain_static = use_pretrained_static and not use_random_static
+
         # for biaffine layer
         self.arc_mlp_dim = hyps['biaffine']['arc_mlp_dim']
         self.rel_mlp_dim = hyps['biaffine']['rel_mlp_dim']
@@ -106,7 +97,7 @@ class RobustParser(nn.Module):
         num_layers = hyps['input_encoder']['num_layers']
         p_rnn = hyps['input_encoder']['p_rnn']
         self.p_rnn = p_rnn
-        self.lan_emb_as_input = hyps['input_encoder']['lan_emb_as_input']
+        self.lan_emb_as_input = False
         lan_emb_size = hyps['input_encoder']['lan_emb_size']
         #self.end_word_id = end_word_id
 
@@ -115,65 +106,59 @@ class RobustParser(nn.Module):
         logger.info("Network: %s, hidden=%d, act=%s" % (model, hidden_size, activation))
         logger.info("##### Embeddings (POS tag: %s, Char: %s) #####" % (use_pos, use_char))
         logger.info("dropout(in, out): (%.2f, %.2f)" % (p_in, p_out))
-        logger.info("Use Randomly Init Word Emb: %s" % (basic_word_embedding))
+        logger.info("Use Randomly Init Word Emb: %s" % (use_random_static))
+        logger.info("Use Pretrained Word Emb: %s" % (use_pretrained_static))
         logger.info("##### Input Encoder (Type: %s, Layer: %d, Hidden: %d) #####" % (input_encoder_name, num_layers, hidden_size))
         logger.info("Langauge embedding as input: %s (size: %d)" % (self.lan_emb_as_input, lan_emb_size))
         # Initialization
         # to collect all params other than langauge model
         self.basic_parameters = []
-        if not self.pretrained_lm in ['none', 'elmo']:
-            """
-            if self.pretrained_lm == 'bert':
-                self.lm_encoder = BertModel.from_pretrained(lm_path)
-            elif self.pretrained_lm == 'roberta':
-                self.lm_encoder = RobertaModel.from_pretrained(lm_path)
-            elif self.pretrained_lm == 'electra':
-                self.lm_encoder = ElectraModel.from_pretrained(lm_path)
-            elif self.pretrained_lm == 'xlm-r':
-                self.lm_encoder = XLMRobertaModel.from_pretrained(lm_path)
-            """
-            tokenizer = AutoTokenizer.from_pretrained(lm_path)
-            self.mask_token_id = tokenizer.mask_token_id
-            self.pad_token_id = tokenizer.pad_token_id
-            self.cls_token_id = tokenizer.cls_token_id
-            self.sep_token_id = tokenizer.sep_token_id
-            if self.pretrained_lm.startswith('tc_'):
-                config = AutoConfig.from_pretrained(lm_path, output_hidden_states=True)
-                self.lm_encoder = AutoModelForTokenClassification.from_pretrained(lm_path, config=config) 
-            else:
-                self.lm_encoder = AutoModel.from_pretrained(lm_path)
-            
-            logger.info("Pretrained Language Model Type: %s" % (self.lm_encoder.config.model_type))
-            logger.info("Pretrained Language Model Path: %s" % (lm_path))
-            logger.info("Mask out error tokens: %s" % self.mask_error_token)
-            logger.info("Mask random input tokens: %s" % self.mask_random_input)
-            logger.info("Replace error input to LM by [MASK]: %s (error prob:%f)" % (self.mask_error_input, self.error_prob))
+        # collect all params for language model
+        self.lm_parameters = []
+        # for Pretrained LM
+        if self.pretrained_lm != 'none':
+            self.lm_encoder = AutoModel.from_pretrained(lm_path)
+            self.lm_parameters.append(self.lm_encoder)
+            logger.info("[LM] Pretrained Language Model Type: %s" % (self.lm_encoder.config.model_type))
+            logger.info("[LM] Pretrained Language Model Path: %s" % (lm_path))
             lm_hidden_size = self.lm_encoder.config.hidden_size
             #assert lm_hidden_size == word_dim
             #lm_hidden_size = 768
-            self.basic_word_embed = None
-            self.word_embed = None
-        elif self.pretrained_lm == 'elmo':
-            self.lm_encoder, lm_hidden_size = load_elmo(lm_path)
-            self.basic_word_embed = None
-            self.word_embed = None
-            logger.info("Pretrained Language Model Type: ELMo")
-            logger.info("Pretrained Language Model Path: %s" % (lm_path))
-        elif self.basic_word_embedding:
-            self.basic_word_embed = nn.Embedding(num_words, word_dim, padding_idx=1)
-            self.word_embed = nn.Embedding(num_pretrained, word_dim, _weight=embedd_word, padding_idx=1)
-            self.basic_parameters.append(self.basic_word_embed)
-            self.basic_parameters.append(self.word_embed)
         else:
-            self.basic_word_embed = None
-            self.word_embed = nn.Embedding(num_words, word_dim, _weight=embedd_word, padding_idx=1)
-            self.basic_parameters.append(self.word_embed)
+            self.lm_encoder = None
+            lm_hidden_size = 0
+        # for ELMo
+        if self.use_elmo:
+            self.elmo_encoder, elmo_hidden_size = load_elmo(elmo_path)
+            self.lm_parameters.append(self.elmo_encoder)
+            logger.info("[ELMo] Pretrained ELMo Path: %s" % (elmo_path))
+        else:
+            self.elmo_encoder = None
+            elmo_hidden_size = 0
+        # for pretrianed static word embedding
+        if self.use_pretrained_static:
+            if self.only_pretrain_static:
+                num_pretrained = num_words
+                logger.info("[Pretrained Static] Only use Pretrained static embeddings. (size=%d)" % num_pretrained)
+            else:
+                logger.info("[Pretrained Static] Pretrained static embeddings size: %d" % num_pretrained)
+            self.pretrained_word_embed = nn.Embedding(num_pretrained, word_dim, _weight=embedd_word, padding_idx=1)
+            self.basic_parameters.append(self.pretrained_word_embed)
+            pretrained_static_size = word_dim
+        else:
+            self.pretrained_word_embed = None
+            pretrained_static_size = 0
+        # for randomly initialized static word embedding
+        if self.use_random_static:
+            logger.info("[Random Static] Randomly initialized static embeddings size: %d" % num_words)
+            self.random_word_embed = nn.Embedding(num_words, word_dim, padding_idx=1)
+            self.basic_parameters.append(self.random_word_embed)
+            random_static_size = word_dim
+        else:
+            self.random_word_embed = None
+            random_static_size = 0
 
-        if self.lan_emb_as_input or input_encoder_name == 'CPGLSTM':
-            self.language_embed = nn.Embedding(num_lans, lan_emb_size)
-            self.basic_parameters.append(self.language_embed)
-        else:
-            self.language_embed = None
+        self.language_embed = None
 
         #self.word_embed.weight.requires_grad=False
         self.pos_embed = nn.Embedding(num_pos, pos_dim, _weight=embedd_pos, padding_idx=1) if use_pos else None
@@ -192,12 +177,7 @@ class RobustParser(nn.Module):
         self.dropout_out = nn.Dropout2d(p=p_out)
         self.num_labels = num_labels
 
-        if not self.pretrained_lm == 'none':
-            enc_dim = lm_hidden_size
-        else:
-            enc_dim = word_dim
-        if self.lan_emb_as_input:
-            enc_dim += lan_emb_size
+        enc_dim = lm_hidden_size + elmo_hidden_size + pretrained_static_size + random_static_size
         if use_char:
             enc_dim += char_dim
         if use_pos:
@@ -281,7 +261,8 @@ class RobustParser(nn.Module):
             self.activation = nn.LeakyReLU(0.1)
         else:
             self.activation = nn.Tanh()
-        self.criterion = nn.CrossEntropyLoss(reduction='none')
+        self.criterion_arc = nn.BCELoss(reduction='none')
+        self.criterion_label = nn.CrossEntropyLoss(reduction='none')
         self.reset_parameters(embedd_word, embedd_char, embedd_pos)
         logger.info('# of Parameters: %d' % (sum([param.numel() for param in self.parameters()])))
 
@@ -308,23 +289,30 @@ class RobustParser(nn.Module):
         #print (params)
         return itertools.chain(*params)
 
+    def _lm_parameters(self):
+        if not self.lm_parameters:
+            return None
+        if len(self.lm_parameters) == 1:
+            return self.lm_parameters[0].parameters()
+        else:
+            params = [p.parameters() for p in self.lm_parameters]
+            return itertools.chain(*params)
+
     def reset_parameters(self, embedd_word, embedd_char, embedd_pos):
-        if embedd_word is None and self.word_embed is not None:
-            nn.init.uniform_(self.word_embed.weight, -0.1, 0.1)
         if embedd_char is None and self.char_embed is not None:
             nn.init.uniform_(self.char_embed.weight, -0.1, 0.1)
         if embedd_pos is None and self.pos_embed is not None:
             nn.init.uniform_(self.pos_embed.weight, -0.1, 0.1)
-        if self.basic_word_embed is not None:
-            nn.init.uniform_(self.basic_word_embed.weight, -0.1, 0.1)
+        if self.random_word_embed is not None:
+            nn.init.uniform_(self.random_word_embed.weight, -0.1, 0.1)
         if self.language_embed is not None:
             nn.init.uniform_(self.language_embed.weight, -0.1, 0.1)
 
         with torch.no_grad():
-            if self.word_embed is not None:
-                self.word_embed.weight[self.word_embed.padding_idx].fill_(0)
-            if self.basic_word_embed is not None:
-                self.basic_word_embed.weight[self.basic_word_embed.padding_idx].fill_(0)
+            if self.pretrained_word_embed is not None:
+                self.pretrained_word_embed.weight[self.pretrained_word_embed.padding_idx].fill_(0)
+            if self.random_word_embed is not None:
+                self.random_word_embed.weight[self.random_word_embed.padding_idx].fill_(0)
             if self.char_embed is not None:
                 self.char_embed.weight[self.char_embed.padding_idx].fill_(0)
             if self.pos_embed is not None:
@@ -350,63 +338,6 @@ class RobustParser(nn.Module):
             nn.init.xavier_uniform_(self.input_encoder.weight)
             nn.init.constant_(self.input_encoder.bias, 0.)
 
-    def _mask_error_token(self, hidden_states, logits, debug=False):
-        # logits: (batch, max_bpe_len)
-        preds = torch.argmax(logits, -1)
-        ones = torch.ones_like(preds)
-        zeros = torch.zeros_like(preds)
-        mask_ = torch.where(preds == zeros, ones, zeros)
-        # (batch, max_bpe_len, hidden_size)
-        mask = mask_.unsqueeze(-1).expand_as(hidden_states)
-        if debug:
-            print ("preds:\n", preds)
-            print ("mask_:\n", mask_)
-        return hidden_states * mask
-
-    def _mask_error_input(self, input_ids, logits, debug=False):
-        # logits: (batch, max_bpe_len)
-        preds = torch.argmax(logits, -1)
-        mask_ids = input_ids.new_full(input_ids.size(), self.mask_token_id)
-        pad_ids = input_ids.new_full(input_ids.size(), self.pad_token_id)
-        cls_ids = input_ids.new_full(input_ids.size(), self.cls_token_id)
-        sep_ids = input_ids.new_full(input_ids.size(), self.sep_token_id)
-        zeros = torch.zeros_like(input_ids)
-        ones = torch.ones_like(input_ids)
-        # = 0 if token is pad/cls/sep
-        pad_mask = torch.where(input_ids == pad_ids, zeros, ones)
-        cls_mask = torch.where(input_ids == cls_ids, zeros, ones)
-        sep_mask = torch.where(input_ids == sep_ids, zeros, ones)
-        # if preds == 0 (tag = 'O'), keep id unchanged, else (tag = 'E') change it to mask
-        # keep paddings/cls/sep unchanged
-        masked_input_ids = torch.where(preds*pad_mask*cls_mask*sep_mask==zeros, input_ids, mask_ids)
-        if debug:
-            print ("preds:\n", preds)
-            print ("masked_input_ids:\n", masked_input_ids)
-        return masked_input_ids
-
-    def _mask_random_input(self, input_ids, debug=False):
-        # input_ids: (batch, max_bpe_len)
-        error_mask = input_ids.new_full(input_ids.size(), self.error_prob, dtype=torch.float)
-        # randomly replace some tokens with [mask] while training
-        # 1 indicates error tokens
-        err_mask = torch.bernoulli(error_mask)
-        mask_ids = input_ids.new_full(input_ids.size(), self.mask_token_id)
-        pad_ids = input_ids.new_full(input_ids.size(), self.pad_token_id)
-        cls_ids = input_ids.new_full(input_ids.size(), self.cls_token_id)
-        sep_ids = input_ids.new_full(input_ids.size(), self.sep_token_id)
-        zeros = torch.zeros_like(input_ids)
-        ones = torch.ones_like(input_ids)
-        # = 0 if token is pad/cls/sep
-        pad_mask = torch.where(input_ids == pad_ids, zeros, ones)
-        cls_mask = torch.where(input_ids == cls_ids, zeros, ones)
-        sep_mask = torch.where(input_ids == sep_ids, zeros, ones)
-        # if err_mask == 0 (tag = 'O'), keep id unchanged, else (tag = 'E') change it to mask
-        # keep paddings/cls/sep unchanged
-        masked_input_ids = torch.where(err_mask*pad_mask*cls_mask*sep_mask==zeros, input_ids, mask_ids)
-        if debug:
-            print ("err_mask:\n", err_mask)
-            print ("masked_input_ids:\n", masked_input_ids)
-        return masked_input_ids
 
     def _lm_embed(self, input_ids=None, first_index=None, debug=False):
         """
@@ -414,64 +345,40 @@ class RobustParser(nn.Module):
             input_ids: (batch, max_bpe_len)
             first_index: (batch, seq_len)
         """
-        if self.pretrained_lm == 'elmo':
-            output = self.lm_encoder(input_ids)['elmo_representations'][0]
-        else:
-            if self.pretrained_lm.startswith('tc_'):
-                if self.mask_error_input:
-                    if self.training:
-                        masked_input_ids = self._mask_random_input(input_ids)
-                        # logits: (batch, max_bpe_len, lm_encoder.config.num_labels)
-                        logits, all_hidden_states = self.lm_encoder(masked_input_ids)
-                        lm_output = all_hidden_states[-1]
-                    else:
-                        logits, all_hidden_states = self.lm_encoder(input_ids)
-                        masked_input_ids = self._mask_error_input(input_ids, logits)
-                        # run lm encoder again, with error tokens replaced by [mask]
-                        # do not batchprop to the first iter
-                        logits, all_hidden_states = self.lm_encoder(masked_input_ids.detach())
-                        # (batch, max_bpe_len, hidden_size)
-                        lm_output = all_hidden_states[-1]
-                else:
-                    if self.mask_random_input:
-                        input_ids = self._mask_random_input(input_ids)
-                    # logits: (batch, max_bpe_len, lm_encoder.config.num_labels)
-                    logits, all_hidden_states = self.lm_encoder(input_ids)
-                    # (batch, max_bpe_len, hidden_size)
-                    lm_output = all_hidden_states[-1]
-                    if self.mask_error_token:
-                        lm_output = self._mask_error_token(lm_output, logits)
-            else:
-                if self.mask_random_input:
-                    input_ids = self._mask_random_input(input_ids)
-                # (batch, max_bpe_len, hidden_size)
-                lm_output = self.lm_encoder(input_ids)[0]
-            size = list(first_index.size()) + [lm_output.size()[-1]]
-            # (batch, seq_len, hidden_size)
-            output = lm_output.gather(1, first_index.unsqueeze(-1).expand(size))
-            if debug:
-                print (lm_output.size())
-                print (output.size())
+        # (batch, max_bpe_len, hidden_size)
+        lm_output = self.lm_encoder(input_ids)[0]
+        size = list(first_index.size()) + [lm_output.size()[-1]]
+        # (batch, seq_len, hidden_size)
+        output = lm_output.gather(1, first_index.unsqueeze(-1).expand(size))
+        if debug:
+            print (lm_output.size())
+            print (output.size())
         return output
 
+
     def _embed(self, input_word, input_pretrained, input_char, input_pos, bpes=None, 
-                first_idx=None, lan_id=None):
+                first_idx=None, input_elmo=None, lan_id=None):
         batch_size, seq_len = input_word.size()
-        if not self.pretrained_lm == 'none':
-            enc_word = self._lm_embed(bpes, first_idx)
-        elif self.basic_word_embedding:
-            # [batch, length, word_dim]
-            pre_word = self.word_embed(input_pretrained)
-            enc_word = pre_word
-            basic_word = self.basic_word_embed(input_word)
-            #print ("pre_word:\n", pre_word)
-            #print ("basic_word:\n", basic_word)
-            #basic_word = self.dropout_in(basic_word)
-            enc_word = enc_word + basic_word
+        word_embeds = []
+        if self.random_word_embed is not None:
+            random_embed = self.random_word_embed(input_word)
+            word_embeds.append(random_embed)
+        if self.pretrained_word_embed is not None:
+            if self.only_pretrain_static:
+                pretrained_embed = self.pretrained_word_embed(input_word)
+            else:
+                pretrained_embed = self.pretrained_word_embed(input_pretrained)
+            word_embeds.append(pretrained_embed)
+        if self.lm_encoder is not None:
+            lm_embed = self._lm_embed(bpes, first_idx)
+            word_embeds.append(lm_embed)
+        if self.elmo_encoder is not None:
+            elmo_embed = self.elmo_encoder(input_elmo)['elmo_representations'][0]
+            word_embeds.append(elmo_embed)
+        if len(word_embeds) == 1:
+            enc_word = word_embeds[0]
         else:
-            # if not basic word emb, still use input_word as index
-            pre_word = self.word_embed(input_word)
-            enc_word = pre_word
+            enc_word = torch.cat(word_embeds, dim=-1)
 
         if self.lan_emb_as_input:
             # (lan_emb_size)
@@ -580,26 +487,27 @@ class RobustParser(nn.Module):
         rels: (batch, seq_len)
         mask: (batch, seq_len)
         """
-        total_arcs = mask.sum()
+        total_arcs = heads.sum()
         # (batch, seq_len)
-        arc_preds = arc_logits.argmax(-2)
+        arc_preds = arc_logits.ge(0.5).float()
         # (batch_size, seq_len, seq_len, n_rels)
         transposed_rel_logits = rel_logits.permute(0, 2, 3, 1)
         # (batch_size, seq_len, seq_len)
-        rel_ids = transposed_rel_logits.argmax(-1)
-        # (batch, seq_len)
-        rel_preds = rel_ids.gather(-1, heads.unsqueeze(-1)).squeeze()
+        rel_preds = transposed_rel_logits.argmax(-1)
 
         ones = torch.ones_like(heads)
         zeros = torch.zeros_like(heads)
-        arc_correct = (torch.where(arc_preds==heads, ones, zeros) * mask).sum()
-        rel_correct = (torch.where(rel_preds==rels, ones, zeros) * mask).sum()
+        arc_correct = (torch.where(arc_preds==heads, ones, zeros) * heads).sum()
+        rel_correct = (torch.where(rel_preds==rels, ones, zeros) * heads * arc_preds).sum()
+        # ========================== f1 ================================
+        arc_preds = arc_preds * mask
+        arc_pred_num = arc_preds.sum()
+        # =============================================================
 
         if debug:
             print ("arc_logits:\n", arc_logits)
             print ("arc_preds:\n", arc_preds)
             print ("heads:\n", heads)
-            print ("rel_ids:\n", rel_ids)
             print ("rel_preds:\n", rel_preds)
             print ("rels:\n", rels)
             print ("mask:\n", mask)
@@ -607,7 +515,7 @@ class RobustParser(nn.Module):
             print ("arc_correct:\n", arc_correct)
             print ("rel_correct:\n", rel_correct)
 
-        return arc_correct.unsqueeze(0), rel_correct.unsqueeze(0), total_arcs.unsqueeze(0)
+        return arc_correct.cpu().numpy(), rel_correct.cpu().numpy(), total_arcs.cpu().numpy(),arc_pred_num
 
     def _argmax(self, logits):
         """
@@ -625,24 +533,19 @@ class RobustParser(nn.Module):
 
 
     def forward(self, input_word, input_pretrained, input_char, input_pos, heads, rels, 
-                bpes=None, first_idx=None, mask=None, lan_id=None):
+                bpes=None, first_idx=None, input_elmo=None, mask=None, lan_id=None):
         # Pre-process
         batch_size, seq_len = input_word.size()
         # (batch, seq_len), seq mask, where at position 0 is 0
         root_mask = torch.arange(seq_len, device=heads.device).gt(0).float().unsqueeze(0) * mask
         # (batch, seq_len, seq_len)
         mask_3D = (root_mask.unsqueeze(-1) * mask.unsqueeze(1))
-        # (batch, seq_len, seq_len)
-        heads_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.int32, device=heads.device)
-        heads_3D.scatter_(-1, heads.unsqueeze(-1), 1)
-        heads_3D = heads_3D * mask_3D
-        # (batch, seq_len, seq_len)
-        rels_3D = torch.zeros((batch_size, seq_len, seq_len), dtype=torch.long, device=heads.device)
-        rels_3D.scatter_(-1, heads.unsqueeze(-1), rels.unsqueeze(-1))
+
+
 
         # (batch, seq_len, embed_size)
         embeddings = self._embed(input_word, input_pretrained, input_char, input_pos, 
-                                bpes=bpes, first_idx=first_idx, lan_id=lan_id)
+                                bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id)
         # (batch, seq_len, hidden_size)
         encoder_output, _ = self._input_encoder(embeddings, mask=mask, lan_id=lan_id)
 
@@ -653,13 +556,14 @@ class RobustParser(nn.Module):
 
         # mask invalid position to -inf for log_softmax
         if mask is not None:
-            minus_mask = mask.eq(0).unsqueeze(2)
+            minus_mask = mask_3D.eq(0)
             arc_logits = arc_logits.masked_fill(minus_mask, float('-inf'))
         # arc_loss shape [batch, length_c]
-        arc_loss = self.criterion(arc_logits, heads)
+        arc_logits = torch.sigmoid(arc_logits)
+        arc_loss = self.criterion_arc(arc_logits, heads.float())
         # mask invalid position to 0 for sum loss
         if mask is not None:
-            arc_loss = arc_loss * mask
+            arc_loss = arc_loss * mask_3D
         # [batch, length - 1] -> [batch] remove the symbolic root
         arc_loss = arc_loss[:, 1:].sum(dim=1)
 
@@ -671,18 +575,19 @@ class RobustParser(nn.Module):
         # (batch, n_rels, seq_len, seq_len)
         rel_logits = self.rel_attention(rel_c, rel_h)
         #rel_loss = self.criterion(out_type.transpose(1, 2), rels)
-        rel_loss = (self.criterion(rel_logits, rels_3D) * heads_3D).sum(-1)
+        rel_loss = self.criterion_label(rel_logits, rels)
         if mask is not None:
-            rel_loss = rel_loss * mask
+            rel_loss = rel_loss * mask_3D
+        rel_loss = rel_loss * heads
         rel_loss = rel_loss[:, 1:].sum(dim=1)
 
-        statistics = self.accuracy(arc_logits, rel_logits, heads, rels, root_mask)
+        statistics = self.accuracy(arc_logits, rel_logits, heads, rels, mask_3D)
 
         return (arc_loss, rel_loss), statistics
 
 
     def decode(self, input_word, input_pretrained, input_char, input_pos, mask=None, 
-                bpes=None, first_idx=None, lan_id=None, leading_symbolic=0):
+                bpes=None, first_idx=None, input_elmo=None, lan_id=None, leading_symbolic=0):
         """
         Args:
             input_word: Tensor
@@ -708,13 +613,13 @@ class RobustParser(nn.Module):
         batch_size, seq_len = input_word.size()
         # (batch, seq_len), seq mask, where at position 0 is 0
         root_mask = torch.arange(seq_len, device=input_word.device).gt(0).float().unsqueeze(0) * mask
-
+        mask_3D = (root_mask.unsqueeze(-1) * mask.unsqueeze(1))
         # (batch, seq_len, embed_size)
         embeddings = self._embed(input_word, input_pretrained, input_char, input_pos, 
-                                bpes=bpes, first_idx=first_idx, lan_id=lan_id)
+                                bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id)
         # (batch, seq_len, hidden_size)
-        encoder_output, _ = self._input_encoder(embeddings, mask=mask, lan_id=lan_id) 
-        
+        encoder_output, _ = self._input_encoder(embeddings, mask=mask, lan_id=lan_id)
+
         # (batch, seq_len, arc_mlp_dim)
         arc_h, arc_c = self._arc_mlp(encoder_output)
         # (batch, seq_len, seq_len)
@@ -726,24 +631,23 @@ class RobustParser(nn.Module):
         rel_logits = self.rel_attention(rel_c, rel_h)
         # (batch, n_rels, seq_len_c, seq_len_h)
         # => (batch, length_h, length_c, num_labels)
-        rel_logits = rel_logits.permute(0,3,2,1)
+        #rel_logits = rel_logits.permute(0, 3, 2, 1)
 
         if mask is not None:
-            minus_mask = mask.eq(0).unsqueeze(2)
+            minus_mask = mask_3D.eq(0)
             arc_logits.masked_fill_(minus_mask, float('-inf'))
-        # arc_loss shape [batch, length_h, length_c]
-        arc_loss = F.log_softmax(arc_logits, dim=1)
-        # rel_loss shape [batch, length_h, length_c, num_labels]
-        rel_loss = F.log_softmax(rel_logits, dim=3).permute(0, 3, 1, 2)
-        # [batch, num_labels, length_h, length_c]
-        energy = arc_loss.unsqueeze(1) + rel_loss
 
-        # compute lengths
-        length = mask.sum(dim=1).long().cpu().numpy()
-        return parser.decode_MST(energy.cpu().numpy(), length, leading_symbolic=leading_symbolic, labeled=True)
+        arc_preds = torch.sigmoid(arc_logits).ge(0.5).float()  # 多个arc
+        # (batch_size, len_c, len_h, n_rels)
+        transposed_type_logits = rel_logits.permute(0, 2, 3, 1)  # permute重新排列张量
+        # (batch_size, seq_len, seq_len)
+        type_preds = transposed_type_logits.argmax(-1)  # 在只有一个label的情况下找到最大的索引
 
-    def get_probs(self, input_word, input_pretrained, input_char, input_pos, mask=None, 
-                bpes=None, first_idx=None, lan_id=None, leading_symbolic=0):
+        return arc_preds * mask_3D, type_preds
+
+
+    def get_probs(self, input_word, input_pretrained, input_char, input_pos, mask=None,
+                bpes=None, first_idx=None, input_elmo=None, lan_id=None, leading_symbolic=0):
         """
         Args:
             input_word: Tensor
@@ -772,7 +676,7 @@ class RobustParser(nn.Module):
 
         # (batch, seq_len, embed_size)
         embeddings = self._embed(input_word, input_pretrained, input_char, input_pos, 
-                                bpes=bpes, first_idx=first_idx, lan_id=lan_id)
+                                bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id)
         # (batch, seq_len, hidden_size)
         encoder_output, _ = self._input_encoder(embeddings, mask=mask, lan_id=lan_id) 
         
@@ -800,7 +704,7 @@ class RobustParser(nn.Module):
         return arc_probs, rel_probs
 
     def get_logits(self, input_word, input_pretrained, input_char, input_pos, mask=None, 
-                bpes=None, first_idx=None, lan_id=None, leading_symbolic=0):
+                bpes=None, first_idx=None, input_elmo=None, lan_id=None, leading_symbolic=0):
         """
         Args:
             input_word: Tensor
@@ -829,7 +733,7 @@ class RobustParser(nn.Module):
 
         # (batch, seq_len, embed_size)
         embeddings = self._embed(input_word, input_pretrained, input_char, input_pos, 
-                                bpes=bpes, first_idx=first_idx, lan_id=lan_id)
+                                bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id)
         # (batch, seq_len, hidden_size)
         encoder_output, _ = self._input_encoder(embeddings, mask=mask, lan_id=lan_id) 
         

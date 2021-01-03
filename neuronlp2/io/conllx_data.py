@@ -21,9 +21,8 @@ _buckets = [10, 15, 20, 25, 30, 35, 40, 50, 60, 70, 140]
 
 
 def create_alphabets(alphabet_directory, train_path, data_paths=None, max_vocabulary_size=100000, embedd_dict=None,
-                     min_occurrence=1, normalize_digits=True, pos_idx=4, expand_with_pretrained=False, task_type='dp',
-                     log_name="creat alphabets"):
-
+                     min_occurrence=1, normalize_digits=True, pos_idx=4, expand_with_pretrained=False,
+                     log_name="Create Alphabets", task_type="dp"):
     
     def expand_vocab_with_pretrained():
         logger.info("Expanding word vocab with pretrained words")

@@ -32,8 +32,8 @@ def load_embedding_dict(embedding, embedding_path, normalize_digits=True):
         # loading GloVe
         embedd_dim = -1
         embedd_dict = OrderedDict()
-
         with gzip.open(embedding_path, 'rt', encoding="utf-8") as file:
+            file.readline()  # 忽略第一句
             for line in file:
                 line = line.strip()
                 if len(line) == 0:

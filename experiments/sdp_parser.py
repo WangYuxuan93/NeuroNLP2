@@ -14,6 +14,7 @@ except:
 import time
 import argparse
 import math
+import string
 import numpy as np
 import torch
 import random
@@ -23,16 +24,15 @@ from torch.nn.utils import clip_grad_norm_
 from neuronlp2.nn.utils import total_grad_norm
 from neuronlp2.io import get_logger, conllx_data, ud_data #, iterate_data
 from neuronlp2.io import ud_stacked_data, conllx_stacked_data
-from neuronlp2.models.robust_parsing import RobustParser
-from neuronlp2.models.stack_pointer import StackPtrParser
-from neuronlp2.models.ensemble import EnsembleParser
+from neuronlp2.models.sdp_biaffine_parser import SDPBiaffineParser
+#from neuronlp2.models.ensemble_parser import EnsembleParser
 from neuronlp2.optim import ExponentialScheduler, StepScheduler, AttentionScheduler
 from neuronlp2 import utils
-from neuronlp2.io import CoNLLXWriter
-from neuronlp2.tasks import parser
+from neuronlp2.io import CoNLLXWriterSDP
+from neuronlp2.tasks import parser_sdp
 from neuronlp2.nn.utils import freeze_embedding
 from neuronlp2.io import common
-from transformers import *
+from transformers import AutoTokenizer
 from neuronlp2.io.common import PAD, ROOT, END
 from neuronlp2.io.batcher import multi_language_iterate_data, iterate_data
 from neuronlp2.io import multi_ud_data
@@ -61,26 +61,36 @@ def convert_tokens_to_ids(tokenizer, tokens):
 
     all_wordpiece_list = []
     all_first_index_list = []
-
+    convert_map = {"-LRB-":"(", "-RRB-":")", "-LCB-":"{", "-RCB-":"}", PAD:tokenizer.pad_token,
+                 ROOT: tokenizer.cls_token, END:tokenizer.sep_token}
     for toks in tokens:
+        """
+        toks = [toks_[0], toks_[1]]
+        for i in range(2,len(toks_)):
+            t = toks_[i]
+            # LCB, LRB, `` have left blank
+            if t in [PAD, ROOT, END, "-RCB-","-RRB-","--","''"] or t in string.punctuation:
+                toks.append(t)
+            else:
+                toks.append(" "+t)
+        """
         wordpiece_list = []
         first_index_list = []
-        for token in toks:
-            if token == PAD:
-                token = tokenizer.pad_token
-            elif token == ROOT:
-                token = tokenizer.cls_token
-            elif token == END:
-                token = tokenizer.sep_token
+        for i, token in enumerate(toks):
+            if token in convert_map:
+                token = convert_map[token]
+            if not (i == 1 or token in string.punctuation or token in ["--","''",
+                tokenizer.pad_token,tokenizer.cls_token, tokenizer.sep_token]):
+                token = " "+token
             wordpiece = tokenizer.tokenize(token)
             # add 1 for cls_token <s>
             first_index_list.append(len(wordpiece_list)+1)
             wordpiece_list += wordpiece
             #print (wordpiece)
-        #print (wordpiece_list)
+        #print ("wordpiece_list:\n", wordpiece_list)
         #print (first_index_list)
         bpe_ids = tokenizer.convert_tokens_to_ids(wordpiece_list)
-        #print (bpe_ids)
+        #print ("bpe_ids:\n", bpe_ids)
         bpe_ids = tokenizer.build_inputs_with_special_tokens(bpe_ids)
         #print (bpe_ids)
         all_wordpiece_list.append(bpe_ids)
@@ -101,8 +111,8 @@ def convert_tokens_to_ids(tokenizer, tokens):
     return input_ids, first_indices
 
 def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, 
-        device, beam=1, batch_size=256, write_to_tmp=True, prev_best_lcorr=0, prev_best_ucorr=0,
-        pred_filename=None, tokenizer=None, multi_lan_iter=False):
+        device, beam=1, batch_size=256, write_to_tmp=True, prev_LF=0.0, 
+        pred_filename=None, tokenizer=None, multi_lan_iter=False, ensemble=False):
     network.eval()
     accum_ucorr = 0.0
     accum_lcorr = 0.0
@@ -134,11 +144,33 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
     all_src_words = []
     all_heads_by_layer = []
 
+    arc_tp = 0.0  # index 0
+    arc_fp = 0.0  # index 1
+    arc_tn = 0.0  # index 2
+    arc_fn = 0.0  # index 3
+    
+    label_match = 0.0
+    label_true = 0.0
+    label_pred_num = 0.0
+
+    if hasattr(network, 'use_elmo'):
+        use_elmo = network.use_elmo
+    else:
+        use_elmo = network.module.use_elmo
+
     if multi_lan_iter:
         iterate = multi_language_iterate_data
     else:
         iterate = iterate_data
         lan_id = None
+
+    if ensemble:
+        n = len(data) - 1
+        data_ = data
+        data = data_[0]
+        sub_batchers = []
+        for d in data_[1:]:
+            sub_batchers.append(iter(iterate(d, batch_size)))
 
     for data in iterate(data, batch_size):
         if multi_lan_iter:
@@ -153,29 +185,47 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         srcs = data['SRC']
         if words.size()[0] == 1 and len(srcs) > 1:
             srcs = [srcs]
-        if network.pretrained_lm == 'elmo':
-            bpes = batch_to_ids(srcs)
-            bpes = bpes.to(device)
-            first_idx = None
-        elif tokenizer:
+        if use_elmo:
+            input_elmo = batch_to_ids(srcs)
+            input_elmo = input_elmo.to(device)
+        else:
+            input_elmo = None
+        if tokenizer:
             bpes, first_idx = convert_tokens_to_ids(tokenizer, srcs)
             bpes = bpes.to(device)
             first_idx = first_idx.to(device)
         else:
             bpes = first_idx = None
+        if ensemble:
+            words = [words]
+            chars = [chars]
+            postags = [postags]
+            for batcher in sub_batchers:
+                sub_data = next(batcher, None)
+                lens = sub_data['LENGTH'].numpy()
+                assert (lens == lengths).all()
+                words.append(sub_data['WORD'].to(device))
+                chars.append(sub_data['CHAR'].to(device))
+                postags.append(sub_data['POS'].to(device))
         if alg == 'graph':
             pres = data['PRETRAINED'].to(device)
             masks = data['MASK'].to(device)
             #err_types = data['ERR_TYPE']
             err_types = None
             heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, 
-                bpes=bpes, first_idx=first_idx, lan_id=lan_id, leading_symbolic=common.NUM_SYMBOLIC_TAGS)
+                bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id, 
+                leading_symbolic=common.NUM_SYMBOLIC_TAGS)
         else:
             pres = None
             err_types = None
             masks = data['MASK_ENC'].to(device)
             heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, 
-                bpes=bpes, first_idx=first_idx, lan_id=lan_id, beam=beam, leading_symbolic=conllx_data.NUM_SYMBOLIC_TAGS)
+                bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id, 
+                beam=beam, leading_symbolic=conllx_data.NUM_SYMBOLIC_TAGS)
+        
+        if ensemble:
+            words = words[0]
+            postags = postags[0]
         words = words.cpu().numpy()
         postags = postags.cpu().numpy()
 
@@ -194,10 +244,10 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         #print ("rels_pred:\n", rels_pred)
         #print ("heads:\n", heads)
         #print ("err_types:\n", err_types)
-        stats, stats_nopunc, err_stats, err_nopunc_stats, stats_root, num_inst = parser.eval(
-                                    words, postags, heads_pred, rels_pred, heads, rels,
-                                    word_alphabet, pos_alphabet, lengths, punct_set=punct_set, 
-                                    symbolic_root=True, err_types=err_types)
+        stats, stats_nopunc, err_stats, err_nopunc_stats, stats_root, num_inst, arc_cal, type_cal = parser_sdp.eval_sdp(
+            words, postags, heads_pred, rels_pred, heads, rels, 
+            word_alphabet, pos_alphabet, lengths, punct_set=punct_set, 
+            symbolic_root=True, err_types=err_types)
         ucorr, lcorr, total, ucm, lcm = stats
         ucorr_nopunc, lcorr_nopunc, total_nopunc, ucm_nopunc, lcm_nopunc = stats_nopunc
         ucorr_err, lcorr_err, total_err = err_stats
@@ -228,27 +278,32 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
 
         accum_total_inst += num_inst
 
-    print('W. Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%%' % (
-        accum_ucorr, accum_lcorr, accum_total, accum_ucorr * 100 / accum_total, accum_lcorr * 100 / accum_total,
-        accum_ucomlpete * 100 / accum_total_inst, accum_lcomplete * 100 / accum_total_inst))
-    print('Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%%' % (
-        accum_ucorr_nopunc, accum_lcorr_nopunc, accum_total_nopunc, accum_ucorr_nopunc * 100 / accum_total_nopunc,
-        accum_lcorr_nopunc * 100 / accum_total_nopunc,
-        accum_ucomlpete_nopunc * 100 / accum_total_inst, accum_lcomplete_nopunc * 100 / accum_total_inst))
-    print('Root: corr: %d, total: %d, acc: %.2f%%' %(accum_root_corr, accum_total_root, accum_root_corr * 100 / accum_total_root))
+        # ======================= sdp LF1 & UF1 ===================
+        arc_tp += arc_cal[0]  # index 0
+        arc_fp += arc_cal[1]  # index 1
+        arc_tn += arc_cal[2]  # index 2
+        arc_fn += arc_cal[3]  # index 3
+        label_match += type_cal[0]
+        label_true += type_cal[1]
+        label_pred_num += type_cal[2]
+
+    # ======================= calculate UF  & LF =======================
+    arc_p = arc_tp / (arc_tp + arc_fp)
+    arc_r = arc_tp / (arc_tp + arc_fn)
+    arc_f = (2 * arc_p * arc_r) / (arc_p + arc_r)
+    type_p = label_match/label_pred_num
+    type_r = label_match/label_true
+    type_f = (2 * type_p * type_r) / (type_p + type_r)
+    print("UP:%.4f    LP:%.4f\nUR:%.4f    LR:%.4f\nUF:%.4f    LF:%.4f\n" % (arc_p, type_p,arc_r,type_r,arc_f,type_f))
+
     if accum_total_err == 0:
         accum_total_err = 1
     if accum_total_err_nopunc == 0:
         accum_total_err_nopunc = 1
-    #print('Error Token: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%' % (
-    #    accum_ucorr_err, accum_lcorr_err, accum_total_err, accum_ucorr_err * 100 / accum_total_err, accum_lcorr_err * 100 / accum_total_err))
-    #print('Error Token Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%' % (
-    #    accum_ucorr_err_nopunc, accum_lcorr_err_nopunc, accum_total_err_nopunc, 
-    #    accum_ucorr_err_nopunc * 100 / accum_total_err_nopunc, accum_lcorr_err_nopunc * 100 / accum_total_err_nopunc))
 
     if not write_to_tmp:
-        if prev_best_lcorr < accum_lcorr_nopunc or (prev_best_lcorr == accum_lcorr_nopunc and prev_best_ucorr < accum_ucorr_nopunc):
-            print ('### Writing New Best Dev Prediction File ... ###')
+        if prev_LF < type_f:
+            print('### Writing New Best Dev Prediction File ... ###')
             pred_writer.start(pred_filename)
             for i in range(len(all_words)):
                 pred_writer.write(all_words[i], all_postags[i], all_heads_pred[i], all_rels_pred[i], 
@@ -256,8 +311,9 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
             pred_writer.close()
 
     return (accum_ucorr, accum_lcorr, accum_ucomlpete, accum_lcomplete, accum_total), \
-           (accum_ucorr_nopunc, accum_lcorr_nopunc, accum_ucomlpete_nopunc, accum_lcomplete_nopunc, accum_total_nopunc), \
-           (accum_root_corr, accum_total_root, accum_total_inst)
+            (accum_ucorr_nopunc, accum_lcorr_nopunc, accum_ucomlpete_nopunc, accum_lcomplete_nopunc, accum_total_nopunc), \
+            (accum_root_corr, accum_total_root, accum_total_inst), \
+            (arc_f,type_f,arc_p,arc_r,type_p,type_r)
 
 
 def train(args):
@@ -293,7 +349,6 @@ def train(args):
         print ("### Unrecognized data formate: %s ###" % data_format)
         exit()
 
-    basic_word_embedding = args.basic_word_embedding
     num_epochs = args.num_epochs
     patient_epochs = args.patient_epochs
     batch_size = args.batch_size
@@ -326,6 +381,12 @@ def train(args):
     pretrained_lm = args.pretrained_lm
     lm_path = args.lm_path
 
+    use_pretrained_static = args.use_pretrained_static
+    use_random_static = args.use_random_static
+    only_pretrain_static = use_pretrained_static and not use_random_static
+    use_elmo = args.use_elmo
+    elmo_path = args.elmo_path
+
     print(args)
 
     word_dict, word_dim = utils.load_embedding_dict(word_embedding, word_path)
@@ -339,15 +400,19 @@ def train(args):
     logger.info("Creating Alphabets")
     alphabet_path = os.path.join(model_path, 'alphabets')
     if data_format == "conllx":
-        data_paths=[dev_path, test_path]
+        #data_paths=[dev_path, test_path]
+        data_paths=[dev_path]
     elif data_format == "ud":
-        data_paths=dev_path + test_path
+        #data_paths=dev_path + test_path
+        data_paths=dev_path
     word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = data_reader.create_alphabets(alphabet_path, train_path,
                                                                                              data_paths=data_paths, 
-                                                                                             embedd_dict=word_dict, max_vocabulary_size=400000,
+                                                                                             embedd_dict=word_dict, 
+                                                                                             max_vocabulary_size=args.max_vocab_size,
                                                                                              normalize_digits=args.normalize_digits,
                                                                                              pos_idx=args.pos_idx,
-                                                                                             expand_with_pretrained=(not args.do_trim and not basic_word_embedding))
+                                                                                             expand_with_pretrained=(only_pretrain_static),
+                                                                                             task_type="sdp")
     pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path, word_dict, 
                                 word_alphabet.instances, max_vocabulary_size=400000, do_trim=args.do_trim)
 
@@ -372,14 +437,14 @@ def train(args):
         punct_set = set(punctuation)
         logger.info("punctuations(%d): %s" % (len(punct_set), ' '.join(punct_set)))
 
-    def construct_word_embedding_table():
+    def construct_word_embedding_table(only_pretrain_static=True):
         scale = np.sqrt(3.0 / word_dim)
-        if basic_word_embedding:
-            table = np.empty([pretrained_alphabet.size(), word_dim], dtype=np.float32)
-            items = pretrained_alphabet.items()
-        else:
+        if only_pretrain_static:
             table = np.empty([word_alphabet.size(), word_dim], dtype=np.float32)
             items = word_alphabet.items()
+        else:
+            table = np.empty([pretrained_alphabet.size(), word_dim], dtype=np.float32)
+            items = pretrained_alphabet.items()
         table[data_reader.UNK_ID, :] = np.zeros([1, word_dim]).astype(np.float32) if freeze else np.random.uniform(-scale, scale, [1, word_dim]).astype(np.float32)
         oov = 0
         for word, index in items:
@@ -412,7 +477,7 @@ def train(args):
         print('character OOV: %d' % oov)
         return torch.from_numpy(table)
 
-    word_table = construct_word_embedding_table()
+    word_table = construct_word_embedding_table(only_pretrain_static=only_pretrain_static)
     char_table = construct_char_embedding_table()
 
     logger.info("constructing network...")
@@ -420,7 +485,7 @@ def train(args):
     hyps = json.load(open(args.config, 'r'))
     json.dump(hyps, open(os.path.join(model_path, 'config.json'), 'w'), indent=2)
     model_type = hyps['model']
-    assert model_type in ['Robust', 'StackPtr']
+    assert model_type in ['Biaffine', 'StackPointer']
     assert word_dim == hyps['input']['word_dim']
     if char_dim is not None:
         assert char_dim == hyps['input']['char_dim']
@@ -438,35 +503,20 @@ def train(args):
         num_lans = language_alphabet.size()
         assert len(languages)+1 == num_lans
         data_reader = multi_ud_data
-    """
-    if pretrained_lm == 'bert':
-        tokenizer = BertTokenizer.from_pretrained(lm_path)
-    elif pretrained_lm == 'roberta':
-        tokenizer = RobertaTokenizer.from_pretrained(lm_path)
-    elif pretrained_lm == 'electra':
-        tokenizer = ElectraTokenizer.from_pretrained(lm_path)
-    elif pretrained_lm == 'xlm-r':
-        tokenizer = XLMRobertaTokenizer.from_pretrained(lm_path)
-    else:
-        tokenizer = None
-    """
+
     if pretrained_lm in ['none','elmo']:
         tokenizer = None 
     else:
+        print (lm_path)
         tokenizer = AutoTokenizer.from_pretrained(lm_path)
 
     logger.info("##### Parser Type: {} #####".format(model_type))
-    alg = 'transition' if model_type == 'StackPtr' else 'graph'
-    if model_type == 'Robust':
-        network = RobustParser(hyps, num_pretrained, num_words, num_chars, num_pos,
-                               num_rels, device=device, basic_word_embedding=basic_word_embedding,
-                               embedd_word=word_table, embedd_char=char_table, 
-                               pretrained_lm=pretrained_lm, lm_path=lm_path,
-                               num_lans=num_lans)
-    elif model_type == 'StackPtr':
-        network = StackPtrParser(hyps, num_pretrained, num_words, num_chars, num_pos,
-                               num_rels, device=device, basic_word_embedding=basic_word_embedding,
-                               embedd_word=word_table, embedd_char=char_table, 
+    alg = 'transition' if model_type == 'StackPointer' else 'graph'
+    if model_type == 'Biaffine':
+        network = SDPBiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels, 
+                                device=device, embedd_word=word_table, embedd_char=char_table,
+                               use_pretrained_static=use_pretrained_static, use_random_static=use_random_static,
+                               use_elmo=use_elmo, elmo_path=elmo_path,
                                pretrained_lm=pretrained_lm, lm_path=lm_path,
                                num_lans=num_lans)
     else:
@@ -474,6 +524,9 @@ def train(args):
 
     num_gpu = torch.cuda.device_count()
     logger.info("GPU Number: %d" % num_gpu)
+    if args.fine_tune:
+        logger.info("Loading pre-trained model from: %s" % model_name)
+        network.load_state_dict(torch.load(model_name, map_location=device))
     if num_gpu > 1:
         logger.info("Using Data Parallel")
         network = torch.nn.DataParallel(network)
@@ -483,9 +536,9 @@ def train(args):
     logger.info("Freeze Pre-trained Emb: %s" % (freeze))
     if freeze:
         if num_gpu > 1:
-            freeze_embedding(network.module.word_embed)
+            freeze_embedding(network.module.pretrained_word_embed)
         else:
-            freeze_embedding(network.word_embed)
+            freeze_embedding(network.pretrained_word_embed)
 
     if schedule == 'step':
         logger.info("Scheduler: %s, init lr=%.6f, lr decay=%.6f, decay_steps=%d, warmup_steps=%d" % (schedule, learning_rate, lr_decay, decay_steps, warmup_steps))
@@ -493,9 +546,9 @@ def train(args):
         logger.info("Scheduler: %s, init lr=%.6f, warmup_steps=%d" % (schedule, learning_rate, warmup_steps))
     elif schedule == 'exponential':
         logger.info("Scheduler: %s, init lr=%.6f, lr decay=%.6f, warmup_steps=%d" % (schedule, learning_rate, lr_decay, warmup_steps))
-    if not pretrained_lm == 'none':
+    if pretrained_lm != 'none' or use_elmo:
         optim_parameters = [{'params':single_network._basic_parameters()},
-                            {'params':single_network.lm_encoder.parameters(), 'lr':args.lm_lr}]
+                            {'params':single_network._lm_parameters(), 'lr':args.lm_lr}]
         logger.info("Language model lr: %.6f" % args.lm_lr)
     else:
         #optim_parameters = single_network._basic_parameters() #single_network.parameters()
@@ -510,57 +563,29 @@ def train(args):
     print ("num params = ", n)
     logger.info("Reading Data")
     if alg == 'graph':
-        if data_format == 'ud' and not args.mix_datasets:
-            data_train = data_reader.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, 
-                                                        normalize_digits=args.normalize_digits, symbolic_root=True,
-                                                        pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx,
-                                                        lans=lans_train, lan_alphabet=language_alphabet)
-            data_dev = data_reader.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
-                                                        normalize_digits=args.normalize_digits, symbolic_root=True,
-                                                        pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx,
-                                                        lans=lans_dev, lan_alphabet=language_alphabet)
-            data_test = data_reader.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
-                                                        normalize_digits=args.normalize_digits, symbolic_root=True,
-                                                        pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx,
-                                                        lans=lans_test, lan_alphabet=language_alphabet)
-        else:
-            data_train = data_reader.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, 
-                                                        normalize_digits=args.normalize_digits, symbolic_root=True,
-                                                        pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
-            data_dev = data_reader.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
-                                                        normalize_digits=args.normalize_digits, symbolic_root=True,
-                                                        pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
-            data_test = data_reader.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
-                                                        normalize_digits=args.normalize_digits, symbolic_root=True,
-                                                        pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
+        data_train = data_reader.read_bucketed_data_sdp(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet, 
+                                                    normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                    pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
+        data_dev = data_reader.read_data_sdp(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                    normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                    pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
+        data_test = data_reader.read_data_sdp(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                    normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                    pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx)
     elif alg == 'transition':
         prior_order = hyps['input']['prior_order']
-        if data_format == "conllx":
-            data_train = conllx_stacked_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
-                                                            normalize_digits=args.normalize_digits,
-                                                            pos_idx=args.pos_idx, 
-                                                            prior_order=prior_order)
-            data_dev = conllx_stacked_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
-                                                            normalize_digits=args.normalize_digits,
-                                                            pos_idx=args.pos_idx, 
-                                                            prior_order=prior_order)
-            data_test = conllx_stacked_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
-                                                            normalize_digits=args.normalize_digits,
-                                                            pos_idx=args.pos_idx, 
-                                                            prior_order=prior_order)
-        else:
-            data_train = ud_stacked_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
-                                                            normalize_digits=args.normalize_digits, symbolic_root=True,
-                                                            pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx, 
-                                                            prior_order=prior_order)
-            data_dev = ud_stacked_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
-                                                            normalize_digits=args.normalize_digits, symbolic_root=True,
-                                                            pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx, 
-                                                            prior_order=prior_order)
-            data_test = ud_stacked_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
-                                                            normalize_digits=args.normalize_digits, symbolic_root=True,
-                                                            pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx, 
-                                                            prior_order=prior_order)
+        data_train = conllx_stacked_data.read_bucketed_data(train_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                        normalize_digits=args.normalize_digits,
+                                                        pos_idx=args.pos_idx, 
+                                                        prior_order=prior_order)
+        data_dev = conllx_stacked_data.read_data(dev_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                        normalize_digits=args.normalize_digits,
+                                                        pos_idx=args.pos_idx, 
+                                                        prior_order=prior_order)
+        data_test = conllx_stacked_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                        normalize_digits=args.normalize_digits,
+                                                        pos_idx=args.pos_idx, 
+                                                        prior_order=prior_order)
 
     
     if alg == 'graph' and data_format == 'ud' and not args.mix_datasets:
@@ -569,14 +594,16 @@ def train(args):
         num_data = sum(data_train[1])
     logger.info("training: #training data: %d, batch: %d, unk replace: %.2f" % (num_data, batch_size, unk_replace))
 
-    pred_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
-    gold_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
+    pred_writer = CoNLLXWriterSDP(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
+    gold_writer = CoNLLXWriterSDP(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
     
     best_ucorrect = 0.0
     best_lcorrect = 0.0
     best_ucomlpete = 0.0
     best_lcomplete = 0.0
 
+    best_arc_f = 0.0
+    best_type_f = 0.0
     best_ucorrect_nopunc = 0.0
     best_lcorrect_nopunc = 0.0
     best_ucomlpete_nopunc = 0.0
@@ -603,6 +630,22 @@ def train(args):
     test_total_nopunc = 0
     test_total_inst = 0
     test_total_root = 0
+
+    # ==================================f1 ==================
+    test_arc_f = 0.0
+    test_type_f = 0.0
+    test_arc_p = 0.0
+    test_arc_r = 0.0
+    test_type_p = 0.0
+    test_type_r = 0.0
+
+    best_arc_eval_f = 0.0
+    best_type_eval_f = 0.0
+    best_arc_eval_p = 0.0
+    best_arc_eval_r = 0.0
+    best_type_eval_p = 0.0
+    best_type_eval_r = 0.0
+    # ================================
 
     patient = 0
     num_epochs_without_improvement = 0
@@ -632,7 +675,7 @@ def train(args):
         num_words = 0
         num_back = 0
         num_nans = 0
-        overall_arc_correct, overall_rel_correct, overall_total_arcs = 0, 0, 0
+        overall_arc_correct, overall_rel_correct, overall_total_arcs, overall_total_arcs_pred_num = 0, 0, 0, 0
         network.train()
         lr = scheduler.get_lr()[0]
         total_step = scheduler.get_total_step()
@@ -654,31 +697,31 @@ def train(args):
             postags = data['POS'].to(device)
             heads = data['HEAD'].to(device)
             nbatch = words.size(0)
-            if not pretrained_lm == 'none':
-                srcs = data['SRC']
-                if words.size()[0] == 1 and len(srcs) > 1:
-                    srcs = [srcs]
-                if pretrained_lm == 'elmo':
-                    bpes = batch_to_ids(srcs)
-                    bpes = bpes.to(device)
-                    first_idx = None
-                    try:
-                        assert bpes.size()[:2] == words.size()
-                    except:
-                        print ("src:\n", data['SRC'])
-                        print ("bpes:",bpes.size())
-                        print ("words:{}".format(words.size()))
-                else:
-                    bpes, first_idx = convert_tokens_to_ids(tokenizer, srcs)
-                    bpes = bpes.to(device)
-                    first_idx = first_idx.to(device)
-                    try:
-                        assert first_idx.size() == words.size()
-                    except:
-                        print ("bpes:\n",bpes)
-                        print ("src:\n", data['SRC'])
-                        print ("first_idx:{}\n{}".format(first_idx.size(), first_idx))
-                        print ("words:{},\n{}".format(words.size(), words))
+            srcs = data['SRC']
+            if words.size()[0] == 1 and len(srcs) > 1:
+                srcs = [srcs]
+            if use_elmo:
+                input_elmo = batch_to_ids(srcs)
+                input_elmo = input_elmo.to(device)
+                try:
+                    assert input_elmo.size()[:2] == words.size()
+                except:
+                    print ("src:\n", data['SRC'])
+                    print ("input_elmo:",input_elmo.size())
+                    print ("words:{}".format(words.size()))
+            else:
+                input_elmo = None
+            if pretrained_lm != "none":
+                bpes, first_idx = convert_tokens_to_ids(tokenizer, srcs)
+                bpes = bpes.to(device)
+                first_idx = first_idx.to(device)
+                try:
+                    assert first_idx.size() == words.size()
+                except:
+                    print ("bpes:\n",bpes)
+                    print ("src:\n", data['SRC'])
+                    print ("first_idx:{}\n{}".format(first_idx.size(), first_idx))
+                    print ("words:{},\n{}".format(words.size(), words))
             else:
                 bpes = first_idx = None
             if alg == 'graph':
@@ -687,7 +730,8 @@ def train(args):
                 masks = data['MASK'].to(device)
                 nwords = masks.sum() - nbatch
                 losses, statistics = network(words, pres, chars, postags, heads, rels, 
-                            mask=masks, bpes=bpes, first_idx=first_idx, lan_id=lan_id)
+                            mask=masks, bpes=bpes, first_idx=first_idx, input_elmo=input_elmo,
+                            lan_id=lan_id)
             else:
                 pres = None
                 masks_enc = data['MASK_ENC'].to(device)
@@ -705,17 +749,20 @@ def train(args):
                 #print ("words:\n", words)
                 nwords = masks_enc.sum() - nbatch
                 losses = network(words, pres, chars, postags, heads, stacked_heads, children, siblings, stacked_rels,
-                                        mask_e=masks_enc, mask_d=masks_dec, bpes=bpes, first_idx=first_idx, lan_id=lan_id)
+                                mask_e=masks_enc, mask_d=masks_dec, bpes=bpes, first_idx=first_idx, 
+                                input_elmo=input_elmo, lan_id=lan_id)
                 statistics = None
             arc_loss, rel_loss = losses
             arc_loss = arc_loss.sum()
             rel_loss = rel_loss.sum()
-            loss_total = arc_loss + rel_loss
+            #loss_total = arc_loss + rel_loss
+            loss_total = (1-loss_interpolation) * arc_loss + loss_interpolation * rel_loss
             if statistics is not None:
-                arc_correct, rel_correct, total_arcs = statistics
-                overall_arc_correct += arc_correct.sum().cpu().numpy()
-                overall_rel_correct += rel_correct.sum().cpu().numpy()
-                overall_total_arcs += total_arcs.sum().cpu().numpy()
+                arc_correct, rel_correct, total_arcs, arc_pred_num = statistics
+                overall_arc_correct += arc_correct
+                overall_rel_correct += rel_correct
+                overall_total_arcs += total_arcs
+                overall_total_arcs_pred_num += arc_pred_num
                 
             if loss_type_token:
                 loss = loss_total.div(nwords)
@@ -783,12 +830,21 @@ def train(args):
         else:
             train_uas = float(overall_arc_correct) * 100.0 / overall_total_arcs
             train_lacc = float(overall_rel_correct) * 100.0 / overall_total_arcs
-            print('total: %d (%d), epochs w/o improve:%d, nans:%d, uas: %.2f%%, lacc: %.2f%%,  loss: %.4f (%.4f), arc: %.4f (%.4f), rel: %.4f (%.4f), time: %.2fs' % (num_insts, num_words,
-                                                                                                           num_epochs_without_improvement, num_nans, train_uas, train_lacc,
-                                                                                                           train_loss / num_insts, train_loss / num_words,
-                                                                                                           train_arc_loss / num_insts, train_arc_loss / num_words,
-                                                                                                           train_rel_loss / num_insts, train_rel_loss / num_words,
-                                                                                                           time.time() - start_time))
+            
+            train_UP = float(overall_arc_correct)/ overall_total_arcs_pred_num
+            train_UR = float(overall_arc_correct)/ overall_total_arcs
+            train_UF = 2*train_UP*train_UR/(train_UP+train_UR)
+            train_LP = float(overall_rel_correct)/ overall_total_arcs_pred_num
+            train_LR = float(overall_rel_correct)/ overall_total_arcs
+            train_LF = 2*train_LP*train_LR/(train_LP+train_LR)
+            print("【train period】:\n")
+            print('total: %d (%d), epochs w/o improve:%d, nans:%d, uas: %.2f%%, lacc: %.2f%%,  loss: %.4f (%.4f), arc: %.4f (%.4f), rel: %.4f (%.4f), time: %.2fs' % (
+            num_insts, num_words, num_epochs_without_improvement, num_nans, train_uas, train_lacc, train_loss / num_insts, train_loss / num_words, train_arc_loss / num_insts,
+            train_arc_loss / num_words, train_rel_loss / num_insts, train_rel_loss / num_words, time.time() - start_time))
+            print("=======================UF && LF ===========================\n")
+            print("## Scores including virtual dependencies to top nodes\n")
+            print("UP:%.4f    LP:%.4f\nUR:%.4f    LR:%.4f\nUF:%.4f    LF:%.4f\n" % (train_UP, train_LP, train_UR, train_LR, train_UF, train_LF))
+
         print('-' * 125)
 
         if epoch % eval_every == 0:
@@ -800,10 +856,10 @@ def train(args):
                 #gold_writer.start(gold_filename)
 
                 print('Evaluating dev:')
-                dev_stats, dev_stats_nopunct, dev_stats_root = eval(alg, data_dev, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, 
-                                                                    beam=beam, batch_size=args.eval_batch_size, write_to_tmp=False, prev_best_lcorr=best_lcorrect_nopunc,
-                                                                    prev_best_ucorr=best_ucorrect_nopunc, pred_filename=pred_filename, tokenizer=tokenizer, 
-                                                                    multi_lan_iter=multi_lan_iter)
+                dev_stats, dev_stats_nopunct, dev_stats_root, f1_score = eval(
+                    alg, data_dev, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device, beam=beam,
+                    batch_size=args.eval_batch_size, write_to_tmp=False, pred_filename=pred_filename, tokenizer=tokenizer,
+                    multi_lan_iter=multi_lan_iter,prev_LF = best_type_f)
 
                 #pred_writer.close()
                 #gold_writer.close()
@@ -811,13 +867,15 @@ def train(args):
                 dev_ucorr, dev_lcorr, dev_ucomlpete, dev_lcomplete, dev_total = dev_stats
                 dev_ucorr_nopunc, dev_lcorr_nopunc, dev_ucomlpete_nopunc, dev_lcomplete_nopunc, dev_total_nopunc = dev_stats_nopunct
                 dev_root_corr, dev_total_root, dev_total_inst = dev_stats_root
+                type_f = f1_score[1]
 
-                if best_lcorrect_nopunc < dev_lcorr_nopunc or (best_lcorrect_nopunc == dev_lcorr_nopunc and best_ucorrect_nopunc < dev_ucorr_nopunc):
+                if best_type_f < type_f:
                     num_epochs_without_improvement = 0
                     best_ucorrect_nopunc = dev_ucorr_nopunc
                     best_lcorrect_nopunc = dev_lcorr_nopunc
                     best_ucomlpete_nopunc = dev_ucomlpete_nopunc
                     best_lcomplete_nopunc = dev_lcomplete_nopunc
+                    best_type_f = type_f
 
                     best_ucorrect = dev_ucorr
                     best_lcorrect = dev_lcorr
@@ -831,6 +889,14 @@ def train(args):
                     best_total_inst = dev_total_inst
 
                     best_epoch = epoch
+                    # =============================== f1 =================
+                    best_arc_eval_f = f1_score[0]
+                    best_type_eval_f = f1_score[1]
+                    best_arc_eval_p = f1_score[2]
+                    best_arc_eval_r = f1_score[3]
+                    best_type_eval_p = f1_score[4]
+                    best_type_eval_r = f1_score[5]
+                    # ======================================================
                     patient = 0
                     torch.save(single_network.state_dict(), model_name)
 
@@ -840,45 +906,34 @@ def train(args):
                     #gold_writer.start(gold_filename)
 
                     print('Evaluating test:')
-                    test_stats, test_stats_nopunct, test_stats_root = eval(alg, data_test, 
-                            single_network, pred_writer, gold_writer, punct_set, word_alphabet, 
-                            pos_alphabet, device, beam=beam, batch_size=args.eval_batch_size, 
-                            tokenizer=tokenizer, multi_lan_iter=multi_lan_iter)
+                    test_stats, test_stats_nopunct, test_stats_root, f1_score = eval(
+                        alg, data_test, single_network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, device,
+                        beam=beam,batch_size=args.eval_batch_size, tokenizer=tokenizer, multi_lan_iter=multi_lan_iter,prev_LF=0.0)
 
                     test_ucorrect, test_lcorrect, test_ucomlpete, test_lcomplete, test_total = test_stats
                     test_ucorrect_nopunc, test_lcorrect_nopunc, test_ucomlpete_nopunc, test_lcomplete_nopunc, test_total_nopunc = test_stats_nopunct
                     test_root_correct, test_total_root, test_total_inst = test_stats_root
+                    test_arc_f = f1_score[0]
+                    test_type_f = f1_score[1]
+                    test_arc_p = f1_score[2]
+                    test_arc_r = f1_score[3]
+                    test_type_p = f1_score[4]
+                    test_type_r = f1_score[5]
 
                     pred_writer.close()
                     #gold_writer.close()
                 else:
                     patient += 1
 
-                print('-' * 125)
-                print('best dev  W. Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%% (epoch: %d)' % (
-                    best_ucorrect, best_lcorrect, best_total, best_ucorrect * 100 / best_total, best_lcorrect * 100 / best_total,
-                    best_ucomlpete * 100 / dev_total_inst, best_lcomplete * 100 / dev_total_inst,
-                    best_epoch))
-                print('best dev  Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%% (epoch: %d)' % (
-                    best_ucorrect_nopunc, best_lcorrect_nopunc, best_total_nopunc,
-                    best_ucorrect_nopunc * 100 / best_total_nopunc, best_lcorrect_nopunc * 100 / best_total_nopunc,
-                    best_ucomlpete_nopunc * 100 / best_total_inst, best_lcomplete_nopunc * 100 / best_total_inst,
-                    best_epoch))
-                print('best dev  Root: corr: %d, total: %d, acc: %.2f%% (epoch: %d)' % (
-                    best_root_correct, best_total_root, best_root_correct * 100 / best_total_root, best_epoch))
-                print('-' * 125)
-                print('best test W. Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%% (epoch: %d)' % (
-                    test_ucorrect, test_lcorrect, test_total, test_ucorrect * 100 / test_total, test_lcorrect * 100 / test_total,
-                    test_ucomlpete * 100 / test_total_inst, test_lcomplete * 100 / test_total_inst,
-                    best_epoch))
-                print('best test Wo Punct: ucorr: %d, lcorr: %d, total: %d, uas: %.2f%%, las: %.2f%%, ucm: %.2f%%, lcm: %.2f%% (epoch: %d)' % (
-                    test_ucorrect_nopunc, test_lcorrect_nopunc, test_total_nopunc,
-                    test_ucorrect_nopunc * 100 / test_total_nopunc, test_lcorrect_nopunc * 100 / test_total_nopunc,
-                    test_ucomlpete_nopunc * 100 / test_total_inst, test_lcomplete_nopunc * 100 / test_total_inst,
-                    best_epoch))
-                print('best test Root: corr: %d, total: %d, acc: %.2f%% (epoch: %d)' % (
-                    test_root_correct, test_total_root, test_root_correct * 100 / test_total_root, best_epoch))
                 print('=' * 125)
+                print("         (epoch: %d)\n          "%best_epoch)
+                print("     best dev             best test\n")
+                print("UP:%.4f  LP:%.4f||||UP:%.4f  LP:%.4f\n"
+                      "UR:%.4f  LR:%.4f||||UR:%.4f  LR:%.4f\n"
+                      "UF:%.4f  LF:%.4f||||UF:%.4f  LF:%.4f\n" %
+                      (best_arc_eval_p, best_type_eval_p,test_arc_p,test_type_p,
+                       best_arc_eval_r,best_type_eval_r,test_arc_r,test_type_r,
+                       best_arc_eval_f, best_type_eval_f,test_arc_f,test_type_f))
 
                 if reset > 0 and patient >= reset:
                     print ("### Reset optimizer state ###")
@@ -890,6 +945,13 @@ def train(args):
             logger.info("More than %d epochs without improvement, exit!" % patient_epochs)
             exit()
 
+def alphabet_equal(a1, a2):
+    if a1.size() != a2.size():
+        return False
+    if a1.items() == a2.items():
+        return True
+    else:
+        return False
 
 def parse(args):
     logger = get_logger("Parsing")
@@ -906,36 +968,63 @@ def parse(args):
         print ("### Unrecognized data formate: %s ###" % data_format)
         exit()
 
+    print(args)
+    punctuation = args.punctuation
+    pretrained_lm = args.pretrained_lm
+    lm_path = args.lm_path
+    
     if args.ensemble:
         model_paths = args.model_path.split(':')
-        # here the model must have same alphabets
+        n = len(model_paths)
+        word_alphabets, char_alphabets, pos_alphabets, rel_alphabets, pretrained_alphabets = n*[None],n*[None],n*[None],n*[None],n*[None]
+        num_words, num_chars, num_pos, num_rels, num_pretrained = n*[None],n*[None],n*[None],n*[None],n*[None]
+        # load alphabet from different paths
+        for i, model_path in enumerate(model_paths):
+            logger.info("Creating Alphabets-%d"% i)
+            alphabet_path = os.path.join(model_path, 'alphabets')
+            assert os.path.exists(alphabet_path)
+            word_alphabets[i], char_alphabets[i], pos_alphabets[i], rel_alphabets[i] = data_reader.create_alphabets(alphabet_path, None, 
+                                            normalize_digits=args.normalize_digits, pos_idx=args.pos_idx, log_name="Create Alphabets-%d"%i,task_type="sdp")
+            pretrained_alphabets[i] = utils.create_alphabet_from_embedding(alphabet_path)
+            if not alphabet_equal(rel_alphabets[0], rel_alphabets[i]):
+                logger.info("Label alphabet mismatch: ({}) vs. ({})".format(model_paths[0], model_paths[i]))
+                exit()
+
+            num_words[i] = word_alphabets[i].size()
+            num_chars[i] = char_alphabets[i].size()
+            num_pos[i] = pos_alphabets[i].size()
+            num_rels[i] = rel_alphabets[i].size()
+            num_pretrained[i] = pretrained_alphabets[i].size()
+
+            logger.info("Word Alphabet Size: %d" % num_words[i])
+            logger.info("Pretrained Alphabet Size: %d" % num_pretrained[i])
+            logger.info("Character Alphabet Size: %d" % num_chars[i])
+            logger.info("POS Alphabet Size: %d" % num_pos[i])
+            logger.info("Rel Alphabet Size: %d" % num_rels[i])
         model_path = model_paths[0]
     else:
         model_path = args.model_path
         model_name = os.path.join(model_path, 'model.pt')
-    punctuation = args.punctuation
-    pretrained_lm = args.pretrained_lm
-    lm_path = args.lm_path
-    print(args)
+    
+        logger.info("Creating Alphabets")
+        alphabet_path = os.path.join(model_path, 'alphabets')
+        assert os.path.exists(alphabet_path)
+        word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = data_reader.create_alphabets(alphabet_path, None, 
+                                        normalize_digits=args.normalize_digits, pos_idx=args.pos_idx, task_type="sdp")
+        pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path)
 
-    logger.info("Creating Alphabets")
-    alphabet_path = os.path.join(model_path, 'alphabets')
-    assert os.path.exists(alphabet_path)
-    word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = data_reader.create_alphabets(alphabet_path, None, 
-                                    normalize_digits=args.normalize_digits, pos_idx=args.pos_idx)
-    pretrained_alphabet = utils.create_alphabet_from_embedding(alphabet_path)
+        num_words = word_alphabet.size()
+        num_chars = char_alphabet.size()
+        num_pos = pos_alphabet.size()
+        num_rels = rel_alphabet.size()
+        num_pretrained = pretrained_alphabet.size()
 
-    num_words = word_alphabet.size()
-    num_chars = char_alphabet.size()
-    num_pos = pos_alphabet.size()
-    num_rels = rel_alphabet.size()
-    num_pretrained = pretrained_alphabet.size()
+        logger.info("Word Alphabet Size: %d" % num_words)
+        logger.info("Pretrained Alphabet Size: %d" % num_pretrained)
+        logger.info("Character Alphabet Size: %d" % num_chars)
+        logger.info("POS Alphabet Size: %d" % num_pos)
+        logger.info("Rel Alphabet Size: %d" % num_rels)
 
-    logger.info("Word Alphabet Size: %d" % num_words)
-    logger.info("Pretrained Alphabet Size: %d" % num_pretrained)
-    logger.info("Character Alphabet Size: %d" % num_chars)
-    logger.info("POS Alphabet Size: %d" % num_pos)
-    logger.info("Rel Alphabet Size: %d" % num_rels)
 
     result_path = os.path.join(model_path, 'tmp')
     if not os.path.exists(result_path):
@@ -949,7 +1038,7 @@ def parse(args):
     logger.info("loading network...")
     hyps = json.load(open(os.path.join(model_path, 'config.json'), 'r'))
     model_type = hyps['model']
-    assert model_type in ['Robust', 'StackPtr']
+    assert model_type in ['Biaffine', 'StackPointer']
 
     num_lans = 1
     if data_format == 'ud' and not args.mix_datasets:
@@ -960,39 +1049,23 @@ def parse(args):
         language_alphabet = utils.creat_language_alphabet(alphabet_path)
         num_lans = language_alphabet.size()
         data_reader = multi_ud_data
-    """
-    if pretrained_lm == 'bert':
-        tokenizer = BertTokenizer.from_pretrained(lm_path)
-    elif pretrained_lm == 'roberta':
-        tokenizer = RobertaTokenizer.from_pretrained(lm_path)
-    elif pretrained_lm == 'electra':
-        tokenizer = ElectraTokenizer.from_pretrained(lm_path)
-    elif pretrained_lm == 'xlm-r':
-        tokenizer = XLMRobertaTokenizer.from_pretrained(lm_path)
-    else:
-        tokenizer = None
-    """
-    if pretrained_lm in ['none','elmo']:
+
+    if pretrained_lm in ['none']:
         tokenizer = None 
     else:
         tokenizer = AutoTokenizer.from_pretrained(lm_path)
 
-    alg = 'transition' if model_type == 'StackPtr' else 'graph'
+    alg = 'transition' if model_type == 'StackPointer' else 'graph'
     if args.ensemble:
-        network = EnsembleParser(hyps, num_pretrained, num_words, num_chars, num_pos,
-                                   num_rels, device=device, basic_word_embedding=args.basic_word_embedding, 
-                                   pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
-                                   num_lans=num_lans, model_paths=model_paths, merge_by=args.merge_by)
+        print ("Not implemented")
+        exit()
     else:
-        if model_type == 'Robust':
-            network = RobustParser(hyps, num_pretrained, num_words, num_chars, num_pos,
-                                   num_rels, device=device, basic_word_embedding=args.basic_word_embedding, 
-                                   pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
-                                   num_lans=num_lans)
-        elif model_type == 'StackPtr':
-            network = StackPtrParser(hyps, num_pretrained, num_words, num_chars, num_pos,
-                                   num_rels, device=device, basic_word_embedding=args.basic_word_embedding,
-                                   pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
+        if model_type == 'Biaffine':
+            network = SDPBiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels,
+                                   device=device, pretrained_lm=args.pretrained_lm, lm_path=args.lm_path,
+                                   use_pretrained_static=args.use_pretrained_static, 
+                                   use_random_static=args.use_random_static,
+                                   use_elmo=args.use_elmo, elmo_path=args.elmo_path,
                                    num_lans=num_lans)
         else:
             raise RuntimeError('Unknown model type: %s' % model_type)
@@ -1001,34 +1074,51 @@ def parse(args):
         network.load_state_dict(torch.load(model_name, map_location=device))
 
     logger.info("Reading Data")
-    if alg == 'graph':
-        if data_format == 'ud' and not args.mix_datasets:
-            data_test = data_reader.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, 
-                                            rel_alphabet, normalize_digits=args.normalize_digits, 
-                                            symbolic_root=True, pre_alphabet=pretrained_alphabet, 
-                                            pos_idx=args.pos_idx, lans=lans_test, 
-                                            lan_alphabet=language_alphabet)
-        else:
-            data_test = data_reader.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, 
+    if args.ensemble:
+        n = len(word_alphabets)
+        data_tests = [None] * n
+        for i in range(n):
+            if alg == 'graph':
+                data_tests[i] = data_reader.read_data(test_path, word_alphabets[i], char_alphabets[i], pos_alphabets[i], 
+                                                  rel_alphabets[i], normalize_digits=args.normalize_digits, 
+                                                  symbolic_root=True, pre_alphabet=pretrained_alphabets[i], 
+                                                  pos_idx=args.pos_idx)
+            elif alg == 'transition':
+                prior_order = hyps['input']['prior_order']
+                if data_format == "conllx":
+                    data_tests[i] = conllx_stacked_data.read_data(test_path, word_alphabets[i], char_alphabets[i], pos_alphabets[i], rel_alphabets[i],
+                                                        normalize_digits=args.normalize_digits,
+                                                        pos_idx=args.pos_idx, 
+                                                        prior_order=prior_order)
+                else:
+                    data_tests[i] = ud_stacked_data.read_data(test_path, word_alphabets[i], char_alphabets[i], pos_alphabets[i], rel_alphabets[i],
+                                                        normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                        pre_alphabet=pretrained_alphabets[i], pos_idx=args.pos_idx, 
+                                                        prior_order=prior_order)
+        word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = word_alphabets[0], char_alphabets[0], pos_alphabets[0], rel_alphabets[0]
+        data_test = data_tests
+    else:
+        if alg == 'graph':
+            data_test = data_reader.read_data_sdp(test_path, word_alphabet, char_alphabet, pos_alphabet, 
                                           rel_alphabet, normalize_digits=args.normalize_digits, 
                                           symbolic_root=True, pre_alphabet=pretrained_alphabet, 
                                           pos_idx=args.pos_idx)
-    elif alg == 'transition':
-        prior_order = hyps['input']['prior_order']
-        if data_format == "conllx":
-            data_test = conllx_stacked_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
-                                                normalize_digits=args.normalize_digits,
-                                                pos_idx=args.pos_idx, 
-                                                prior_order=prior_order)
-        else:
-            data_test = ud_stacked_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
-                                                normalize_digits=args.normalize_digits, symbolic_root=True,
-                                                pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx, 
-                                                prior_order=prior_order)
+        elif alg == 'transition':
+            prior_order = hyps['input']['prior_order']
+            if data_format == "conllx":
+                data_test = conllx_stacked_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                    normalize_digits=args.normalize_digits,
+                                                    pos_idx=args.pos_idx, 
+                                                    prior_order=prior_order)
+            else:
+                data_test = ud_stacked_data.read_data(test_path, word_alphabet, char_alphabet, pos_alphabet, rel_alphabet,
+                                                    normalize_digits=args.normalize_digits, symbolic_root=True,
+                                                    pre_alphabet=pretrained_alphabet, pos_idx=args.pos_idx, 
+                                                    prior_order=prior_order)
 
-    beam = args.beam
-    pred_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
-    gold_writer = CoNLLXWriter(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
+    
+    pred_writer = CoNLLXWriterSDP(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
+    gold_writer = CoNLLXWriterSDP(word_alphabet, char_alphabet, pos_alphabet, rel_alphabet)
     if args.output_filename:
         pred_filename = args.output_filename
     else:
@@ -1045,8 +1135,8 @@ def parse(args):
         print('Parsing...')
         start_time = time.time()
         eval(alg, data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, 
-            pos_alphabet, device, beam, batch_size=args.batch_size, tokenizer=tokenizer, 
-            multi_lan_iter=multi_lan_iter)
+            pos_alphabet, device, args.beam, batch_size=args.eval_batch_size, tokenizer=tokenizer,
+            multi_lan_iter=multi_lan_iter, ensemble=False)
         print('Time: %.2fs' % (time.time() - start_time))
 
     pred_writer.close()
@@ -1079,17 +1169,21 @@ if __name__ == '__main__':
     args_parser.add_argument('--reset', type=int, default=10, help='Number of epochs to reset optimizer (default 10)')
     args_parser.add_argument('--weight_decay', type=float, default=0.0, help='weight for l2 norm decay')
     args_parser.add_argument('--unk_replace', type=float, default=0., help='The rate to replace a singleton word with UNK')
-    args_parser.add_argument('--freeze', action='store_true', help='frozen the word embedding (disable fine-tuning).')
+    args_parser.add_argument('--freeze', action='store_true', help='frozen the pretrained word embedding (disable fine-tuning).')
     args_parser.add_argument('--punctuation', nargs='+', type=str, help='List of punctuations')
     args_parser.add_argument('--pos_idx', type=int, default=4, choices=[3, 4], help='Index in Conll file line for Part-of-speech tags')
     args_parser.add_argument('--beam', type=int, default=1, help='Beam size for decoding')
-    args_parser.add_argument('--basic_word_embedding', action='store_true', help='Whether to use extra randomly initialized trainable word embedding.')
+    args_parser.add_argument('--use_pretrained_static', action='store_true', help='Whether to use pretrained static word embedding.')
+    args_parser.add_argument('--use_random_static', action='store_true', help='Whether to use extra randomly initialized trainable word embedding.')
+    args_parser.add_argument('--max_vocab_size', type=int, default=400000, help='Maximum vocabulary size for static embeddings')
     args_parser.add_argument('--do_trim', default=False, action='store_true', help='Whether to trim pretrained alphabet with training/dev/test data')
     args_parser.add_argument('--word_embedding', choices=['glove', 'senna', 'sskip', 'polyglot'], help='Embedding for words')
     args_parser.add_argument('--word_path', help='path for word embedding dict')
     args_parser.add_argument('--char_embedding', choices=['random', 'polyglot'], help='Embedding for characters')
     args_parser.add_argument('--char_path', help='path for character embedding dict')
-    args_parser.add_argument('--pretrained_lm', default='none', choices=['none', 'elmo', 'bert', 'bart', 'roberta', 'xlm-r', 'electra', 'tc_bert', 'tc_bart', 'tc_roberta', 'tc_electra'], help='Pre-trained language model')
+    args_parser.add_argument('--use_elmo', action='store_true', default=False, help='Use elmo as input?')
+    args_parser.add_argument('--elmo_path', default=None, help='path for pretrained elmo')
+    args_parser.add_argument('--pretrained_lm', default='none', choices=['none', 'bert', 'bart', 'roberta', 'xlm-r', 'electra', 'tc_bert', 'tc_bart', 'tc_roberta', 'tc_electra'], help='Pre-trained language model')
     args_parser.add_argument('--lm_path', help='path for pretrained language model')
     args_parser.add_argument('--lm_lr', type=float, default=2e-5, help='Learning rate of pretrained language model')
     args_parser.add_argument('--normalize_digits', default=False, action='store_true', help='normalize digits to 0 ?')
@@ -1104,6 +1198,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--model_path', help='path for saving model file.', required=True)
     args_parser.add_argument('--output_filename', type=str, help='output filename for parse')
     args_parser.add_argument('--ensemble', action='store_true', default=False, help='ensemble multiple parsers for predicting')
+    args_parser.add_argument('--fine_tune', action='store_true', default=False, help='fine-tuning from pretrained parser')
     args_parser.add_argument('--merge_by', type=str, choices=['logits', 'probs'], default='logits', help='ensemble policy')
 
     args = args_parser.parse_args()
