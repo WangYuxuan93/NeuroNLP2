@@ -396,7 +396,7 @@ def train(args):
         data_paths=dev_path
     # ************ jeffrey: add adversarial sample ****************8
 
-    ratio = 1.0
+    adv_chosen_len = 20000
     seed = 1529
     np.random.seed(seed)
     allline = []
@@ -405,11 +405,12 @@ def train(args):
         if train_path !="none":
             with open(train_path, "r", encoding="utf-8") as f:
                 allline = f.read().strip().split("\n\n")
+                logger.info("训练集的长度是%d"%len(allline))
         with open(train_adv_path,"r",encoding="utf-8") as f1:
             lines = f1.read().strip().split("\n\n")
             # filter out sentences not attacked
             # for sent in lines:
-                #******** 选择攻击成功的句子加入*********
+                # ******** 选择攻击成功的句子加入*********
                 # flag = False
                 # for x in sent.split("\n"):
                 #     word=x.split("\t")
@@ -418,11 +419,14 @@ def train(args):
                 #         break
                 # if flag:
                 #     chosen_sents.append(sent)
-                # *************************end ***********
+                # *************************end **********
             chosen_sents = lines
         np.random.shuffle(chosen_sents)
-        allline.extend(chosen_sents[0:round(len(chosen_sents)*ratio)])  # ratio要确认好
+        if adv_chosen_len>len(chosen_sents):
+            adv_chosen_len = len(chosen_sents)
+        allline.extend(chosen_sents[0:adv_chosen_len])  # ratio要确认好
         np.random.shuffle(allline)
+        logger.info("加入adv之后，训练集的长度是%d"%len(allline))
         train_path=os.path.join(args.model_path, "merge_train.txt")
         with open(train_path, "w", encoding="utf-8") as f:
             for x in range(len(allline)):
@@ -1189,7 +1193,8 @@ def parse(args):
     if args.output_filename:
         pred_filename = args.output_filename
     else:
-        pred_filename = os.path.join(result_path, 'parse_pred.txt')
+        # 预测时候的输出文件名
+        pred_filename = os.path.join(result_path, 'parse-augment-20m-lt-0.1.conll')
         #pred_filename = os.path.join("/users7/zllei/exp_data/models/parsing/PTB/biaffine", 'transferability-same-embedding.txt')
     pred_writer.start(pred_filename)
     #gold_filename = os.path.join(result_path, 'gold.txt')
