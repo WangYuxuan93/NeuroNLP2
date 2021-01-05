@@ -170,9 +170,9 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         data = data_[0]
         sub_batchers = []
         for d in data_[1:]:
-            sub_batchers.append(iter(iterate(d, batch_size)))
+            sub_batchers.append(iter(iterate(d, batch_size, task_type="sdp")))
 
-    for data in iterate(data, batch_size):
+    for data in iterate(data, batch_size, task_type="sdp"):
         if multi_lan_iter:
             lan_id, data = data
             lan_id = torch.LongTensor([lan_id]).to(device) 
@@ -288,12 +288,12 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         label_pred_num += type_cal[2]
 
     # ======================= calculate UF  & LF =======================
-    arc_p = arc_tp / (arc_tp + arc_fp)
-    arc_r = arc_tp / (arc_tp + arc_fn)
-    arc_f = (2 * arc_p * arc_r) / (arc_p + arc_r)
-    type_p = label_match/label_pred_num
-    type_r = label_match/label_true
-    type_f = (2 * type_p * type_r) / (type_p + type_r)
+    arc_p = arc_tp / (arc_tp + arc_fp + 1e-8)
+    arc_r = arc_tp / (arc_tp + arc_fn + 1e-8)
+    arc_f = (2 * arc_p * arc_r) / (arc_p + arc_r + 1e-8)
+    type_p = label_match/(label_pred_num + 1e-8)
+    type_r = label_match/(label_true + 1e-8)
+    type_f = (2 * type_p * type_r) / (type_p + type_r + 1e-8)
     print("UP:%.4f    LP:%.4f\nUR:%.4f    LR:%.4f\nUF:%.4f    LF:%.4f\n" % (arc_p, type_p,arc_r,type_r,arc_f,type_f))
 
     if accum_total_err == 0:
@@ -686,7 +686,7 @@ def train(args):
         #    torch.cuda.empty_cache()
         gc.collect()
         #for step, data in enumerate(iterate_data(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True)):
-        for step, data in enumerate(iterate(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True, switch_lan=True)):
+        for step, data in enumerate(iterate(data_train, batch_size, bucketed=True, unk_replace=unk_replace, shuffle=True, switch_lan=True, task_type="sdp")):
             if alg == 'graph' and data_format == 'ud' and not args.mix_datasets:
                 lan_id, data = data
                 lan_id = torch.LongTensor([lan_id]).to(device)
