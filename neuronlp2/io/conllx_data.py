@@ -21,7 +21,8 @@ _buckets = [10, 15, 20, 25, 30, 35, 40, 50, 60, 70, 140]
 
 
 def create_alphabets(alphabet_directory, train_path, data_paths=None, max_vocabulary_size=100000, embedd_dict=None,
-                     min_occurrence=1, normalize_digits=True, pos_idx=4, expand_with_pretrained=False, task_type='dp'):
+                     min_occurrence=1, normalize_digits=True, pos_idx=4, expand_with_pretrained=False,
+                     log_name="Create Alphabets", task_type="dp"):
     
     def expand_vocab_with_pretrained():
         logger.info("Expanding word vocab with pretrained words")
@@ -68,7 +69,7 @@ def create_alphabets(alphabet_directory, train_path, data_paths=None, max_vocabu
                         vocab_set.add(word)
                         vocab_list.append(word)
 
-    logger = get_logger("Create Alphabets")
+    logger = get_logger(log_name)
     word_alphabet = Alphabet('word', default_value=True, singleton=True)
     char_alphabet = Alphabet('character', default_value=True)
     pos_alphabet = Alphabet('pos',keep_growing=True)
@@ -136,14 +137,14 @@ def create_alphabets(alphabet_directory, train_path, data_paths=None, max_vocabu
         vocab_list = [word for word in vocab_list if word in _START_VOCAB or vocab[word] > min_occurrence]
         logger.info("Total Vocabulary Size (w.o rare words): %d" % len(vocab_list))
 
-        if len(vocab_list) > max_vocabulary_size:
-            vocab_list = vocab_list[:max_vocabulary_size]
-
         if data_paths is not None and embedd_dict is not None:
             expand_vocab()
 
         if embedd_dict is not None and expand_with_pretrained:
             expand_vocab_with_pretrained()
+
+        if len(vocab_list) > max_vocabulary_size:
+            vocab_list = vocab_list[:max_vocabulary_size]
 
         for word in vocab_list:
             word_alphabet.add(word)

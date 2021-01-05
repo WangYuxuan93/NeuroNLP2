@@ -1,0 +1,21 @@
+{
+  "biaf-glove-v0-black-emb+mlm+sem+syn-conllu_dm_id": {
+    "ndigit": "",
+    "seed": 666,
+    "tagger": "nltk",
+    "parser": "/users7/zllei/data_temp/data_temp",
+    "mode": "black",
+    "lm": "none",
+    "lm_path": "/users2/yxwang/work/data/models/elmo",
+    "basic_emb": "",
+    "generator": "sememe:synonym:embedding:mlm",
+    "filter": "word_sim:lm:grammar",
+    "wsim": 0.7,
+    "ssim": 0.95,
+    "max_knn": 50,
+    "rel_ratio": 0.5,
+    "flu_ratio": 0,
+    "max_mod_percent": 0.15,
+    "ppl_diff_thres": 20.0
+  }
+}

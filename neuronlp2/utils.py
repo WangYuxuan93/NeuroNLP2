@@ -32,7 +32,7 @@ def load_embedding_dict(embedding, embedding_path, normalize_digits=True):
         # loading GloVe
         embedd_dim = -1
         embedd_dict = OrderedDict()
-        with gzip.open(embedding_path, 'rt') as file:
+        with gzip.open(embedding_path, 'rt', encoding="utf-8") as file:
             file.readline()  # 忽略第一句
             for line in file:
                 line = line.strip()
@@ -72,7 +72,8 @@ def load_embedding_dict(embedding, embedding_path, normalize_digits=True):
     elif embedding == 'sskip':
         embedd_dim = -1
         embedd_dict = OrderedDict()
-        with gzip.open(embedding_path, 'rt') as file:
+
+        with gzip.open(embedding_path, 'rt',encoding="utf-8") as file:
             # skip the first line
             file.readline()
             for line in file:
@@ -142,11 +143,11 @@ def create_alphabet_from_embedding(alphabet_directory, embedd_dict=None, vocabs=
             logger.info("Not trim pretrained vocab by data")
             for word in pretrained_vocab:
                 pretrained_alphabet.add(word)
-            for word in vocabs:
-                if word not in pretrained_vocab and word.lower() not in pretrained_vocab:
-                    n_oov += 1
+            #for word in vocabs:
+            #    if word not in pretrained_vocab and word.lower() not in pretrained_vocab:
+            #        n_oov += 1
         #vocab_size = min(len(pretrained_vocab), max_vocabulary_size)
-        logger.info("Loaded/Total Pretrained Vocab Size: %d/%d, OOV Words: %d" % (pretrained_alphabet.size(),len(pretrained_vocab),n_oov))
+        logger.info("Loaded/Total Pretrained Vocab Size: %d/%d" % (pretrained_alphabet.size(),len(pretrained_vocab)))
         
         pretrained_alphabet.save(alphabet_directory)
     else:

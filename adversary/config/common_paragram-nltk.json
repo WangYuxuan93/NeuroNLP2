@@ -1,11 +1,11 @@
 {
   "src_path": "/users2/yxwang/work/env/py3.6/bin/activate",
-  "main_path": "/users2/yxwang/work/codes/NeuroNLP2/adversary/adv_attack.py",
+  "main_path": "/users7/zllei/NeuroNLP2/adversary/attack.py",
   "beam": 1,
   "ndigit": "",
   "ens": "",
-  "batch": 32,
-  "adv_batch": 32,
+  "batch":128,
+  "adv_batch": 128,
   "tagger": "nltk",
   "use_pad": "",
   "adv_lm_path": "/users2/yxwang/work/data/models/gpt2",
@@ -23,5 +23,8 @@
   "dynamic_mlm_cand": "",
   "wordpiece_backoff": "",
   "cached_path": " --cached_path /users2/yxwang/work/experiments/adversarial/data/ptb.test.all-cands.nltk.json ",
-  "test": "/users2/yxwang/work/data/ptb/dependency-stanford-chen14/PTB_test_auto.conll"
+  "test": "/users2/yxwang/work/data/ptb/dependency-stanford-chen14/PTB_test_auto.conll",
+  "new_path": "none",
+  "add_adv": "false",
+  "use_random": ""
 }
