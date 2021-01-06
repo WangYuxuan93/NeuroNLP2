@@ -224,10 +224,13 @@ class StackPointerParser(BiaffineParser):
         # rel_c [batch, length, rel_space]
         # hn [num_direction, batch, hidden_size]
         # (batch, seq_len, embed_size)
+        # Jeffrey: 先进行embedding
         embeddings = self._embed(input_word, input_pretrained, input_char, input_pos, 
                                 bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id)
         # (batch, seq_len, hidden_size)
+        # Jeffrey: 进行encoder
         output_enc, hn = self._input_encoder(embeddings, mask=mask, lan_id=lan_id)
+        # Jeffrey: output_enc hidden的输出， hn为cell state
         enc_dim = output_enc.size(2)
         device = output_enc.device
         # output size [batch, length_encoder, arc_space]
@@ -264,14 +267,14 @@ class StackPointerParser(BiaffineParser):
 
         num_hyp = 1
         mask_hyp = torch.ones(batch, 1, device=device)
-        hx = hn
+        hx = hn  # hx: context
         for t in range(num_steps):
             # [batch, num_hyp]
-            curr_heads = stacked_heads[:, :, t]
-            curr_gpars = heads.gather(dim=2, index=curr_heads.unsqueeze(2)).squeeze(2)
-            curr_sibs = siblings[:, :, t] if self.sibling else None
+            curr_heads = stacked_heads[:, :, t]  # 当前head
+            curr_gpars = heads.gather(dim=2, index=curr_heads.unsqueeze(2)).squeeze(2) # 查找父节点
+            curr_sibs = siblings[:, :, t] if self.sibling else None # 一个兄弟节点
             # [batch, num_hyp, enc_dim]
-            src_encoding = output_enc.gather(dim=1, index=curr_heads.unsqueeze(2).expand(batch, num_hyp, enc_dim))
+            src_encoding = output_enc.gather(dim=1, index=curr_heads.unsqueeze(2).expand(batch, num_hyp, enc_dim)) # 取出num_hyp个词的嵌入表示
 
             if self.sibling:
                 mask_sib = curr_sibs.gt(0).float().unsqueeze(2)
@@ -284,7 +287,7 @@ class StackPointerParser(BiaffineParser):
 
             # transform to decoder input
             # [batch, num_hyp, dec_dim]
-            src_encoding = self.activation(self.src_dense(src_encoding))
+            src_encoding = self.activation(self.src_dense(src_encoding)) # 进行线性变换，维度压缩
 
             # output [batch * num_hyp, dec_dim]
             # hx [decoder_layer, batch * num_hyp, dec_dim]
@@ -325,6 +328,7 @@ class StackPointerParser(BiaffineParser):
             hypothesis_scores.masked_fill_(~(mask_non_leaf + mask_leaf), float('-inf'))
             # [batch, num_hyp * length]
             hypothesis_scores, hyp_index = torch.sort(hypothesis_scores.view(batch, -1), dim=1, descending=True)
+            # 预测的head结果
 
             # [batch]
             prev_num_hyp = num_hyp
@@ -337,7 +341,7 @@ class StackPointerParser(BiaffineParser):
             # [batch, num_hyp]
             hypothesis_scores = hypothesis_scores[:, :num_hyp]
             hyp_index = hyp_index[:, :num_hyp]
-            base_index = hyp_index / max_len
+            base_index = hyp_index // max_len
             child_index = hyp_index % max_len
 
             # [batch, num_hyp]

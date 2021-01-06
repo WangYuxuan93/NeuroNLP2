@@ -72,7 +72,8 @@ def load_embedding_dict(embedding, embedding_path, normalize_digits=True):
     elif embedding == 'sskip':
         embedd_dim = -1
         embedd_dict = OrderedDict()
-        with gzip.open(embedding_path, 'rt', encoding="utf-8") as file:
+
+        with gzip.open(embedding_path, 'rt',encoding="utf-8") as file:
             # skip the first line
             file.readline()
             for line in file:

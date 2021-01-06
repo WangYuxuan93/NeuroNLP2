@@ -36,7 +36,7 @@ from neuronlp2.nn.utils import freeze_embedding
 from neuronlp2.io import common
 from transformers import AutoTokenizer
 from neuronlp2.io.common import PAD, ROOT, END
-from neuronlp2.io.batcher import multi_language_iterate_data, iterate_data
+from neuronlp2.io.batcher import multi_language_iterate_data, iterate_data,iterate_data_dp
 from neuronlp2.io import multi_ud_data
 
 def get_optimizer(parameters, optim, learning_rate, lr_decay, betas, eps, amsgrad, weight_decay, 
@@ -154,16 +154,19 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
     if multi_lan_iter:
         iterate = multi_language_iterate_data
     else:
-        iterate = iterate_data
+        iterate = iterate_data_dp
         lan_id = None
 
     if ensemble:
+        tokenizers = tokenizer
+        tokenizer = tokenizers[0]
         n = len(data) - 1
         data_ = data
         data = data_[0]
         sub_batchers = []
         for d in data_[1:]:
             sub_batchers.append(iter(iterate(d, batch_size)))
+        assert len(sub_batchers) == len(tokenizers)-1
 
     for data in iterate(data, batch_size):
         if multi_lan_iter:
@@ -193,8 +196,18 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
             words = [words]
             chars = [chars]
             postags = [postags]
-            for batcher in sub_batchers:
+            bpes = [bpes]
+            first_idx = [first_idx]
+            for batcher, sub_tokenizer in zip(sub_batchers, tokenizers[1:]):
                 sub_data = next(batcher, None)
+                if tokenizer:
+                    sub_bpes, sub_first_idx = convert_tokens_to_ids(sub_tokenizer, srcs)
+                    sub_bpes = sub_bpes.to(device)
+                    sub_first_idx = sub_first_idx.to(device)
+                else:
+                    sub_bpes = sub_first_idx = None
+                bpes.append(sub_bpes)
+                first_idx.append(sub_first_idx)
                 lens = sub_data['LENGTH'].numpy()
                 assert (lens == lengths).all()
                 words.append(sub_data['WORD'].to(device))
@@ -325,11 +338,13 @@ def train(args):
     if data_format == 'conllx':
         data_reader = conllx_data
         train_path = args.train
+        train_adv_path = args.train_adv
         dev_path = args.dev
         test_path = args.test
     elif data_format == 'ud':
         data_reader = ud_data
         train_path = args.train.split(':')
+        train_adv_path = args.train_adv.split(':')
         dev_path = args.dev.split(':')
         test_path = args.test.split(':')
     else:
@@ -373,7 +388,7 @@ def train(args):
     only_pretrain_static = use_pretrained_static and not use_random_static
     use_elmo = args.use_elmo
     elmo_path = args.elmo_path
-
+    pretrained_network = args.pretrained_network
     print(args)
 
     word_dict, word_dim = utils.load_embedding_dict(word_embedding, word_path)
@@ -392,8 +407,46 @@ def train(args):
     elif data_format == "ud":
         #data_paths=dev_path + test_path
         data_paths=dev_path
+    # ************ jeffrey: add adversarial sample ****************8
+
+    adv_chosen_len = 20000
+    seed = 1529
+    np.random.seed(seed)
+    allline = []
+    chosen_sents = []
+    if train_adv_path != "none":
+        if train_path !="none":
+            with open(train_path, "r", encoding="utf-8") as f:
+                allline = f.read().strip().split("\n\n")
+                logger.info("训练集的长度是%d"%len(allline))
+        with open(train_adv_path,"r",encoding="utf-8") as f1:
+            lines = f1.read().strip().split("\n\n")
+            # filter out sentences not attacked
+            # for sent in lines:
+                # ******** 选择攻击成功的句子加入*********
+                # flag = False
+                # for x in sent.split("\n"):
+                #     word=x.split("\t")
+                #     if word[9]!="_":
+                #         flag=True
+                #         break
+                # if flag:
+                #     chosen_sents.append(sent)
+                # *************************end **********
+            chosen_sents = lines
+        np.random.shuffle(chosen_sents)
+        if adv_chosen_len>len(chosen_sents):
+            adv_chosen_len = len(chosen_sents)
+        allline.extend(chosen_sents[0:adv_chosen_len])  # ratio要确认好
+        np.random.shuffle(allline)
+        logger.info("加入adv之后，训练集的长度是%d"%len(allline))
+        train_path=os.path.join(args.model_path, "merge_train.txt")
+        with open(train_path, "w", encoding="utf-8") as f:
+            for x in range(len(allline)):
+                f.write(allline[x]+"\n\n")
+
     word_alphabet, char_alphabet, pos_alphabet, rel_alphabet = data_reader.create_alphabets(alphabet_path, train_path,
-                                                                                             data_paths=data_paths, 
+                                                                                             data_paths=data_paths,
                                                                                              embedd_dict=word_dict, 
                                                                                              max_vocabulary_size=args.max_vocab_size,
                                                                                              normalize_digits=args.normalize_digits,
@@ -498,10 +551,14 @@ def train(args):
         data_reader = multi_ud_data
 
     if pretrained_lm in ['none','elmo']:
-        tokenizer = None 
+        tokenizer = None
     else:
-        print (lm_path)
+        print(lm_path)
         tokenizer = AutoTokenizer.from_pretrained(lm_path)
+        # ********** Jeffrey: add tokenizes for all bert ******
+        if False:
+            tokenizer.add_tokens(['nerves','lawyer'])
+        # ****************************************
 
     logger.info("##### Parser Type: {} #####".format(model_type))
     alg = 'transition' if model_type == 'StackPointer' else 'graph'
@@ -521,7 +578,11 @@ def train(args):
                                num_lans=num_lans)
     else:
         raise RuntimeError('Unknown model type: %s' % model_type)
-
+    # ********* pre_trained network  *************
+    if pretrained_network:
+        model_name_pre = os.path.join(model_path, 'model_pretrained.pt')
+        network.load_state_dict(torch.load(model_name_pre, map_location=device))
+        logger.info("pretrained parameters is loaded successfully! ")
     num_gpu = torch.cuda.device_count()
     logger.info("GPU Number: %d" % num_gpu)
     if args.fine_tune:
@@ -672,7 +733,7 @@ def train(args):
         iterate = multi_language_iterate_data
         multi_lan_iter = True
     else:
-        iterate = iterate_data
+        iterate = iterate_data_dp
         multi_lan_iter = False
         lan_id = None
     for epoch in range(1, num_epochs + 1):
@@ -702,6 +763,7 @@ def train(args):
                 lan_id = torch.LongTensor([lan_id]).to(device)
                 #print ("lan_id:",lan_id)
             optimizer.zero_grad()
+
             words = data['WORD'].to(device)
             chars = data['CHAR'].to(device)
             postags = data['POS'].to(device)
@@ -739,7 +801,8 @@ def train(args):
                 rels = data['TYPE'].to(device)
                 masks = data['MASK'].to(device)
                 nwords = masks.sum() - nbatch
-                losses, statistics = network(words, pres, chars, postags, heads, rels, 
+
+                losses, statistics = network(words, pres, chars, postags, heads, rels,
                             mask=masks, bpes=bpes, first_idx=first_idx, input_elmo=input_elmo,
                             lan_id=lan_id)
             else:
@@ -1001,6 +1064,7 @@ def parse(args):
             logger.info("Character Alphabet Size: %d" % num_chars[i])
             logger.info("POS Alphabet Size: %d" % num_pos[i])
             logger.info("Rel Alphabet Size: %d" % num_rels[i])
+
         model_path = model_paths[0]
         hyps = [json.load(open(os.path.join(path, 'config.json'), 'r')) for path in model_paths]
         model_type = hyps[0]['model']
@@ -1043,6 +1107,7 @@ def parse(args):
 
     logger.info("loading network...")
 
+
     num_lans = 1
     if data_format == 'ud' and not args.mix_datasets:
         lans_train = args.lan_train.split(':')
@@ -1061,8 +1126,16 @@ def parse(args):
                                    use_pretrained_static=args.use_pretrained_static, 
                                    use_random_static=args.use_random_static,
                                    use_elmo=args.use_elmo, elmo_path=args.elmo_path,
+
                                    num_lans=num_lans, model_paths=model_paths, merge_by=args.merge_by)
-        pretrained_lm = network.pretrained_lm
+        tokenizers = []
+        for pretrained_lm, lm_path in zip(network.pretrained_lms, network.lm_paths):
+            if pretrained_lm == 'none':
+                tokenizer = None 
+            else:
+                tokenizer = AutoTokenizer.from_pretrained(lm_path)
+            tokenizers.append(tokenizer)
+        tokenizer = tokenizers
     else:
         if model_type == 'Biaffine':
             network = BiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels,
@@ -1084,10 +1157,10 @@ def parse(args):
         network = network.to(device)
         network.load_state_dict(torch.load(model_name, map_location=device))
 
-    if pretrained_lm in ['none']:
-        tokenizer = None 
-    else:
-        tokenizer = AutoTokenizer.from_pretrained(lm_path)
+        if pretrained_lm in ['none']:
+            tokenizer = None 
+        else:
+            tokenizer = AutoTokenizer.from_pretrained(lm_path)
 
     logger.info("Reading Data")
     if args.ensemble:
@@ -1152,7 +1225,9 @@ def parse(args):
     if args.output_filename:
         pred_filename = args.output_filename
     else:
-        pred_filename = os.path.join(result_path, 'pred.txt')
+        # 预测时候的输出文件名
+        pred_filename = os.path.join(result_path, 'parse-augment-20m-lt-0.1.conll')
+        #pred_filename = os.path.join("/users7/zllei/exp_data/models/parsing/PTB/biaffine", 'transferability-same-embedding.txt')
     pred_writer.start(pred_filename)
     #gold_filename = os.path.join(result_path, 'gold.txt')
     #gold_writer.start(gold_filename)
@@ -1223,6 +1298,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--lan_dev', type=str, default='en', help='lc for dev files (split with \':\')')
     args_parser.add_argument('--lan_test', type=str, default='en', help='lc for test files (split with \':\')')
     args_parser.add_argument('--train', help='path for training file.')
+    args_parser.add_argument('--train_adv', help='path for adversarial file.')
     args_parser.add_argument('--dev', help='path for dev file.')
     args_parser.add_argument('--test', help='path for test file.', required=True)
     args_parser.add_argument('--model_path', help='path for saving model file.', required=True)
@@ -1230,7 +1306,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--ensemble', action='store_true', default=False, help='ensemble multiple parsers for predicting')
     args_parser.add_argument('--fine_tune', action='store_true', default=False, help='fine-tuning from pretrained parser')
     args_parser.add_argument('--merge_by', type=str, choices=['logits', 'probs'], default='logits', help='ensemble policy')
-
+    args_parser.add_argument('--pretrained_network', default=False, action='store_true', help='ensemble types')
     args = args_parser.parse_args()
     if args.mode == 'train':
         train(args)

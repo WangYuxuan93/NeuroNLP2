@@ -1,8 +1,11 @@
+# coding=utf-8
 import nltk
 from nltk.corpus import wordnet as wn
 import spacy
 nlp = spacy.load('en_core_web_sm')
 import language_check
+import sys
+import codecs
 import stanza
 
 from functools import partial
@@ -30,6 +33,8 @@ from neuronlp2.io import common
 from adversary.lm.bert import Bert
 #from adversary.attack import convert_tokens_to_ids
 from neuronlp2.io.common import DIGIT_RE
+
+#sys.stdout = codecs.getwriter("utf-8")(sys.stdout.detach())
 
 stopwords = set(
         [
@@ -418,7 +423,7 @@ class BlackBoxAttacker(object):
         logger.info("Normalize digits: {}".format(normalize_digits))
         if cached_path is not None:
             logger.info("Loading cached candidates from: %s" % cached_path)
-            self.cached_cands = json.load(open(cached_path, 'r'))
+            self.cached_cands = json.load(open(cached_path, 'r', encoding="utf-8"))
         else:
             self.cached_cands = None
         if self.tagger == 'stanza':
@@ -432,7 +437,7 @@ class BlackBoxAttacker(object):
         self.id2word = {i:w for (w,i) in vocab.items()}
         if 'train' in self.filters and train_vocab is not None:
             logger.info("Loading train vocab for filter from: %s" % train_vocab)
-            self.train_vocab = json.load(open(train_vocab, 'r'))
+            self.train_vocab = json.load(open(train_vocab, 'r',encoding="utf-8"))
         else:
             self.train_vocab = None
         if ('word_sim' in self.filters or (self.cached_cands is None and 'embedding' in self.generators)) and knn_path is not None:
@@ -460,7 +465,7 @@ class BlackBoxAttacker(object):
         if 'mlm' in self.generators and (self.dynamic_mlm_cand or self.cached_cands is None):
             self.n_mlm_cands = n_mlm_cands
             if mlm_cand_file is not None and not self.dynamic_mlm_cand:
-                self.mlm_cand_dict = json.load(open(mlm_cand_file, 'r'))
+                self.mlm_cand_dict = json.load(open(mlm_cand_file, 'r',encoding="utf-8"))
                 logger.info("Loading MLM candidates from: {} ({} sentences)".format(mlm_cand_file, len(self.mlm_cand_dict)))
                 self.mlm_cand_model = None
             elif cand_mlm is not None:
@@ -611,6 +616,7 @@ class BlackBoxAttacker(object):
         if self.ensemble:
             num_models = len(self.word_alphabets)
             word_ids = [[] for _ in range(num_models)]
+            bpes, first_idx = [], []
             if self.model.hyps['input']['use_pos']:
                 tag_ids = [[] for _ in range(num_models)]
             else:
@@ -624,6 +630,15 @@ class BlackBoxAttacker(object):
                     word_ids[i].append(word_list)
                 if self.model.hyps['input']['use_pos']:
                     tag_ids[i] = [[self.pos_alphabets[i].get_index(x) for x in s] for s in tags]
+
+                if self.tokenizer[i] is not None:
+                    sub_bpes, sub_first_idx = convert_tokens_to_ids(self.tokenizer[i], tokens)
+                    sub_bpes = sub_bpes.to(self.device)
+                    sub_first_idx = sub_first_idx.to(self.device)
+                else:
+                    sub_bpes, sub_first_idx = None, None
+                bpes.append(sub_bpes)
+                first_idx.append(sub_first_idx)
         else:
             word_ids = []
             for s in tokens:
@@ -656,12 +671,14 @@ class BlackBoxAttacker(object):
             elmo_inputs = elmo_inputs.to(self.device)
         else:
             elmo_inputs = None
+        """
         if self.model.pretrained_lm != "none":
             bpes, first_idx = convert_tokens_to_ids(self.tokenizer, tokens)
             bpes = bpes.to(self.device)
             first_idx = first_idx.to(self.device)
         else:
             bpes, first_idx = None, None
+        """
 
         data_size = len(tokens)
         max_length = max([len(s) for s in tokens])
@@ -736,6 +753,9 @@ class BlackBoxAttacker(object):
                     b_chars = chars[excerpt, :]
                 else:
                     b_chars = [None] * num_models
+
+                b_bpes = [sub_bpes[excerpt,:] if sub_bpes is not None else None for sub_bpes in bpes]
+                b_first_idx = [sub_first_idx[excerpt,:] if sub_first_idx is not None else None for sub_first_idx in first_idx]
             else:
                 b_words = words[excerpt, :]
                 b_pos = pos[excerpt, :]
@@ -744,20 +764,21 @@ class BlackBoxAttacker(object):
                 else:
                     b_chars = None
 
+                if bpes is not None:
+                    b_bpes = bpes[excerpt, :]
+                else:
+                    b_bpes = None
+                if first_idx is not None:
+                    b_first_idx = first_idx[excerpt, :]
+                else:
+                    b_first_idx = None
+
             b_pres = pres[excerpt, :]
             b_masks = masks[excerpt, :]
             if elmo_inputs is not None:
                 b_elms = elmo_inputs[excerpt, :]
             else:
                 b_elms = None
-            if bpes is not None:
-                b_bpes = bpes[excerpt, :]
-            else:
-                b_bpes = None
-            if first_idx is not None:
-                b_first_idx = first_idx[excerpt, :]
-            else:
-                b_first_idx = None
             b_lan_id = None
             yield b_words, b_pres, b_chars, b_pos, b_masks, b_bpes, b_first_idx, b_elms, b_lan_id
 
@@ -781,7 +802,7 @@ class BlackBoxAttacker(object):
                     heads_pred_list.append(heads_pred)
                     rels_pred_list.append(rels_pred)
             elif self.model.hyps['model'] == 'StackPointer':
-                for words, pres, chars, pos, masks, bpes, first_idx, lan_id in self.str2id(tokens, tags):
+                for words, pres, chars, pos, masks, bpes, first_idx,input_elmo, lan_id in self.str2id(tokens, tags):
                     heads_pred, rels_pred = self.model.decode(words, pres, chars, pos, mask=masks, beam=self.beam,
                             bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id, 
                             leading_symbolic=common.NUM_SYMBOLIC_TAGS)
@@ -800,10 +821,17 @@ class BlackBoxAttacker(object):
             batch_tokens: List[List[str]], (batch, seq_len)
             batch_tags: List[List[str]], (batch, seq_len)
         """
-        if not self.model.pretrained_lm in ["none", "elmo"]:
-            unk_token = self.tokenizer.unk_token
-        else: # this is defined in alphabet.py
+        if self.ensemble:
             unk_token = '<_UNK>'
+            for tokenizer in self.tokenizer:
+                if tokenizer is not None:
+                    unk_token = tokenizer.unk_token
+                    break
+        else:
+            if self.model.pretrained_lm != "none" and not self.model.use_elmo:
+                unk_token = self.tokenizer.unk_token
+            else: # this is defined in alphabet.py
+                unk_token = '<_UNK>'
         batch_len = len(tokens)+1-self.symbolic_root
         batch_tokens = [tokens.copy() for _ in range(batch_len)]
         batch_tags = [tags.copy() for _ in range(batch_len)]
@@ -993,7 +1021,7 @@ class BlackBoxAttacker(object):
         batch_sents = [self.list2str(toks) for toks in batch_tokens]
         origin_matches = self.grammar_checker.check(batch_sents[0])
         num_origin_err = len(origin_matches)
-        origin_errors = [(match.fromx, match.tox, match.msg) for match in origin_matches]
+        origin_errors = [(match.fromx, match.tox, match.msg.encode("utf-8")) for match in origin_matches]
         # (cand_size)
         for i in range(1,len(batch_sents)):
             matches = self.grammar_checker.check(batch_sents[i])
@@ -1004,7 +1032,7 @@ class BlackBoxAttacker(object):
             for match in matches:
                 error_tok = batch_sents[i][match.fromx: match.tox]
                 if match not in origin_matches:
-                    error.append((match.fromx, match.tox, error_tok, match.msg))
+                    error.append((match.fromx, match.tox, error_tok, match.msg.encode("utf-8")))
             all_errors.append(error)
         return new_cands, all_errors, origin_errors, batch_sents[0]
 
@@ -1043,12 +1071,14 @@ class BlackBoxAttacker(object):
                 if debug == 3:
                     print ("--------------------------")
                     print ("Idx={}({}), all word_sim less than min, continue".format(idx, tokens[idx]))
-                    print ("word_sims:", *zip(all_cands, all_w_sims))
+                    print ("word_sims:", *zip(all_cands, all_w_sims)) #jeffrey
+
                 return cands, None
             else:
                 print ("--------------------------")
                 print ("Idx={}({})".format(idx, tokens[idx]))
-                print ("word_sims:", *zip(all_cands, all_w_sims))
+                print ("word_sims:", *zip(all_cands, all_w_sims)) #jeffrey
+
         all_cands = cands.copy()
         if "sent_sim" in self.filters:
             cands, s_sims, all_s_sims = self.filter_cands_with_sent_sim(tokens, cands, idx)
@@ -1077,9 +1107,10 @@ class BlackBoxAttacker(object):
             else:
                 print ("--------------------------")
                 print ("origin sent:", origin_str)
-                print ("origin errors:", origin_errors)
+                print ("origin errors",origin_errors)
                 print ("Idx={}({})".format(idx, tokens[idx]))
-                print ("errors:", *zip(all_cands, all_errors))
+                print ("errors:", *zip(all_cands, all_errors)) # jeffrey
+
         # filter with language model
         all_cands = cands.copy()
         perp_diff = None
@@ -1327,6 +1358,7 @@ class BlackBoxAttacker(object):
             cache_data = None
         else:
             cand_set, cache_data = self._get_candidate_set(tokens, tag, idx, sent_id=sent_id, cache=cache)
+
         return cand_set, cache_data
 
     def attack(self, tokens, tags, heads, rel_ids, sent_id=None, debug=False, cache=False):
