@@ -75,12 +75,12 @@ class BiaffineParser(nn.Module):
         word_dim = hyps['input']['word_dim']
         pos_dim = hyps['input']['pos_dim']
         char_dim = hyps['input']['char_dim']
-
+        
         self.use_pretrained_static = hyps["input"]["use_pretrained_static"] if "use_pretrained_static" in hyps["input"] else use_pretrained_static
         self.use_random_static = hyps["input"]["use_random_static"] if "use_random_static" in hyps["input"] else use_random_static
         self.use_elmo = hyps["input"]["use_elmo"] if "use_elmo" in hyps["input"] else use_elmo
         self.pretrained_lm = hyps["input"]["pretrained_lm"] if "pretrained_lm" in hyps["input"] else pretrained_lm
-        self.only_pretrain_static = use_pretrained_static and not use_random_static
+        self.only_pretrain_static = self.use_pretrained_static and not self.use_random_static
 
         # for biaffine layer
         self.arc_mlp_dim = hyps['biaffine']['arc_mlp_dim']
@@ -105,8 +105,8 @@ class BiaffineParser(nn.Module):
         logger.info("Network: %s, hidden=%d, act=%s" % (model, hidden_size, activation))
         logger.info("##### Embeddings (POS tag: %s, Char: %s) #####" % (use_pos, use_char))
         logger.info("dropout(in, out): (%.2f, %.2f)" % (p_in, p_out))
-        logger.info("Use Randomly Init Word Emb: %s" % (use_random_static))
-        logger.info("Use Pretrained Word Emb: %s" % (use_pretrained_static))
+        logger.info("Use Randomly Init Word Emb: %s" % (self.use_random_static))
+        logger.info("Use Pretrained Word Emb: %s" % (self.use_pretrained_static))
         logger.info("##### Input Encoder (Type: %s, Layer: %d, Hidden: %d) #####" % (input_encoder_name, num_layers, hidden_size))
         logger.info("Langauge embedding as input: %s (size: %d)" % (self.lan_emb_as_input, lan_emb_size))
         # Initialization

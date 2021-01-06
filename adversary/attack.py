@@ -3,6 +3,7 @@ import sys
 import gc
 import json
 import pickle
+import string
 
 current_path = os.path.dirname(os.path.realpath(__file__))
 root_path = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
