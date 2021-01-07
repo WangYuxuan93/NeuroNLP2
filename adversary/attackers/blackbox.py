@@ -611,6 +611,7 @@ class BlackBoxAttacker(object):
         if self.ensemble:
             num_models = len(self.word_alphabets)
             word_ids = [[] for _ in range(num_models)]
+            bpes, first_idx = [], []
             if self.model.hyps['input']['use_pos']:
                 tag_ids = [[] for _ in range(num_models)]
             else:
@@ -624,6 +625,15 @@ class BlackBoxAttacker(object):
                     word_ids[i].append(word_list)
                 if self.model.hyps['input']['use_pos']:
                     tag_ids[i] = [[self.pos_alphabets[i].get_index(x) for x in s] for s in tags]
+
+                if self.tokenizer[i] is not None:
+                    sub_bpes, sub_first_idx = convert_tokens_to_ids(self.tokenizer[i], tokens)
+                    sub_bpes = sub_bpes.to(self.device)
+                    sub_first_idx = sub_first_idx.to(self.device)
+                else:
+                    sub_bpes, sub_first_idx = None, None
+                bpes.append(sub_bpes)
+                first_idx.append(sub_first_idx)
         else:
             word_ids = []
             for s in tokens:
@@ -656,12 +666,14 @@ class BlackBoxAttacker(object):
             elmo_inputs = elmo_inputs.to(self.device)
         else:
             elmo_inputs = None
+        """
         if self.model.pretrained_lm != "none":
             bpes, first_idx = convert_tokens_to_ids(self.tokenizer, tokens)
             bpes = bpes.to(self.device)
             first_idx = first_idx.to(self.device)
         else:
             bpes, first_idx = None, None
+        """
 
         data_size = len(tokens)
         max_length = max([len(s) for s in tokens])
@@ -736,6 +748,9 @@ class BlackBoxAttacker(object):
                     b_chars = chars[excerpt, :]
                 else:
                     b_chars = [None] * num_models
+
+                b_bpes = [sub_bpes[excerpt,:] if sub_bpes is not None else None for sub_bpes in bpes]
+                b_first_idx = [sub_first_idx[excerpt,:] if sub_first_idx is not None else None for sub_first_idx in first_idx]
             else:
                 b_words = words[excerpt, :]
                 b_pos = pos[excerpt, :]
@@ -744,20 +759,21 @@ class BlackBoxAttacker(object):
                 else:
                     b_chars = None
 
+                if bpes is not None:
+                    b_bpes = bpes[excerpt, :]
+                else:
+                    b_bpes = None
+                if first_idx is not None:
+                    b_first_idx = first_idx[excerpt, :]
+                else:
+                    b_first_idx = None
+
             b_pres = pres[excerpt, :]
             b_masks = masks[excerpt, :]
             if elmo_inputs is not None:
                 b_elms = elmo_inputs[excerpt, :]
             else:
                 b_elms = None
-            if bpes is not None:
-                b_bpes = bpes[excerpt, :]
-            else:
-                b_bpes = None
-            if first_idx is not None:
-                b_first_idx = first_idx[excerpt, :]
-            else:
-                b_first_idx = None
             b_lan_id = None
             yield b_words, b_pres, b_chars, b_pos, b_masks, b_bpes, b_first_idx, b_elms, b_lan_id
 
@@ -800,10 +816,17 @@ class BlackBoxAttacker(object):
             batch_tokens: List[List[str]], (batch, seq_len)
             batch_tags: List[List[str]], (batch, seq_len)
         """
-        if not self.model.pretrained_lm in ["none", "elmo"]:
-            unk_token = self.tokenizer.unk_token
-        else: # this is defined in alphabet.py
+        if self.ensemble:
             unk_token = '<_UNK>'
+            for tokenizer in self.tokenizer:
+                if tokenizer is not None:
+                    unk_token = tokenizer.unk_token
+                    break
+        else:
+            if self.model.pretrained_lm != "none" and not self.model.use_elmo:
+                unk_token = self.tokenizer.unk_token
+            else: # this is defined in alphabet.py
+                unk_token = '<_UNK>'
         batch_len = len(tokens)+1-self.symbolic_root
         batch_tokens = [tokens.copy() for _ in range(batch_len)]
         batch_tags = [tags.copy() for _ in range(batch_len)]

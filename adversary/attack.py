@@ -142,12 +142,15 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         lan_id = None
 
     if ensemble:
+        tokenizers = tokenizer
+        tokenizer = tokenizers[0]
         n = len(data) - 1
         data_ = data
         data = data_[0]
         sub_batchers = []
         for d in data_[1:]:
             sub_batchers.append(iter(iterate(d, batch_size)))
+        assert len(sub_batchers) == len(tokenizers)-1
 
     for data in iterate(data, batch_size):
         if multi_lan_iter:
@@ -177,8 +180,16 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
             words = [words]
             chars = [chars]
             postags = [postags]
-            for batcher in sub_batchers:
+            for batcher, sub_tokenizer in zip(sub_batchers, tokenizers[1:]):
                 sub_data = next(batcher, None)
+                if tokenizer:
+                    sub_bpes, sub_first_idx = convert_tokens_to_ids(sub_tokenizer, srcs)
+                    sub_bpes = sub_bpes.to(device)
+                    sub_first_idx = sub_first_idx.to(device)
+                else:
+                    sub_bpes = sub_first_idx = None
+                bpes.append(sub_bpes)
+                first_idx.append(sub_first_idx)
                 lens = sub_data['LENGTH'].numpy()
                 assert (lens == lengths).all()
                 words.append(sub_data['WORD'].to(device))
@@ -338,6 +349,8 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
         lan_id = None
 
     if ensemble:
+        tokenizers = tokenizer
+        tokenizer = tokenizers[0]
         word_alphabets = word_alphabet.copy()
         word_alphabet = word_alphabets[0]
         data_ = data
@@ -345,6 +358,7 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
         sub_batchers = []
         for d in data_[1:]:
             sub_batchers.append(iter(iterate(d, batch_size)))
+        assert len(sub_batchers) == len(tokenizers)-1
 
     use_elmo = network.use_elmo
 
@@ -464,12 +478,24 @@ def attack(attacker, alg, data, network, pred_writer, adv_gold_writer, punct_set
             input_elmo = input_elmo.to(device)
         else:
             input_elmo = None
-        if tokenizer:
-            bpes, first_idx = convert_tokens_to_ids(tokenizer, adv_src)
-            bpes = bpes.to(device)
-            first_idx = first_idx.to(device)
+        if ensemble:
+            bpes, first_idx = [], []
+            for tokenizer in tokenizers:
+                if tokenizer:
+                    sub_bpes, sub_first_idx = convert_tokens_to_ids(tokenizer, adv_src)
+                    sub_bpes = sub_bpes.to(device)
+                    sub_first_idx = sub_first_idx.to(device)
+                else:
+                    sub_bpes = sub_first_idx = None
+                bpes.append(sub_bpes)
+                first_idx.append(sub_first_idx)
         else:
-            bpes = first_idx = None
+            if tokenizer:
+                bpes, first_idx = convert_tokens_to_ids(tokenizer, adv_src)
+                bpes = bpes.to(device)
+                first_idx = first_idx.to(device)
+            else:
+                bpes = first_idx = None
 
         if alg == 'graph':
             masks = data['MASK'].to(device)
@@ -704,7 +730,14 @@ def run(args):
                                    use_random_static=args.use_random_static,
                                    use_elmo=args.use_elmo, elmo_path=args.elmo_path,
                                    num_lans=num_lans, model_paths=model_paths, merge_by=args.merge_by)
-        pretrained_lm = network.pretrained_lm
+        tokenizers = []
+        for pretrained_lm, lm_path in zip(network.pretrained_lms, network.lm_paths):
+            if pretrained_lm == 'none':
+                tokenizer = None 
+            else:
+                tokenizer = AutoTokenizer.from_pretrained(lm_path)
+            tokenizers.append(tokenizer)
+        tokenizer = tokenizers
     else:
         if model_type == 'Biaffine':
             network = BiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels,
@@ -726,10 +759,10 @@ def run(args):
         network = network.to(device)
         network.load_state_dict(torch.load(model_name, map_location=device))
 
-    if pretrained_lm in ['none']:
-        tokenizer = None 
-    else:
-        tokenizer = AutoTokenizer.from_pretrained(lm_path)
+        if pretrained_lm in ['none']:
+            tokenizer = None 
+        else:
+            tokenizer = AutoTokenizer.from_pretrained(lm_path)
 
     if args.cand.endswith('.json'):
         cands = json.load(open(args.cand, 'r'))

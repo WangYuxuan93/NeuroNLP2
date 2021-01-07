@@ -49,11 +49,13 @@ class EnsembleParser(nn.Module):
             exit()
         self.hyps = self.networks[0].hyps
         self.use_elmo = any([network.use_elmo for network in self.networks])
-        has_roberta = any([network.pretrained_lm == "roberta" for network in self.networks])
-        if has_roberta:
-            self.pretrained_lm = "roberta"
-        else:
-            self.pretrained_lm = pretrained_lm
+        #has_roberta = any([network.pretrained_lm == "roberta" for network in self.networks])
+        #if has_roberta:
+        #    self.pretrained_lm = "roberta"
+        #else:
+        #    self.pretrained_lm = pretrained_lm
+        self.pretrained_lms = [network.pretrained_lm for network in self.networks]
+        self.lm_paths = [network.lm_path for network in self.networks]
         self.lan_emb_as_input = False
 
     def eval(self):
@@ -66,8 +68,9 @@ class EnsembleParser(nn.Module):
             arc_logits_list, rel_logits_list = [], []
             for i, network in enumerate(self.networks):
                 input_word, input_char, input_pos = input_words[i], input_chars[i], input_poss[i]
+                sub_bpes, sub_first_idx = bpes[i], first_idx[i]
                 arc_logits, rel_logits = network.get_logits(input_word, input_pretrained, input_char, 
-                    input_pos, mask=mask, bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, 
+                    input_pos, mask=mask, bpes=sub_bpes, first_idx=sub_first_idx, input_elmo=input_elmo, 
                     lan_id=lan_id, leading_symbolic=leading_symbolic)
                 arc_logits_list.append(arc_logits)
                 rel_logits_list.append(rel_logits)
@@ -77,8 +80,9 @@ class EnsembleParser(nn.Module):
             arc_logits_list, rel_logits_list = [], []
             for i, network in enumerate(self.networks):
                 input_word, input_char, input_pos = input_words[i], input_chars[i], input_poss[i]
+                sub_bpes, sub_first_idx = bpes[i], first_idx[i]
                 arc_logits, rel_logits = network.get_probs(input_word, input_pretrained, input_char, 
-                    input_pos, mask=mask, bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, 
+                    input_pos, mask=mask, bpes=sub_bpes, first_idx=sub_first_idx, input_elmo=input_elmo, 
                     lan_id=lan_id, leading_symbolic=leading_symbolic)
                 arc_logits_list.append(arc_logits)
                 rel_logits_list.append(rel_logits)

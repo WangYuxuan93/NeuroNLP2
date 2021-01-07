@@ -105,8 +105,8 @@ class BiaffineParser(nn.Module):
         logger.info("Network: %s, hidden=%d, act=%s" % (model, hidden_size, activation))
         logger.info("##### Embeddings (POS tag: %s, Char: %s) #####" % (use_pos, use_char))
         logger.info("dropout(in, out): (%.2f, %.2f)" % (p_in, p_out))
-        logger.info("Use Randomly Init Word Emb: %s" % (use_random_static))
-        logger.info("Use Pretrained Word Emb: %s" % (use_pretrained_static))
+        logger.info("Use Randomly Init Word Emb: %s" % (self.use_random_static))
+        logger.info("Use Pretrained Word Emb: %s" % (self.use_pretrained_static))
         logger.info("##### Input Encoder (Type: %s, Layer: %d, Hidden: %d) #####" % (input_encoder_name, num_layers, hidden_size))
         logger.info("Langauge embedding as input: %s (size: %d)" % (self.lan_emb_as_input, lan_emb_size))
         # Initialization
