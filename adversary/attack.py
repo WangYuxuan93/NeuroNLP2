@@ -641,7 +641,11 @@ def run(args):
             logger.info("Character Alphabet Size: %d" % num_chars[i])
             logger.info("POS Alphabet Size: %d" % num_pos[i])
             logger.info("Rel Alphabet Size: %d" % num_rels[i])
-        model_path = model_paths[0] 
+        
+        model_path = model_paths[0]
+        hyps = [json.load(open(os.path.join(path, 'config.json'), 'r')) for path in model_paths]
+        model_type = hyps[0]['model']
+        assert model_type in ['Biaffine', 'StackPointer']
     else:
         model_path = args.model_path
         model_name = os.path.join(model_path, 'model.pt')
@@ -665,6 +669,10 @@ def run(args):
         logger.info("POS Alphabet Size: %d" % num_pos)
         logger.info("Rel Alphabet Size: %d" % num_rels)
 
+        hyps = json.load(open(os.path.join(model_path, 'config.json'), 'r'))
+        model_type = hyps['model']
+        assert model_type in ['Biaffine', 'StackPointer']
+
     result_path = os.path.join(model_path, 'tmp')
     if not os.path.exists(result_path):
         os.makedirs(result_path)
@@ -675,10 +683,7 @@ def run(args):
         logger.info("punctuations(%d): %s" % (len(punct_set), ' '.join(punct_set)))
 
     logger.info("loading network...")
-    hyps = json.load(open(os.path.join(model_path, 'config.json'), 'r'))
-    model_type = hyps['model']
-    assert model_type in ['Biaffine', 'StackPointer']
-
+    
     num_lans = 1
     if data_format == 'ud' and not args.mix_datasets:
         lans_train = args.lan_train.split(':')

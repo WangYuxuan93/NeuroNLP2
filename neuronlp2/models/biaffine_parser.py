@@ -62,9 +62,9 @@ class BiaffineParser(nn.Module):
     def __init__(self, hyps, num_pretrained, num_words, num_chars, num_pos, num_labels,
                  device=torch.device('cpu'),
                  embedd_word=None, embedd_char=None, embedd_pos=None,
-                 use_pretrained_static=True, use_random_static=False,
-                 use_elmo=False, elmo_path=None, 
-                 pretrained_lm='none', lm_path=None, num_lans=1, log_name='Network'):
+                 use_pretrained_static=None, use_random_static=None,
+                 use_elmo=None, elmo_path=None, 
+                 pretrained_lm=None, lm_path=None, num_lans=1, log_name='Network'):
         super(BiaffineParser, self).__init__()
         self.hyps = hyps
         self.device = device
@@ -76,10 +76,10 @@ class BiaffineParser(nn.Module):
         pos_dim = hyps['input']['pos_dim']
         char_dim = hyps['input']['char_dim']
 
-        self.use_pretrained_static = use_pretrained_static
-        self.use_random_static = use_random_static
-        self.use_elmo = use_elmo and elmo_path is not None
-        self.pretrained_lm = pretrained_lm
+        self.use_pretrained_static = hyps["input"]["use_pretrained_static"] if "use_pretrained_static" in hyps["input"] else use_pretrained_static
+        self.use_random_static = hyps["input"]["use_random_static"] if "use_random_static" in hyps["input"] else use_random_static
+        self.use_elmo = hyps["input"]["use_elmo"] if "use_elmo" in hyps["input"] else use_elmo
+        self.pretrained_lm = hyps["input"]["pretrained_lm"] if "pretrained_lm" in hyps["input"] else pretrained_lm
         self.only_pretrain_static = use_pretrained_static and not use_random_static
 
         # for biaffine layer
@@ -116,6 +116,7 @@ class BiaffineParser(nn.Module):
         self.lm_parameters = []
         # for Pretrained LM
         if self.pretrained_lm != 'none':
+            lm_path = hyps["input"]["lm_path"] if "lm_path" in hyps["input"] else lm_path
             self.lm_encoder = AutoModel.from_pretrained(lm_path)
             self.lm_parameters.append(self.lm_encoder)
             logger.info("[LM] Pretrained Language Model Type: %s" % (self.lm_encoder.config.model_type))
@@ -128,6 +129,7 @@ class BiaffineParser(nn.Module):
             lm_hidden_size = 0
         # for ELMo
         if self.use_elmo:
+            elmo_path = hyps["input"]["elmo_path"] if "elmo_path" in hyps["input"] else elmo_path
             self.elmo_encoder, elmo_hidden_size = load_elmo(elmo_path)
             self.lm_parameters.append(self.elmo_encoder)
             logger.info("[ELMo] Pretrained ELMo Path: %s" % (elmo_path))

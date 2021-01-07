@@ -34,7 +34,8 @@ class EnsembleParser(nn.Module):
             for i, path in enumerate(model_paths):
                 model_name = os.path.join(path, 'model.pt')
                 logger.info("Loading sub-model from: %s" % model_name)
-                network = BiaffineParser(hyps, num_pretrained[i], num_words[i], num_chars[i], num_pos[i],
+                hyp = hyps[i]
+                network = BiaffineParser(hyp, num_pretrained[i], num_words[i], num_chars[i], num_pos[i],
                                    num_labels[i], device=device,
                                    pretrained_lm=pretrained_lm, lm_path=lm_path,
                                    use_pretrained_static=use_pretrained_static, 
