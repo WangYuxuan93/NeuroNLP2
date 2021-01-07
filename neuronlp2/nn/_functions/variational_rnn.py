@@ -47,7 +47,7 @@ def VarFastLSTMCell(input, hidden, w_ih, w_hh, b_ih=None, b_hh=None, noise_in=No
     if noise_in is not None:
         input = input * noise_in
 
-    hx, cx = hidden
+    hx, cx = hidden  # hx:hidden x, cx: cell state x
     if noise_hidden is not None:
         hx = hx * noise_hidden
     gates = F.linear(input, w_ih, b_ih) + F.linear(hx, w_hh, b_hh)
