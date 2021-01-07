@@ -693,7 +693,11 @@ def run(args):
             logger.info("Character Alphabet Size: %d" % num_chars[i])
             logger.info("POS Alphabet Size: %d" % num_pos[i])
             logger.info("Rel Alphabet Size: %d" % num_rels[i])
-        model_path = model_paths[0] 
+        
+        model_path = model_paths[0]
+        hyps = [json.load(open(os.path.join(path, 'config.json'), 'r')) for path in model_paths]
+        model_type = hyps[0]['model']
+        assert model_type in ['Biaffine', 'StackPointer']
     else:
         model_path = args.model_path
         model_name = os.path.join(model_path, 'model.pt')
@@ -717,6 +721,10 @@ def run(args):
         logger.info("POS Alphabet Size: %d" % num_pos)
         logger.info("Rel Alphabet Size: %d" % num_rels)
 
+        hyps = json.load(open(os.path.join(model_path, 'config.json'), 'r'))
+        model_type = hyps['model']
+        assert model_type in ['Biaffine', 'StackPointer']
+
     result_path = os.path.join(model_path, 'tmp')
     if not os.path.exists(result_path):
         os.makedirs(result_path)
@@ -727,10 +735,7 @@ def run(args):
         logger.info("punctuations(%d): %s" % (len(punct_set), ' '.join(punct_set)))
 
     logger.info("loading network...")
-    hyps = json.load(open(os.path.join(model_path, 'config.json'), 'r'))
-    model_type = hyps['model']
-    assert model_type in ['Biaffine', 'StackPointer']
-
+    
     num_lans = 1
     if data_format == 'ud' and not args.mix_datasets:
         lans_train = args.lan_train.split(':')
@@ -740,11 +745,6 @@ def run(args):
         language_alphabet = utils.creat_language_alphabet(alphabet_path)
         num_lans = language_alphabet.size()
         data_reader = multi_ud_data
-
-    if pretrained_lm in ['none']:
-        tokenizer = None 
-    else:
-        tokenizer = AutoTokenizer.from_pretrained(lm_path)
 
     logger.info("##### Parser Type: {} #####".format(model_type))
     alg = 'transition' if model_type == 'StackPointer' else 'graph'
@@ -756,6 +756,7 @@ def run(args):
                                    use_random_static=args.use_random_static,
                                    use_elmo=args.use_elmo, elmo_path=args.elmo_path,
                                    num_lans=num_lans, model_paths=model_paths, merge_by=args.merge_by)
+        pretrained_lm = network.pretrained_lm
     else:
         if model_type == 'Biaffine':
             network = BiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels,
@@ -776,6 +777,11 @@ def run(args):
 
         network = network.to(device)
         network.load_state_dict(torch.load(model_name, map_location=device))
+
+    if pretrained_lm in ['none']:
+        tokenizer = None 
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(lm_path)
 
     if args.cand.endswith('.json'):
         cands = json.load(open(args.cand, 'r'))

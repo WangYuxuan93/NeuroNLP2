@@ -24,7 +24,6 @@ class EnsembleParser(nn.Module):
         self.pretrained_lm = pretrained_lm
         self.merge_by = merge_by
         self.networks = []
-        self.use_elmo = use_elmo
         self.use_pretrained_static = use_pretrained_static
         self.use_random_static = use_random_static
         self.model_type = model_type
@@ -36,7 +35,8 @@ class EnsembleParser(nn.Module):
             for i, path in enumerate(model_paths):
                 model_name = os.path.join(path, 'model.pt')
                 logger.info("Loading sub-model from: %s" % model_name)
-                network = BiaffineParser(hyps, num_pretrained[i], num_words[i], num_chars[i], num_pos[i],
+                hyp = hyps[i]
+                network = BiaffineParser(hyp, num_pretrained[i], num_words[i], num_chars[i], num_pos[i],
                                    num_labels[i], device=device,
                                    pretrained_lm=pretrained_lm, lm_path=lm_path,
                                    use_pretrained_static=use_pretrained_static, 
@@ -64,6 +64,12 @@ class EnsembleParser(nn.Module):
             print ("Ensembling %s not supported." % model_type)
             exit()
         self.hyps = self.networks[0].hyps
+        self.use_elmo = any([network.use_elmo for network in self.networks])
+        has_roberta = any([network.pretrained_lm == "roberta" for network in self.networks])
+        if has_roberta:
+            self.pretrained_lm = "roberta"
+        else:
+            self.pretrained_lm = pretrained_lm
         self.lan_emb_as_input = False
 
     def eval(self):

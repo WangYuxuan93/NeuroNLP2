@@ -509,6 +509,13 @@ def train(args):
     logger.info("constructing network...")
 
     hyps = json.load(open(args.config, 'r'))
+    # save input info in config.json
+    hyps["input"]["use_pretrained_static"] = use_pretrained_static
+    hyps["input"]["use_random_static"] = use_random_static
+    hyps["input"]["use_elmo"] = use_elmo
+    hyps["input"]["elmo_path"] = elmo_path
+    hyps["input"]["pretrained_lm"] = pretrained_lm
+    hyps["input"]["lm_path"] = lm_path
     json.dump(hyps, open(os.path.join(model_path, 'config.json'), 'w'), indent=2)
     model_type = hyps['model']
     assert model_type in ['Biaffine', 'StackPointer']
@@ -1045,6 +1052,9 @@ def parse(args):
             logger.info("POS Alphabet Size: %d" % num_pos[i])
             logger.info("Rel Alphabet Size: %d" % num_rels[i])
         model_path = model_paths[0]
+        hyps = [json.load(open(os.path.join(path, 'config.json'), 'r')) for path in model_paths]
+        model_type = hyps[0]['model']
+        assert model_type in ['Biaffine', 'StackPointer']
     else:
         model_path = args.model_path
         model_name = os.path.join(model_path, 'model.pt')
@@ -1068,6 +1078,9 @@ def parse(args):
         logger.info("POS Alphabet Size: %d" % num_pos)
         logger.info("Rel Alphabet Size: %d" % num_rels)
 
+        hyps = json.load(open(os.path.join(model_path, 'config.json'), 'r'))
+        model_type = hyps['model']
+        assert model_type in ['Biaffine', 'StackPointer']
 
     result_path = os.path.join(model_path, 'tmp')
     if not os.path.exists(result_path):
@@ -1079,11 +1092,7 @@ def parse(args):
         logger.info("punctuations(%d): %s" % (len(punct_set), ' '.join(punct_set)))
 
     logger.info("loading network...")
-    hyps = json.load(open(os.path.join(model_path, 'config.json'), 'r'))
-    model_type = hyps['model']
-    use_elmo = args.use_elmo
-    elmo_path = args.elmo_path
-    assert model_type in ['Biaffine', 'StackPointer']
+
 
     num_lans = 1
     if data_format == 'ud' and not args.mix_datasets:
@@ -1095,11 +1104,6 @@ def parse(args):
         num_lans = language_alphabet.size()
         data_reader = multi_ud_data
 
-    if pretrained_lm in ['none']:
-        tokenizer = None 
-    else:
-        tokenizer = AutoTokenizer.from_pretrained(lm_path)
-
     alg = 'transition' if model_type == 'StackPointer' else 'graph'
     if args.ensemble:
         network = EnsembleParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels, 
@@ -1108,7 +1112,10 @@ def parse(args):
                                    use_pretrained_static=args.use_pretrained_static, 
                                    use_random_static=args.use_random_static,
                                    use_elmo=args.use_elmo, elmo_path=args.elmo_path,
-                                   num_lans=num_lans, model_paths=model_paths, merge_by=args.merge_by,beam=args.beam)
+
+                                   num_lans=num_lans, model_paths=model_paths, merge_by=args.merge_by)
+        pretrained_lm = network.pretrained_lm
+
     else:
         if model_type == 'Biaffine':
             network = BiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels,
@@ -1129,6 +1136,11 @@ def parse(args):
 
         network = network.to(device)
         network.load_state_dict(torch.load(model_name, map_location=device))
+
+    if pretrained_lm in ['none']:
+        tokenizer = None 
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(lm_path)
 
     logger.info("Reading Data")
     if args.ensemble:
