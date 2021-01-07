@@ -651,6 +651,13 @@ class BlackBoxAttacker(object):
                 tag_ids = [[self.pos_alphabet.get_index(x) for x in s] for s in tags]
             else:
                 tag_ids = None
+
+            if self.model.pretrained_lm != "none":
+                bpes, first_idx = convert_tokens_to_ids(self.tokenizer, tokens)
+                bpes = bpes.to(self.device)
+                first_idx = first_idx.to(self.device)
+            else:
+                bpes, first_idx = None, None
         #pre_ids = [[self.pretrained_alphabet.get_index(x) for x in s] for s in tokens]
         pre_ids = []
         for s in tokens:
@@ -671,14 +678,6 @@ class BlackBoxAttacker(object):
             elmo_inputs = elmo_inputs.to(self.device)
         else:
             elmo_inputs = None
-        """
-        if self.model.pretrained_lm != "none":
-            bpes, first_idx = convert_tokens_to_ids(self.tokenizer, tokens)
-            bpes = bpes.to(self.device)
-            first_idx = first_idx.to(self.device)
-        else:
-            bpes, first_idx = None, None
-        """
 
         data_size = len(tokens)
         max_length = max([len(s) for s in tokens])
