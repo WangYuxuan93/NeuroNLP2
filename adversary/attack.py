@@ -694,11 +694,6 @@ def run(args):
         num_lans = language_alphabet.size()
         data_reader = multi_ud_data
 
-    if pretrained_lm in ['none']:
-        tokenizer = None 
-    else:
-        tokenizer = AutoTokenizer.from_pretrained(lm_path)
-
     logger.info("##### Parser Type: {} #####".format(model_type))
     alg = 'transition' if model_type == 'StackPointer' else 'graph'
     if args.ensemble:
@@ -709,6 +704,7 @@ def run(args):
                                    use_random_static=args.use_random_static,
                                    use_elmo=args.use_elmo, elmo_path=args.elmo_path,
                                    num_lans=num_lans, model_paths=model_paths, merge_by=args.merge_by)
+        pretrained_lm = network.pretrained_lm
     else:
         if model_type == 'Biaffine':
             network = BiaffineParser(hyps, num_pretrained, num_words, num_chars, num_pos, num_rels,
@@ -729,6 +725,11 @@ def run(args):
 
         network = network.to(device)
         network.load_state_dict(torch.load(model_name, map_location=device))
+
+    if pretrained_lm in ['none']:
+        tokenizer = None 
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(lm_path)
 
     if args.cand.endswith('.json'):
         cands = json.load(open(args.cand, 'r'))
