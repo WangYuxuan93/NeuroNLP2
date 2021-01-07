@@ -1155,7 +1155,8 @@ def parse(args):
             raise RuntimeError('Unknown model type: %s' % model_type)
 
         network = network.to(device)
-        network.load_state_dict(torch.load(model_name, map_location=device))
+        logger.info("model path: %s"% model_name)
+        network.load_state_dict(torch.load(model_name, map_location=device),strict=False)
 
         if pretrained_lm in ['none']:
             tokenizer = None 

@@ -34,7 +34,7 @@ class EnsembleParser(nn.Module):
         if model_type == "Biaffine":
             for i, path in enumerate(model_paths):
                 model_name = os.path.join(path, 'model.pt')
-                logger.info("Loading sub-model from: %s" % model_name)
+                logger.info("Loading sub-model from: %s" % model_name) 
                 hyp = hyps[i]
                 network = BiaffineParser(hyp, num_pretrained[i], num_words[i], num_chars[i], num_pos[i],
                                    num_labels[i], device=device,
