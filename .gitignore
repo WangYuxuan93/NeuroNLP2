@@ -108,6 +108,7 @@ ENV/
 
 # log dir
 /experiments/log/
+/experiments/scripts
 
 # test dir
 /tests/
@@ -120,3 +121,4 @@ ENV/
 
 adversary/data
 adversary/output
+adversary/scripts
