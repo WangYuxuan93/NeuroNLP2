@@ -811,7 +811,7 @@ def run(args):
             raise RuntimeError('Unknown model type: %s' % model_type)
 
         network = network.to(device)
-        network.load_state_dict(torch.load(model_name, map_location=device))
+        network.load_state_dict(torch.load(model_name, map_location=device),strict=False)
 
         if pretrained_lm in ['none']:
             tokenizer = None 

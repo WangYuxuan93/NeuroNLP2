@@ -44,7 +44,7 @@ class EnsembleParser(nn.Module):
                                    use_elmo=use_elmo, elmo_path=elmo_path,
                                    num_lans=num_lans, log_name='Network-'+str(len(self.networks)))
                 network = network.to(device)
-                network.load_state_dict(torch.load(model_name, map_location=device))
+                network.load_state_dict(torch.load(model_name, map_location=device),strict=False)
                 self.networks.append(network)
         elif model_type == "StackPointer":
             for i, path in enumerate(model_paths):
@@ -58,7 +58,7 @@ class EnsembleParser(nn.Module):
                                    use_elmo=use_elmo, elmo_path=elmo_path,
                                    num_lans=num_lans)
                 network = network.to(device)
-                network.load_state_dict(torch.load(model_name, map_location=device))
+                network.load_state_dict(torch.load(model_name, map_location=device),strict=False)
                 self.networks.append(network)
         else:
             print ("Ensembling %s not supported." % model_type)
