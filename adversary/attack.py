@@ -203,9 +203,11 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
             words = [words]
             chars = [chars]
             postags = [postags]
+            bpes = [bpes]
+            first_idx = [first_idx]
             for batcher, sub_tokenizer in zip(sub_batchers, tokenizers[1:]):
                 sub_data = next(batcher, None)
-                if tokenizer:
+                if sub_tokenizer:
                     sub_bpes, sub_first_idx = convert_tokens_to_ids(sub_tokenizer, srcs)
                     sub_bpes = sub_bpes.to(device)
                     sub_first_idx = sub_first_idx.to(device)

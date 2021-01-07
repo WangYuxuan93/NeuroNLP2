@@ -115,6 +115,7 @@ class BiaffineParser(nn.Module):
         # collect all params for language model
         self.lm_parameters = []
         # for Pretrained LM
+        self.lm_path = hyps["input"]["lm_path"] if "lm_path" in hyps["input"] else lm_path
         if self.pretrained_lm != 'none':
             lm_path = hyps["input"]["lm_path"] if "lm_path" in hyps["input"] else lm_path
             self.lm_encoder = AutoModel.from_pretrained(lm_path)
@@ -128,6 +129,7 @@ class BiaffineParser(nn.Module):
             self.lm_encoder = None
             lm_hidden_size = 0
         # for ELMo
+        self.elmo_path = hyps["input"]["elmo_path"] if "elmo_path" in hyps["input"] else elmo_path
         if self.use_elmo:
             elmo_path = hyps["input"]["elmo_path"] if "elmo_path" in hyps["input"] else elmo_path
             self.elmo_encoder, elmo_hidden_size = load_elmo(elmo_path)
