@@ -24,7 +24,6 @@ class EnsembleParser(nn.Module):
         self.pretrained_lm = pretrained_lm
         self.merge_by = merge_by
         self.networks = []
-        self.use_elmo = use_elmo
         self.use_pretrained_static = use_pretrained_static
         self.use_random_static = use_random_static
         assert merge_by in ['logits', 'probs']
@@ -49,6 +48,12 @@ class EnsembleParser(nn.Module):
             print ("Ensembling %s not supported." % model_type)
             exit()
         self.hyps = self.networks[0].hyps
+        self.use_elmo = any([network.use_elmo for network in self.networks])
+        has_roberta = any([network.pretrained_lm == "roberta" for network in self.networks])
+        if has_roberta:
+            self.pretrained_lm = "roberta"
+        else:
+            self.pretrained_lm = pretrained_lm
         self.lan_emb_as_input = False
 
     def eval(self):
