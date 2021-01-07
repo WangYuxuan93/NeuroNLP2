@@ -426,14 +426,14 @@ class BlackBoxAttacker(object):
             self.cached_cands = json.load(open(cached_path, 'r', encoding="utf-8"))
         else:
             self.cached_cands = None
-        if self.tagger == 'stanza':
-            self.stanza_tagger = stanza.Pipeline(lang='en', processors='tokenize,pos', 
-                                                    tokenize_pretokenized=True, use_gpu=True)
-        elif self.tagger == 'stanford':
-            jar = 'stanford-postagger-2018-10-16/stanford-postagger.jar'
-            model = 'stanford-postagger-2018-10-16/models/english-left3words-distsim.tagger'
-            logger.info("Loading stanford tagger from: %s" % model)
-            self.stanford_tagger = nltk.tag.StanfordPOSTagger(model, jar, encoding='utf8')
+            if self.tagger == 'stanza':
+                self.stanza_tagger = stanza.Pipeline(lang='en', processors='tokenize,pos', 
+                                                        tokenize_pretokenized=True, use_gpu=True)
+            elif self.tagger == 'stanford':
+                jar = 'stanford-postagger-2018-10-16/stanford-postagger.jar'
+                model = 'stanford-postagger-2018-10-16/models/english-left3words-distsim.tagger'
+                logger.info("Loading stanford tagger from: %s" % model)
+                self.stanford_tagger = nltk.tag.StanfordPOSTagger(model, jar, encoding='utf8')
         self.id2word = {i:w for (w,i) in vocab.items()}
         if 'train' in self.filters and train_vocab is not None:
             logger.info("Loading train vocab for filter from: %s" % train_vocab)
