@@ -700,7 +700,7 @@ class Preprocessor(object):
 
         return cand_cache
 
-    def filter_cache_with_pos(self, tmp_cache, tmp_tags):
+    def filter_cache_with_pos(self, tmp_cache, tmp_tags, debug=False):
         cand_types = ['sem_cands','syn_cands','emb_cands','mlm_cands']
         cand_sents = []
         # gather candidate sentence list for stanford tagger
@@ -729,10 +729,15 @@ class Preprocessor(object):
                 # for each cand type
                 for type in cand_types:
                     cand_tokens = token_cache[type]
+                    #print (sent_tags[offset:offset+len(cand_tokens)])
                     cand_tags = [x[idx][1] for x in sent_tags[offset:offset+len(cand_tokens)]]
+                    if debug:
+                        print ("idx={},tag={}".format(idx, tags[idx]))
+                        print ("cand_tags:", cand_tags)
+                        print ("cand_tokens:", cand_tokens)
                     new_token_cache[type] = []
-                    for token, tag in zip(cand_tokens, cand_tags):
-                        if tag == tags[idx]:
+                    for token, cand_tag in zip(cand_tokens, cand_tags):
+                        if cand_tag == tags[idx]:
                             new_token_cache[type].append(token)
                     offset += len(cand_tokens)
                 new_sent_cache.append(new_token_cache)
@@ -760,8 +765,8 @@ class Preprocessor(object):
                 filtered_cache = self.filter_cache_with_pos(tmp_cache, tmp_tags)
                 tmp_cache = []
                 tmp_tags = []
-                for cache in filtered_cache:
-                    cache.append({'sent_id':len(cache), 'tokens': cache})
+                for c in filtered_cache:
+                    cache.append({'sent_id':len(cache), 'tokens': c})
         print ("")
         return cache
 
@@ -772,7 +777,7 @@ def read_conll(filename):
         for sent in data:
             lines = sent.strip().split("\n")
             tokens = [ROOT]+[x.strip().split('\t')[1] for x in lines]
-            tags = [ROOT]+[x.strip().split('\t')[2] for x in lines]
+            tags = [ROOT]+[x.strip().split('\t')[3] for x in lines]
             sents.append((tokens, tags))
     return sents
 
