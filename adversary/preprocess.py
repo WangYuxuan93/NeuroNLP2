@@ -17,6 +17,11 @@ import os
 import json
 import pickle
 import string
+
+current_path = os.path.dirname(os.path.realpath(__file__))
+root_path = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.append(root_path)
+
 try:
     import tensorflow_hub as hub
     import tensorflow as tf
@@ -37,6 +42,288 @@ from neuronlp2.io.common import DIGIT_RE
 
 #sys.stdout = codecs.getwriter("utf-8")(sys.stdout.detach())
 
+stopwords = set(
+        [
+            "'s",
+            "'re",
+            "'ve",
+            "a",
+            "about",
+            "above",
+            "across",
+            "after",
+            "afterwards",
+            "again",
+            "against",
+            "ain",
+            "all",
+            "almost",
+            "alone",
+            "along",
+            "already",
+            "also",
+            "although",
+            "am",
+            "among",
+            "amongst",
+            "an",
+            "and",
+            "another",
+            "any",
+            "anyhow",
+            "anyone",
+            "anything",
+            "anyway",
+            "anywhere",
+            "are",
+            "aren",
+            "aren't",
+            "around",
+            "as",
+            "at",
+            "be",
+            "back",
+            "been",
+            "before",
+            "beforehand",
+            "behind",
+            "being",
+            "below",
+            "beside",
+            "besides",
+            "between",
+            "beyond",
+            "both",
+            "but",
+            "by",
+            "can",
+            "cannot",
+            "could",
+            "couldn",
+            "couldn't",
+            "d",
+            "do",
+            "did",
+            "didn",
+            "didn't",
+            "does",
+            "doesn",
+            "doesn't",
+            "don",
+            "don't",
+            "down",
+            "due",
+            "during",
+            "either",
+            "else",
+            "elsewhere",
+            "empty",
+            "enough",
+            "even",
+            "ever",
+            "everyone",
+            "everything",
+            "everywhere",
+            "except",
+            "first",
+            "for",
+            "former",
+            "formerly",
+            "from",
+            "had",
+            "hadn",
+            "hadn't",
+            "has",
+            "hasn",
+            "hasn't",
+            "have",
+            "haven",
+            "haven't",
+            "he",
+            "hence",
+            "her",
+            "here",
+            "hereafter",
+            "hereby",
+            "herein",
+            "hereupon",
+            "hers",
+            "herself",
+            "him",
+            "himself",
+            "his",
+            "how",
+            "however",
+            "hundred",
+            "i",
+            "if",
+            "in",
+            "indeed",
+            "into",
+            "is",
+            "isn",
+            "isn't",
+            "it",
+            "it's",
+            "its",
+            "itself",
+            "just",
+            "latter",
+            "latterly",
+            "least",
+            "ll",
+            "may",
+            "me",
+            "meanwhile",
+            "mightn",
+            "mightn't",
+            "mine",
+            "more",
+            "moreover",
+            "most",
+            "mostly",
+            "must",
+            "mustn",
+            "mustn't",
+            "my",
+            "myself",
+            "n't",
+            "namely",
+            "needn",
+            "needn't",
+            "neither",
+            "never",
+            "nevertheless",
+            "next",
+            "no",
+            "nobody",
+            "none",
+            "noone",
+            "nor",
+            "not",
+            "nothing",
+            "now",
+            "nowhere",
+            "o",
+            "of",
+            "off",
+            "on",
+            "once",
+            "one",
+            "only",
+            "onto",
+            "or",
+            "other",
+            "others",
+            "otherwise",
+            "our",
+            "ours",
+            "ourselves",
+            "out",
+            "over",
+            "per",
+            "please",
+            "s",
+            "same",
+            "shan",
+            "shan't",
+            "she",
+            "she's",
+            "should've",
+            "shouldn",
+            "shouldn't",
+            "somehow",
+            "something",
+            "sometime",
+            "somewhere",
+            "such",
+            "t",
+            "than",
+            "that",
+            "that'll",
+            "the",
+            "their",
+            "theirs",
+            "them",
+            "themselves",
+            "then",
+            "thence",
+            "there",
+            "thereafter",
+            "thereby",
+            "therefore",
+            "therein",
+            "thereupon",
+            "these",
+            "they",
+            "this",
+            "those",
+            "through",
+            "throughout",
+            "thru",
+            "thus",
+            "to",
+            "too",
+            "toward",
+            "towards",
+            "under",
+            "unless",
+            "until",
+            "up",
+            "upon",
+            "used",
+            "ve",
+            "was",
+            "wasn",
+            "wasn't",
+            "we",
+            "were",
+            "weren",
+            "weren't",
+            "what",
+            "whatever",
+            "when",
+            "whence",
+            "whenever",
+            "where",
+            "whereafter",
+            "whereas",
+            "whereby",
+            "wherein",
+            "whereupon",
+            "wherever",
+            "whether",
+            "which",
+            "while",
+            "whither",
+            "who",
+            "whoever",
+            "whole",
+            "whom",
+            "whose",
+            "why",
+            "with",
+            "within",
+            "without",
+            "won",
+            "won't",
+            "would",
+            "wouldn",
+            "wouldn't",
+            "y",
+            "yet",
+            "you",
+            "you'd",
+            "you'll",
+            "you're",
+            "you've",
+            "your",
+            "yours",
+            "yourself",
+            "yourselves",
+        ]
+    )
+
 def recover_word_case(word, reference_word):
     """ Makes the case of `word` like the case of `reference_word`. Supports 
         lowercase, UPPERCASE, and Capitalized. """
@@ -51,7 +338,8 @@ def recover_word_case(word, reference_word):
         return word
 
 class Preprocessor(object):
-    def __init__(self, candidates, vocab, synonyms, 
+    def __init__(self, candidates, vocab, synonyms,
+                filter_every_n_sents=1,
                 generators=['synonym', 'sememe', 'embedding'],
                 tagger="stanford", punct_set=[], 
                 cached_path=None, 
@@ -60,7 +348,7 @@ class Preprocessor(object):
                 n_mlm_cands=50, mlm_cand_file=None, 
                 device=None, symbolic_root=True, symbolic_end=False, mask_out_root=False, 
                 batch_size=32):
-        super(BlackBoxAttacker, self).__init__()
+        super(Preprocessor, self).__init__()
         logger = get_logger("Attacker")
         logger.info("##### Attacker Type: {} #####".format(self.__class__.__name__))
 
@@ -72,6 +360,7 @@ class Preprocessor(object):
         self.punct_set = punct_set
 
         self.cached_path = cached_path
+        self.filter_every_n_sents = filter_every_n_sents
 
         logger.info("Generators: {}".format(generators))
         logger.info("POS tagger: {}".format(tagger))
@@ -90,6 +379,11 @@ class Preprocessor(object):
             self.stanford_tagger = nltk.tag.StanfordPOSTagger(model, jar, encoding='utf8')
         self.id2word = {i:w for (w,i) in vocab.items()}
 
+        if self.cached_cands is None and 'embedding' in self.generators:
+            logger.info("Loading knn from: {}".format(knn_path))
+            self.load_knn_path(knn_path)
+        else:
+            self.nn = None
 
         if 'mlm' in self.generators:
             self.n_mlm_cands = n_mlm_cands
@@ -106,12 +400,8 @@ class Preprocessor(object):
         self.mask_out_root = mask_out_root
         self.batch_size = batch_size
         #self.stop_words = nltk.corpus.stopwords.words('english')
-        if 'stop_words' in self.filters:
-            logger.info("Init stop word list.")
-            self.stop_words = stopwords
-        else:
-            logger.info("Empty stop word list.")
-            self.stop_words = []
+        logger.info("Init stop word list.")
+        self.stop_words = stopwords
         self.stop_tags = ['PRP','PRP$','DT','CC','IN','CD','UH','WDT','WP','WP$','-LRB-','-RRB-','.','``',"\'\'",':',',','?',';']
 
         self.max_knn_candidates = max_knn_candidates
@@ -342,11 +632,11 @@ class Preprocessor(object):
         cache_data = {'sem_cands':[], 'syn_cands':[], 'emb_cands':[],
                           'mlm_cands':[]}
         if token.lower() in self.stop_words:
-            return [], cache_data
+            return cache_data
         if tag in self.stop_tags:
-            return [], cache_data
+            return cache_data
         if token == PAD or token == ROOT:
-            return [], cache_data
+            return cache_data
         #candidate_set = []
         lower_set = set()
         #print ("origin token: ", token)
@@ -404,10 +694,9 @@ class Preprocessor(object):
         for i in range(x_len):
             #print (adv_tokens[i], self._word2id(adv_tokens[i]))
             cache_data = self._get_candidate_set(adv_tokens, tags[i], i, sent_id=sent_id)
-            if cache and self.cached_path is None:
-                cache_data['id'] = i
-                cache_data['token'] = tokens[i]
-                cand_cache.append(cache_data)
+            cache_data['id'] = i
+            cache_data['token'] = tokens[i]
+            cand_cache.append(cache_data)
 
         return cand_cache
 
@@ -465,11 +754,15 @@ class Preprocessor(object):
             tmp_cache.append(sent_cache)
             tmp_tags.append(tags)
             if sent_id % self.filter_every_n_sents == 0:
+                if sent_id % (100*self.filter_every_n_sents) == 0:
+                    print ("%d.."%sent_id, end="")
+                    sys.stdout.flush()
                 filtered_cache = self.filter_cache_with_pos(tmp_cache, tmp_tags)
                 tmp_cache = []
                 tmp_tags = []
                 for cache in filtered_cache:
                     cache.append({'sent_id':len(cache), 'tokens': cache})
+        print ("")
         return cache
 
 def read_conll(filename):
@@ -478,14 +771,24 @@ def read_conll(filename):
         data = f.read().strip().split("\n\n")
         for sent in data:
             lines = sent.strip().split("\n")
-            tokens = ['ROOT']+[x.strip().split('\t')[1] for x in lines]
-            tags = ['ROOT']+[x.strip().split('\t')[2] for x in lines]
+            tokens = [ROOT]+[x.strip().split('\t')[1] for x in lines]
+            tags = [ROOT]+[x.strip().split('\t')[2] for x in lines]
             sents.append((tokens, tags))
     return sents
 
 
 def main(args):
+    args.cuda = torch.cuda.is_available()
+    device = torch.device('cuda', 0) if args.cuda else torch.device('cpu')
     punct_set = set(args.punctuation)
+    if args.cand.endswith('.json'):
+        cands = json.load(open(args.cand, 'r'))
+        candidates = {int(i):dic for (i,dic) in cands.items()}
+    else:
+        candidates = pickle.load(open(args.cand, 'rb'))
+        vocab = json.load(open(args.vocab, 'r'))
+        synonyms = json.load(open(args.syn, 'r'))
+    generators = args.generators.split(":")
     #logger.info("punctuations(%d): %s" % (len(punct_set), ' '.join(punct_set)))
     processor = Preprocessor(candidates, vocab, synonyms, generators=generators,
                         tagger=args.tagger,
@@ -496,9 +799,11 @@ def main(args):
                         cand_mlm=args.cand_mlm, temperature=args.temp, 
                         top_k=args.top_k, top_p=args.top_p, 
                         n_mlm_cands=args.n_mlm_cands, mlm_cand_file=args.mlm_cand_file,
-                        device=device, lm_device=lm_device,
-                        batch_size=args.adv_batch_size)
-    sents = read_conll(args.input_conll)
+                        device=device,
+                        batch_size=args.adv_batch_size,
+                        filter_every_n_sents=args.filter_every_n_sents)
+    sents = read_conll(args.test)
+    print ("Total {} sents".format(len(sents)))
     cache = processor.get_cache(sents)
     with open(args.cand_cache_path, 'w') as cache_f:
         json.dump(cache, cache_f, indent=4)
@@ -514,6 +819,7 @@ if __name__ == '__main__':
     args_parser.add_argument('--batch_size', type=int, default=16, help='Number of sentences in each batch')
     args_parser.add_argument('--eval_batch_size', type=int, default=256, help='Number of sentences in each batch while evaluating')
 
+    args_parser.add_argument('--punctuation', nargs='+', type=str, help='List of punctuations')
     args_parser.add_argument('--test', help='path for test file.', required=True)
     args_parser.add_argument('--cand_mlm', help='path for mlm candidate generating')
     args_parser.add_argument('--mlm_cand_file', help='path for mlm candidate preprocessed json file')
@@ -531,5 +837,6 @@ if __name__ == '__main__':
     args_parser.add_argument('--tagger', choices=['stanza', 'nltk', 'spacy', 'stanford'], default='stanza', help='POS tagger for POS checking in KNN embedding candidates')
     args_parser.add_argument('--cached_path', type=str, default=None, help='input cached file for preprocessed candidate cache file')
     args_parser.add_argument('--cand_cache_path', type=str, default=None, help='output filename for candidate cache file')
+    args_parser.add_argument('--filter_every_n_sents', type=int, default=1, help='filter n sents every batch')
     args = args_parser.parse_args()
     main(args)
