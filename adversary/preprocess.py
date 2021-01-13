@@ -364,6 +364,7 @@ class Preprocessor(object):
 
         logger.info("Generators: {}".format(generators))
         logger.info("POS tagger: {}".format(tagger))
+        logger.info("Filter every {} sents".format(filter_every_n_sents))
         if cached_path is not None:
             logger.info("Loading cached candidates from: %s" % cached_path)
             self.cached_cands = json.load(open(cached_path, 'r', encoding="utf-8"))
@@ -389,6 +390,7 @@ class Preprocessor(object):
             self.n_mlm_cands = n_mlm_cands
             logger.info("Loading MLM generator from: {}".format(cand_mlm))
             self.mlm_cand_model = Bert(cand_mlm, device=device, temperature=temperature, top_k=top_k, top_p=top_p)
+            #print ("BERT:cand_mlm={}\ntemp={},top_k={},top_p={}".format(cand_mlm, temperature, top_k, top_p))
             self.mlm_cand_model.model.eval() 
         else:
             self.mlm_cand_model = None
@@ -400,8 +402,12 @@ class Preprocessor(object):
         self.mask_out_root = mask_out_root
         self.batch_size = batch_size
         #self.stop_words = nltk.corpus.stopwords.words('english')
-        logger.info("Init stop word list.")
-        self.stop_words = stopwords
+        #if 'stop_words' in self.filters:
+        #    logger.info("Init stop word list.")
+        #    self.stop_words = stopwords
+        #else:
+        logger.info("Empty stop word list.")
+        self.stop_words = []
         self.stop_tags = ['PRP','PRP$','DT','CC','IN','CD','UH','WDT','WP','WP$','-LRB-','-RRB-','.','``',"\'\'",':',',','?',';']
 
         self.max_knn_candidates = max_knn_candidates
@@ -546,7 +552,7 @@ class Preprocessor(object):
         tmps = tokens.copy()
         tmps[idx] = self.mlm_cand_model.MASK_TOKEN
         masked_text = ' '.join(tmps)
-
+        #print ("masked_text:", masked_text)
         candidates = self.mlm_cand_model.predict(masked_text, target_word=original_word, n=n)
 
         return [candidate[0] for candidate in candidates]
@@ -664,6 +670,7 @@ class Preprocessor(object):
             emb_cands = []
         if 'mlm' in self.generators:
             mlm_cands = self.get_mlm_cands(tokens.copy(), tag, idx, sent_id=sent_id)
+            #print ("token:{}, mlm_cands:{}".format(tokens[idx],mlm_cands))
             mlm_cands = [recover_word_case(c, tokens[idx]) for c in mlm_cands]
             #self.update_cand_set(token, candidate_set, mlm_cands, lower_set)
         else:
@@ -725,14 +732,14 @@ class Preprocessor(object):
             # for each token
             for token_cache in cache:
                 idx = token_cache['id']
-                new_token_cache = {'id':idx, 'token':token_cache['token']}
+                new_token_cache = {}
                 # for each cand type
                 for type in cand_types:
                     cand_tokens = token_cache[type]
                     #print (sent_tags[offset:offset+len(cand_tokens)])
                     cand_tags = [x[idx][1] for x in sent_tags[offset:offset+len(cand_tokens)]]
                     if debug:
-                        print ("idx={},tag={}".format(idx, tags[idx]))
+                        print ("idx={},tag={},type={}".format(idx, tags[idx],type))
                         print ("cand_tags:", cand_tags)
                         print ("cand_tokens:", cand_tokens)
                     new_token_cache[type] = []
@@ -740,6 +747,8 @@ class Preprocessor(object):
                         if cand_tag == tags[idx]:
                             new_token_cache[type].append(token)
                     offset += len(cand_tokens)
+                new_token_cache['id'] = idx
+                new_token_cache['token'] = token_cache['token']
                 new_sent_cache.append(new_token_cache)
             new_cache.append(new_sent_cache)
         return new_cache
@@ -783,6 +792,9 @@ def read_conll(filename):
 
 
 def main(args):
+    print ("Random seed: {}".format(args.seed))
+    random.seed(args.seed)
+    np.random.seed(args.seed)
     args.cuda = torch.cuda.is_available()
     device = torch.device('cuda', 0) if args.cuda else torch.device('cpu')
     punct_set = set(args.punctuation)
