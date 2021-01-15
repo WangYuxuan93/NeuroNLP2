@@ -9,7 +9,7 @@ import re
 class CoNLLXReader(object):
     def __init__(self, file_path, word_alphabet, char_alphabet, pos_alphabet, type_alphabet, 
                 pre_alphabet=None, pos_idx=4):
-        self.__source_file = open(file_path, 'r')
+        self.__source_file = open(file_path, 'r',encoding="utf-8")
         self.__word_alphabet = word_alphabet
         self.__char_alphabet = char_alphabet
         self.__pos_alphabet = pos_alphabet

@@ -90,7 +90,7 @@ def create_alphabets(alphabet_directory, train_path, data_paths=None, max_vocabu
         type_alphabet.add(END_TYPE)
 
         vocab = defaultdict(int)
-        with open(train_path, 'r') as file:
+        with open(train_path, 'r',encoding="utf-8") as file:
             for line in file:
                 line = line.strip()
                 if len(line) == 0:

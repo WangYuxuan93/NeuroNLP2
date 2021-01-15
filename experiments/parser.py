@@ -114,7 +114,7 @@ def convert_tokens_to_ids(tokenizer, tokens):
 
 def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet, pos_alphabet, 
         device, beam=1, batch_size=256, write_to_tmp=True, prev_best_lcorr=0, prev_best_ucorr=0,
-        pred_filename=None, tokenizer=None, multi_lan_iter=False, ensemble=False):
+        pred_filename=None, tokenizer=None, multi_lan_iter=False, ensemble=False,prob=False):
     network.eval()
     accum_ucorr = 0.0
     accum_lcorr = 0.0
@@ -218,9 +218,14 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
             masks = data['MASK'].to(device)
             #err_types = data['ERR_TYPE']
             err_types = None
-            heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, 
+            if prob:
+                (heads_pred, rels_pred), arc_loss = network.decode(words, pres, chars, postags, mask=masks,
                 bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id, 
-                leading_symbolic=common.NUM_SYMBOLIC_TAGS)
+                leading_symbolic=common.NUM_SYMBOLIC_TAGS,proba=True)
+            else:
+                (heads_pred, rels_pred), _ = network.decode(words, pres, chars, postags, mask=masks, bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id,
+                                                                   leading_symbolic=common.NUM_SYMBOLIC_TAGS, proba=True)
+                arc_loss=None
         else:
             pres = None
             err_types = None
@@ -228,6 +233,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
             heads_pred, rels_pred = network.decode(words, pres, chars, postags, mask=masks, 
                 bpes=bpes, first_idx=first_idx, input_elmo=input_elmo, lan_id=lan_id, 
                 beam=beam, leading_symbolic=conllx_data.NUM_SYMBOLIC_TAGS)
+            arc_loss = None
         
         if ensemble:
             words = words[0]
@@ -236,7 +242,7 @@ def eval(alg, data, network, pred_writer, gold_writer, punct_set, word_alphabet,
         postags = postags.cpu().numpy()
 
         if write_to_tmp:
-            pred_writer.write(words, postags, heads_pred, rels_pred, lengths, symbolic_root=True, src_words=data['SRC'])
+            pred_writer.write(words, postags, heads_pred, rels_pred, lengths,arc_loss, symbolic_root=True, src_words=data['SRC'])
         else:
             all_words.append(words)
             all_postags.append(postags)
@@ -434,9 +440,11 @@ def train(args):
                 #     chosen_sents.append(sent)
                 # *************************end **********
             chosen_sents = lines
-        np.random.shuffle(chosen_sents)
+
         if adv_chosen_len>len(chosen_sents):
             adv_chosen_len = len(chosen_sents)
+        #是否shuffle
+        #np.random.shuffle(chosen_sents)
         allline.extend(chosen_sents[0:adv_chosen_len])  # ratio要确认好
         np.random.shuffle(allline)
         logger.info("加入adv之后，训练集的长度是%d"%len(allline))
@@ -1227,7 +1235,7 @@ def parse(args):
         pred_filename = args.output_filename
     else:
         # 预测时候的输出文件名
-        pred_filename = os.path.join(result_path, 'parse-augment-20m-lt-0.1.conll')
+        pred_filename = os.path.join(result_path, 'electra-888-attack-roberta-666.conll')
         #pred_filename = os.path.join("/users7/zllei/exp_data/models/parsing/PTB/biaffine", 'transferability-same-embedding.txt')
     pred_writer.start(pred_filename)
     #gold_filename = os.path.join(result_path, 'gold.txt')
@@ -1242,7 +1250,7 @@ def parse(args):
         start_time = time.time()
         eval(alg, data_test, network, pred_writer, gold_writer, punct_set, word_alphabet, 
             pos_alphabet, device, args.beam, batch_size=args.batch_size, tokenizer=tokenizer, 
-            multi_lan_iter=multi_lan_iter, ensemble=args.ensemble)
+            multi_lan_iter=multi_lan_iter, ensemble=args.ensemble,prob=False)
         print('Time: %.2fs' % (time.time() - start_time))
 
     pred_writer.close()

@@ -589,7 +589,7 @@ class BiaffineParser(nn.Module):
 
 
     def decode(self, input_word, input_pretrained, input_char, input_pos, mask=None, 
-                bpes=None, first_idx=None, input_elmo=None, lan_id=None, leading_symbolic=0):
+                bpes=None, first_idx=None, input_elmo=None, lan_id=None, leading_symbolic=0,proba=False):
         """
         Args:
             input_word: Tensor
@@ -647,6 +647,8 @@ class BiaffineParser(nn.Module):
 
         # compute lengths
         length = mask.sum(dim=1).long().cpu().numpy()
+        if proba:
+            return parser.decode_MST(energy.cpu().numpy(), length, leading_symbolic=leading_symbolic, labeled=True),arc_loss
         return parser.decode_MST(energy.cpu().numpy(), length, leading_symbolic=leading_symbolic, labeled=True)
 
     def get_probs(self, input_word, input_pretrained, input_char, input_pos, mask=None, 

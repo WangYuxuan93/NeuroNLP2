@@ -1,6 +1,6 @@
 __author__ = 'max'
 import re
-
+import math
 
 class CoNLL03Writer(object):
     def __init__(self, word_alphabet, char_alphabet, pos_alphabet, chunk_alphabet, ner_alphabet):
@@ -39,12 +39,12 @@ class CoNLLXWriter(object):
         self.__type_alphabet = type_alphabet
 
     def start(self, file_path):
-        self.__source_file = open(file_path, 'w')
+        self.__source_file = open(file_path, 'w',encoding="utf-8")
 
     def close(self):
         self.__source_file.close()
 
-    def write(self, word, pos, head, type, lengths, symbolic_root=False, symbolic_end=False, src_words=None, adv_words=None, heads_by_layer=None):
+    def write(self, word, pos, head, type, lengths,arc_loss=None, symbolic_root=False, symbolic_end=False, src_words=None, adv_words=None, heads_by_layer=None):
         batch_size, _ = word.shape
         start = 1 if symbolic_root else 0
         end = 1 if symbolic_end else 0
@@ -63,11 +63,14 @@ class CoNLLXWriter(object):
                 p = self.__pos_alphabet.get_instance(pos[i, j])
                 t = self.__type_alphabet.get_instance(type[i, j])
                 h = head[i, j]
+                proba = "_"
+                if arc_loss!=None:
+                    proba = str(math.exp(arc_loss[i][h][j].item()))
                 if heads_by_layer is not None:
                     layer = '#layer-'+str(heads_by_layer[i, j])
                     self.__source_file.write('%d\t%s\t_\t%s\t%s\t_\t%d\t%s\t%s\t%s\n' % (j, w, p, p, h, t, layer, adv_flag))
                 else:
-                    self.__source_file.write('%d\t%s\t_\t%s\t%s\t_\t%d\t%s\t_\t%s\n' % (j, w, p, p, h, t, adv_flag))
+                    self.__source_file.write('%d\t%s\t_\t%s\t%s\t_\t%d\t%s\t_\t%s\n' % (j, w, p, p, h, t, proba))
             self.__source_file.write('\n')
 
 
