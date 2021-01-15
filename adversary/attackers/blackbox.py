@@ -472,6 +472,7 @@ class BlackBoxAttacker(object):
                 logger.info("Loading MLM generator from: {}".format(cand_mlm))
                 logger.info("Generate MLM dynamically: {}".format(self.dynamic_mlm_cand))
                 self.mlm_cand_model = Bert(cand_mlm, device=device, temperature=temperature, top_k=top_k, top_p=top_p)
+                #print ("BERT:cand_mlm={}\ntemp={},top_k={},top_p={}".format(cand_mlm, temperature, top_k, top_p))
                 self.mlm_cand_model.model.eval() 
                 self.mlm_cand_dict = None
         else:
@@ -1302,7 +1303,7 @@ class BlackBoxAttacker(object):
                     self.update_cand_set(token, candidate_set, cands[name_map[name]], lower_set)
         return candidate_set
 
-    def _get_candidate_set(self, tokens, tag, idx, sent_id=None, cache=False):
+    def _get_candidate_set(self, tokens, tag, idx, sent_id=None, cache=False,debug=False):
         token = tokens[idx]
         if cache:
             cache_data = {'sem_cands':[], 'syn_cands':[], 'emb_cands':[],
@@ -1317,10 +1318,14 @@ class BlackBoxAttacker(object):
             return [], cache_data
         candidate_set = []
         lower_set = set()
-        #print ("origin token: ", token)
+        if debug:
+            print ("origin token: ", token)
         if 'sememe' in self.generators:
             sem_cands = self.get_sem_cands(token, tag)
-            sem_cands = self.post_process(tokens.copy(), sem_cands, tag, idx)
+            sem_cands = self.post_process(tokens.copy(), sem_cands, tag, idx
+)
+            if debug:
+                print ("sememe:", sem_cands)
             self.update_cand_set(token, candidate_set, sem_cands, lower_set)
             #print ("sememe:", sem_cands)
         else:
@@ -1328,6 +1333,8 @@ class BlackBoxAttacker(object):
         if 'synonym' in self.generators:
             syn_cands = self.get_syn_cands(token, tag)
             syn_cands = self.post_process(tokens.copy(), syn_cands, tag, idx)
+            if debug:
+                print ("syn:", syn_cands)
             self.update_cand_set(token, candidate_set, syn_cands, lower_set)
             #print ("syn:", syn_cands)
         else:
@@ -1335,14 +1342,19 @@ class BlackBoxAttacker(object):
         if 'embedding' in self.generators:
             emb_cands = self.get_emb_cands(tokens.copy(), tag, idx)
             emb_cands = self.post_process(tokens.copy(), emb_cands, tag, idx)
+            if debug:
+                print ("knn cands:\n", emb_cands)
             self.update_cand_set(token, candidate_set, emb_cands, lower_set)
             #print ("knn cands:\n", emb_cands)
         else:
             emb_cands = []
         if 'mlm' in self.generators:
             mlm_cands = self.get_mlm_cands(tokens.copy(), tag, idx, sent_id=sent_id)
+            #if debug:
+            print ("token:{}, mlm_cands:{}".format(tokens[idx], mlm_cands))
             mlm_cands = self.post_process(tokens.copy(), mlm_cands, tag, idx)
             self.update_cand_set(token, candidate_set, mlm_cands, lower_set)
+            
         else:
             mlm_cands = []
         if cache:
